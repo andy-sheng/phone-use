@@ -1,0 +1,152 @@
+import DeviceHubKit
+import SwiftUI
+
+struct ContentView: View {
+    @EnvironmentObject private var model: AppModel
+    @StateObject private var screen = ScreenModel()
+    @State private var search = ""
+    @State private var showingInspector = false
+
+    /// The screen restarts only when the device changes or becomes (un)ready, not on every status update.
+    private var screenKey: String {
+        guard let device = model.selectedDevice else { return "" }
+        return "\(device.udid)|\(device.isReady)"
+    }
+
+    private func matching(_ devices: [DeviceSummary]) -> [DeviceSummary] {
+        let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !needle.isEmpty else { return devices }
+        return devices.filter {
+            $0.name.lowercased().contains(needle) || ($0.modelName?.lowercased().contains(needle) ?? false)
+        }
+    }
+
+    var body: some View {
+        NavigationSplitView {
+            sidebar
+        } detail: {
+            detail
+                .inspector(isPresented: $showingInspector) {
+                    if let device = model.selectedDevice {
+                        DeviceInspector(device: device, screen: screen)
+                            .inspectorColumnWidth(min: 260, ideal: 290, max: 360)
+                    }
+                }
+        }
+        .task { await model.run() }
+        .task(id: screenKey) {
+            if let device = model.selectedDevice {
+                await screen.run(device: device)
+            }
+        }
+    }
+
+    private var sidebar: some View {
+        List(selection: $model.selection) {
+            let available = matching(model.availableDevices)
+            let unavailable = matching(model.unavailableDevices)
+            Section("Available") {
+                ForEach(available) { DeviceRow(device: $0) }
+                if available.isEmpty {
+                    Text("Connect an iPhone with a USB cable")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if !unavailable.isEmpty {
+                Section("Unavailable") {
+                    ForEach(unavailable) { DeviceRow(device: $0) }
+                }
+            }
+        }
+        .searchable(text: $search, placement: .sidebar, prompt: "Search")
+        .navigationSplitViewColumnWidth(min: 220, ideal: 250)
+    }
+
+    private var detail: some View {
+        ZStack {
+            Color(nsColor: .underPageBackgroundColor)
+                .extendedUnderSidebar()
+                .ignoresSafeArea()
+            if let device = model.selectedDevice, !device.isReady {
+                DeviceSetupView(device: device)
+                    .padding(24)
+            } else if let stream = screen.stream {
+                DeviceScreenView(screen: screen, stream: stream)
+            } else {
+                placeholder
+            }
+        }
+        .navigationTitle(model.selectedDevice?.name ?? "DeviceHub")
+        .navigationSubtitle(model.selectedDevice?.osDescription ?? "")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showingInspector.toggle()
+                } label: {
+                    Label("Device Info", systemImage: "info.circle")
+                }
+                .disabled(model.selectedDevice == nil)
+            }
+        }
+    }
+
+    private var placeholder: some View {
+        VStack(spacing: 14) {
+            if screen.status != nil {
+                ProgressView().controlSize(.large)
+            } else {
+                Image(systemName: "iphone.gen3")
+                    .font(.system(size: 54, weight: .thin))
+                    .foregroundStyle(.secondary)
+            }
+            Text(model.selectedDevice?.name ?? "No Device")
+                .font(.title3.weight(.semibold))
+            Text(screen.status ?? model.errorMessage ?? "Connect an iPhone with a USB cable.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
+        }
+        .padding(32)
+        .glassCard(cornerRadius: 24)
+    }
+}
+
+private struct DeviceRow: View {
+    let device: DeviceSummary
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: device.isPad ? "ipad" : "iphone")
+                .font(.system(size: 15))
+                .frame(width: 28, height: 28)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .foregroundStyle(device.isAttached ? .primary : .tertiary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(device.name)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(device.isReady || !device.isAttached ? Color.secondary : Color.orange)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            Text(device.productVersion ?? "")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 3)
+        .tag(device.id)
+    }
+
+    private var subtitle: String {
+        switch device.state {
+        case .ready, .disconnected: device.modelName ?? device.connection.uppercased()
+        case .probing: "Checking…"
+        case .untrusted: "Not trusted"
+        case .developerModeOff: "Developer Mode off"
+        case .developerImageMissing: "Preparing developer services"
+        }
+    }
+}

@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+dist/
+.venv-daemon/
+# Generated from project.yml by `xcodegen generate`.
+DeviceHub.xcodeproj/
+__pycache__/
