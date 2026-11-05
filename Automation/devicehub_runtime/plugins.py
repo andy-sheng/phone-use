@@ -1,6 +1,7 @@
-"""Manifest-only discovery, compatible plugin loading and local package installation."""
+"""Manifest-only discovery, compatible plugin loading and .dhplugin installation."""
 
 import hashlib
+import http.client
 import importlib
 import importlib.metadata
 import json
@@ -10,6 +11,10 @@ import shutil
 import stat
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -21,6 +26,10 @@ SCHEMA = "devicehub.plugin.v1"
 CAPABILITIES = {"screenshot", "touch", "swipe", "launch", "portrait", "ocr"}
 MAX_PACKAGE_BYTES = 256 * 1024 * 1024
 MAX_PACKAGE_FILES = 10000
+PACKAGE_EXTENSION = ".dhplugin"
+DOWNLOAD_TIMEOUT = 120
+SOCKET_TIMEOUT = 10
+MAX_DOWNLOAD_REDIRECTS = 5
 INSTALLED_ROOT = Path.home() / "Library/Application Support/DeviceHub/Plugins"
 
 
@@ -297,10 +306,13 @@ def pack_plugin(root, output):
         with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED) as archive:
             for path, relative in files:
                 archive.write(path, relative.as_posix())
+        if temporary.stat().st_size > MAX_PACKAGE_BYTES:
+            raise ValueError("插件包过大")
         os.replace(temporary, output)
     finally:
         temporary.unlink(missing_ok=True)
-    return {"path": str(output), "files": len(files), "sha256": hashlib.sha256(output.read_bytes()).hexdigest()}
+    return {"path": str(output), "format": "dhplugin", "files": len(files),
+            "sha256": hashlib.sha256(output.read_bytes()).hexdigest()}
 
 
 def extract_package(source, destination):
@@ -310,6 +322,10 @@ def extract_package(source, destination):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, target)
         return
+    if source.stat().st_size > MAX_PACKAGE_BYTES:
+        raise ValueError("插件包过大")
+    if not zipfile.is_zipfile(source):
+        raise ValueError("不是有效的 phone-use 插件包，请选择 .dhplugin 或 ZIP 文件")
     with zipfile.ZipFile(source) as archive:
         entries = archive.infolist()
         if len(entries) > MAX_PACKAGE_FILES or sum(item.file_size for item in entries) > MAX_PACKAGE_BYTES:
@@ -356,3 +372,104 @@ def install_plugin(source, destination=None):
             target.parent.mkdir(parents=True, exist_ok=True)
             os.replace(staged, target)
     return {"plugin_id": plugin_id, "version": version, "message": f"已安装 {manifest['name']} {version}"}
+
+
+def validate_download_url(value):
+    """Validate every hop without including a potentially signed URL in diagnostics."""
+    if not isinstance(value, str) or any(ord(character) < 32 or character.isspace() for character in value):
+        raise ValueError("请输入有效的 HTTP 或 HTTPS 插件下载地址")
+    try:
+        url = urllib.parse.urlsplit(value)
+        # Accessing port validates malformed/out-of-range port syntax as well.
+        port = url.port
+        if (url.scheme not in {"http", "https"} or not url.hostname or
+                url.username is not None or url.password is not None or "\\" in url.netloc):
+            raise ValueError
+        if port is not None and port == 0:
+            raise ValueError
+        # urllib expects an ASCII transport URL. Unicode paths must be percent encoded.
+        value.encode("ascii")
+    except (ValueError, UnicodeError):
+        raise ValueError("请输入有效的 HTTP 或 HTTPS 插件下载地址，地址中不能包含用户名或密码") from None
+    return urllib.parse.urlunsplit(url._replace(fragment=""))
+
+
+class PackageRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self, deadline):
+        super().__init__()
+        self.deadline = deadline
+        self.redirects = 0
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        self.redirects += 1
+        if self.redirects > MAX_DOWNLOAD_REDIRECTS:
+            raise ValueError("插件下载地址重定向次数过多，请使用直接下载链接")
+        if time.monotonic() >= self.deadline:
+            raise TimeoutError
+        target = validate_download_url(newurl)
+        if urllib.parse.urlsplit(req.full_url).scheme == "https" and urllib.parse.urlsplit(target).scheme != "https":
+            raise ValueError("插件下载地址不能从 HTTPS 重定向到 HTTP")
+        return super().redirect_request(req, fp, code, msg, headers, target)
+
+
+def download_package(url, target):
+    url = validate_download_url(url.strip())
+    deadline = time.monotonic() + DOWNLOAD_TIMEOUT
+    opener = urllib.request.build_opener(PackageRedirectHandler(deadline))
+    request = urllib.request.Request(url, headers={
+        "User-Agent": f"phone-use/{VERSION}",
+        "Accept": "application/vnd.devicehub.plugin+zip, application/zip, application/octet-stream",
+        "Accept-Encoding": "identity",
+    })
+    try:
+        with opener.open(request, timeout=SOCKET_TIMEOUT) as response:
+            validate_download_url(response.geturl())
+            if response.status != 200:
+                raise ValueError(f"插件下载失败（HTTP {response.status}），请使用插件包的直接下载链接")
+            length = response.headers.get("Content-Length")
+            if length is not None:
+                try:
+                    length = int(length)
+                except ValueError:
+                    raise ValueError("插件下载响应的文件大小无效") from None
+                if length < 0:
+                    raise ValueError("插件下载响应的文件大小无效")
+                if length > MAX_PACKAGE_BYTES:
+                    raise ValueError("插件包过大，下载文件不能超过 256 MiB")
+            total = 0
+            with Path(target).open("wb") as output:
+                while True:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError
+                    # read1 performs at most one buffered/socket read, so a slow sender
+                    # cannot defer the total deadline check until a full chunk arrives.
+                    chunk = response.read1(64 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_PACKAGE_BYTES:
+                        raise ValueError("插件包过大，下载文件不能超过 256 MiB")
+                    output.write(chunk)
+            if time.monotonic() >= deadline:
+                raise TimeoutError
+            if length is not None and total != length:
+                raise ValueError("插件下载不完整，请重新下载")
+    except urllib.error.HTTPError as error:
+        raise ValueError(f"插件下载失败（HTTP {error.code}），请检查下载链接") from None
+    except (TimeoutError, urllib.error.URLError, OSError, http.client.HTTPException) as error:
+        reason = error.reason if isinstance(error, urllib.error.URLError) else error
+        if isinstance(reason, TimeoutError):
+            raise ValueError("插件下载超时，请稍后重试") from None
+        raise ValueError("无法下载插件，请检查网络和下载链接") from None
+
+
+def install_plugin_url(url, destination=None):
+    # A release endpoint need not have a filename extension. The downloaded bytes
+    # must still satisfy precisely the same package contract as a local file.
+    url = validate_download_url(url.strip())
+    destination = Path(destination or INSTALLED_ROOT).resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".download-", dir=destination) as temporary:
+        package = Path(temporary) / ("package" + PACKAGE_EXTENSION)
+        download_package(url, package)
+        return install_plugin(package, destination)

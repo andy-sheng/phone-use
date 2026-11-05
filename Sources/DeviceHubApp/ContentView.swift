@@ -8,9 +8,10 @@ struct ContentView: View {
     @State private var search = ""
     @State private var trailingPanel: TrailingPanel? = .automation
     @State private var presentedSheet: TaskSheet?
+    @State private var showsTaskLibrary = false
 
     private enum TaskSheet: String, Identifiable {
-        case library, importTask, plugins
+        case importTask, plugins
         var id: String { rawValue }
     }
 
@@ -44,13 +45,22 @@ struct ContentView: View {
                 detail
                     .frame(minWidth: 300, maxWidth: .infinity, maxHeight: .infinity)
                 if trailingPanel != nil {
-                    Group {
+                    // Keep one split-view child while navigating within the pane so its
+                    // divider position does not reset with each page's view identity.
+                    VStack(spacing: 0) {
                         switch trailingPanel {
                         case .automation:
-                            AutomationPanel(device: model.selectedDevice, automation: automation,
-                                            importTask: { presentedSheet = .importTask }, openLibrary: { presentedSheet = .library },
-                                            managePlugins: { presentedSheet = .plugins },
-                                            close: { trailingPanel = nil })
+                            if showsTaskLibrary, automation.selectedPlugin != nil {
+                                AutomationLibraryPage(automation: automation,
+                                                      open: { _ = automation.openTask($0) },
+                                                      importTask: { presentedSheet = .importTask },
+                                                      back: { showsTaskLibrary = false })
+                            } else {
+                                AutomationPanel(device: model.selectedDevice, automation: automation,
+                                                openLibrary: { showsTaskLibrary = true },
+                                                managePlugins: { presentedSheet = .plugins },
+                                                close: { trailingPanel = nil })
+                            }
                         case .deviceInfo:
                             if let device = model.selectedDevice {
                                 DeviceInspector(device: device, screen: screen)
@@ -72,15 +82,22 @@ struct ContentView: View {
         .frame(minWidth: 940, minHeight: 680)
         .sheet(item: $presentedSheet) { sheet in
             switch sheet {
-            case .library: AutomationLibrarySheet().environmentObject(automation)
             case .importTask: AutomationImportSheet(automation: automation)
             case .plugins: AutomationPluginsSheet(automation: automation)
             }
         }
         .onChange(of: automation.importGeneration) { _, _ in
+            showsTaskLibrary = false
             trailingPanel = .automation
         }
-        .onChange(of: automation.openGeneration) { _, _ in trailingPanel = .automation }
+        .onChange(of: automation.openGeneration) { _, _ in
+            showsTaskLibrary = false
+            trailingPanel = .automation
+        }
+        .onChange(of: automation.selectedPluginID) { _, _ in showsTaskLibrary = false }
+        .onChange(of: trailingPanel) { _, panel in
+            if panel != .automation { showsTaskLibrary = false }
+        }
     }
 
     private var sidebar: some View {

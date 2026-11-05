@@ -4,7 +4,7 @@ import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from .plugins import discover, install_plugin, pack_plugin
+from .plugins import discover, install_plugin, install_plugin_url, pack_plugin
 from .tasks import import_task, refresh_library, write_manifest
 
 
@@ -23,6 +23,7 @@ def parser():
             command.add_argument("--output", required=True, type=Path)
         elif name == "refresh-library":
             command.add_argument("--library", type=Path, required=True)
+            command.add_argument("--plugin", help="Refresh only this plugin's tasks without loading other plugins")
         elif name in {"run", "probe"}:
             if name == "run":
                 command.add_argument("--plugin", required=True)
@@ -36,7 +37,9 @@ def parser():
             command.add_argument("--output", type=Path, default=root / ".build/automation/run")
             command.add_argument("--watch-stdin", action="store_true")
         elif name == "install":
-            command.add_argument("--package", type=Path, required=True)
+            source = command.add_mutually_exclusive_group(required=True)
+            source.add_argument("--package", type=Path)
+            source.add_argument("--url", help="HTTP(S) direct link to a .dhplugin package")
             command.add_argument("--destination", type=Path)
         elif name == "pack":
             command.add_argument("--plugin", type=Path, required=True)
@@ -54,7 +57,7 @@ def main(argv=None):
 def dispatch(args, output):
     try:
         if args.command == "install":
-            result = install_plugin(args.package, args.destination)
+            result = install_plugin_url(args.url, args.destination) if args.url else install_plugin(args.package, args.destination)
         elif args.command == "pack":
             result = pack_plugin(args.plugin, args.output)
         else:
@@ -66,7 +69,7 @@ def dispatch(args, output):
                 write_manifest(args.output, result)
                 result = {key: value for key, value in result.items() if key != "document"}
             elif args.command == "refresh-library":
-                result = refresh_library(args.library, packages)
+                result = refresh_library(args.library, packages, plugin_id=args.plugin)
             else:
                 from .runner import run
                 return run(args, packages, output_stream=output)

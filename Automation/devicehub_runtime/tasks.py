@@ -92,17 +92,30 @@ def import_task(packages, plugin_id, *, source=None, file=None):
     return inspect_task(package, read_document(file), source=Path(file).name, fallback_title=Path(file).stem)
 
 
-def refresh_library(directory, packages):
+def refresh_library(directory, packages, *, plugin_id=None):
+    """Refresh the selected plugin only; unscoped CLI maintenance remains supported.
+
+    Ownership detection reads manifests and documents without importing plugin code.
+    A scoped refresh leaves other plugins' records, including unavailable or
+    unattributed records, untouched.
+    """
+    if plugin_id is not None and plugin_id not in packages:
+        raise ValueError(f"任务插件未安装或不兼容：{plugin_id}")
     errors = []
     for path in sorted(Path(directory).glob("*.json")):
+        owner = None
         try:
             raw = read_document(path)
-            plugin_id = raw.get("plugin_id") or detected_plugin(unwrap(raw), packages)
-            package = packages.get(plugin_id)
+            owner = raw.get("plugin_id") or detected_plugin(unwrap(raw), packages)
+            if plugin_id is not None and owner != plugin_id:
+                continue
+            package = packages.get(owner)
             if package is None:
-                raise ValueError(f"任务插件未安装或不兼容：{plugin_id}")
+                raise ValueError(f"任务插件未安装或不兼容：{owner}")
             result = inspect_task(package, raw, fallback_title=path.stem)
         except Exception as error:
+            if plugin_id is not None and owner != plugin_id:
+                continue
             errors.append(f"{path.name}：{error}")
             # Keep original documents and user metadata even if a plugin is unavailable.
             try:

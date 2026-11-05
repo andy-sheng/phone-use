@@ -54,6 +54,15 @@ targets:
         LSApplicationCategoryType: public.app-category.developer-tools
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSCameraUsageDescription: phone-use mirrors USB-connected iPhone screens through the system screen capture device.
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: dev.devicehub.plugin
+            UTTypeDescription: phone-use Plugin
+            UTTypeConformsTo:
+              - public.zip-archive
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - dhplugin
+              public.mime-type: application/vnd.devicehub.plugin+zip
     entitlements:
       path: Support/DeviceHub.entitlements
       properties:

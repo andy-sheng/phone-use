@@ -4,6 +4,7 @@ struct AutomationLibraryPage: View {
     @ObservedObject var automation: AutomationModel
     let open: (AutomationTask) -> Void
     let importTask: () -> Void
+    let back: () -> Void
     @State private var search = ""
 
     private var pluginTasks: [AutomationTask] { automation.visibleTasks }
@@ -19,20 +20,40 @@ struct AutomationLibraryPage: View {
     private var importedTasks: [AutomationTask] { matches.filter { !$0.isBuiltIn } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(spacing: 0) {
             HStack {
-                Text("\(automation.selectedPluginTitle) · 共 \(pluginTasks.count) 项任务")
-                    .font(.callout).foregroundStyle(.secondary)
+                Button(action: back) { Label("返回插件", systemImage: "chevron.left") }
                 Spacer()
-                if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text("找到 \(matches.count) 项").font(.caption).foregroundStyle(.secondary)
-                }
+                Button(action: importTask) { Label("导入任务", systemImage: "plus") }
+                    .disabled(!automation.canImport)
             }
-            TextField("搜索\(automation.selectedPluginTitle)的任务", text: $search).textFieldStyle(.roundedBorder)
-            if automation.isRunning {
-                Text("当前任务正在运行，停止后可切换到其他任务。")
+            .padding(.horizontal, 16)
+            .frame(height: 56)
+            Divider()
+            libraryContent
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: automation.selectedPluginID) { _, _ in search = "" }
+    }
+
+    private var libraryContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("\(automation.selectedPluginTitle) · 任务库").font(.title3.weight(.semibold))
+                Text("打开任务后返回主面板，不会自动运行。")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            TextField("搜索任务名称、作者或编号", text: $search)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("搜索当前插件的任务")
+            HStack(alignment: .firstTextBaseline) {
+                Text(search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                     ? "共 \(pluginTasks.count) 项任务" : "找到 \(matches.count) 项任务")
+                Spacer()
+                if automation.isRunning { Text("运行中仅可浏览") }
+            }
+            .font(.caption).foregroundStyle(.secondary)
             if matches.isEmpty {
                 ContentUnavailableView {
                     Label(pluginTasks.isEmpty ? "\(automation.selectedPluginTitle)暂无任务" : "没有匹配的任务", systemImage: "tray")
@@ -53,7 +74,7 @@ struct AutomationLibraryPage: View {
                             taskSection("内置任务", tasks: builtInTasks)
                         }
                         if !importedTasks.isEmpty {
-                            taskSection("已导入任务", tasks: importedTasks)
+                            taskSection("已导入", tasks: importedTasks)
                         }
                     }
                 }
@@ -64,7 +85,6 @@ struct AutomationLibraryPage: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onChange(of: automation.selectedPluginID) { _, _ in search = "" }
     }
 
     @ViewBuilder
@@ -89,7 +109,7 @@ struct AutomationLibraryPage: View {
                 }
                 Spacer(minLength: 4)
                 Button("打开") { open(item) }
-                    .disabled(automation.isInstalling || automation.isImporting || automation.isRefreshingTasks || (automation.isRunning && automation.selectedTaskID != item.id))
+                    .disabled(automation.isBusy)
                     .accessibilityLabel("打开任务：\(item.title)")
                 if !item.isBuiltIn {
                     Button { automation.removeTask(item) } label: { Image(systemName: "trash") }
@@ -101,7 +121,8 @@ struct AutomationLibraryPage: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+            .background(automation.selectedTaskID == item.id ? Color.accentColor.opacity(0.09) : Color.secondary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: 10))
         }
     }
 }

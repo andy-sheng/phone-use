@@ -49,6 +49,8 @@ final class AutomationModel: ObservableObject {
     @Published private(set) var libraryError: String?
     @Published private(set) var taskLibraryError: String?
     @Published private(set) var pluginMessage: String?
+    @Published private(set) var pluginInstallError: String?
+    @Published private(set) var installGeneration = 0
     @Published private(set) var isInstalling = false
     @Published private(set) var runTask: AutomationTask?
     @Published private(set) var isRefreshingTasks = false
@@ -59,7 +61,7 @@ final class AutomationModel: ObservableObject {
     var selectedPluginTitle: String { selectedPluginID.map(pluginName) ?? "自动化" }
     var displayedTask: AutomationTask? { isRunning ? (runTask ?? selectedTask) : selectedTask }
     var visibleTasks: [AutomationTask] { tasks.filter { $0.pluginID == selectedPluginID } }
-    var pluginIDs: [String] { Array(Set(plugins.map(\.id) + tasks.map(\.pluginID))).sorted() }
+    var pluginIDs: [String] { plugins.map(\.id).sorted() }
     var isBusy: Bool { isRunning || isImporting || isRefreshingTasks || isInstalling }
     var canImport: Bool { !(selectedPlugin?.imports.isEmpty ?? true) && !isBusy }
     var phases: [AutomationPhase] {
@@ -75,6 +77,7 @@ final class AutomationModel: ObservableObject {
                                         rememberedTasks: defaults.dictionary(forKey: Self.selectionsKey) as? [String: String])
         selectedPluginID = selection.pluginID
         selectedTaskID = selection.taskID
+        isRefreshingTasks = true
         Task { await refreshLibrary() }
     }
 
@@ -83,8 +86,20 @@ final class AutomationModel: ObservableObject {
     }
 
     @discardableResult
-    func selectPlugin(_ id: String) -> Bool {
-        guard !isBusy, selection.selectPlugin(id, pluginIDs: pluginIDs, tasks: taskReferences) else { return false }
+    func loadPlugin(_ id: String) -> Bool {
+        guard !isBusy, selection.loadPlugin(id, pluginIDs: pluginIDs, tasks: taskReferences) else { return false }
+        applySelection()
+        // Lock synchronously: no task can start or switch plugins while its documents refresh.
+        isRefreshingTasks = true
+        Task { await refreshLibrary() }
+        openGeneration += 1
+        return true
+    }
+
+    @discardableResult
+    func unloadPlugin() -> Bool {
+        guard !isBusy, selectedPluginID != nil else { return false }
+        selection.unloadPlugin()
         applySelection()
         openGeneration += 1
         return true
@@ -97,8 +112,7 @@ final class AutomationModel: ObservableObject {
     private var taskReferences: [AutomationSelection.TaskReference] { tasks.map(reference) }
 
     private func reconcileSelection() {
-        let preferred = plugins.first(where: { !$0.tasks.isEmpty })?.id ?? plugins.first?.id
-        selection.reconcile(pluginIDs: pluginIDs, tasks: taskReferences, preferredPluginID: preferred)
+        selection.reconcile(pluginIDs: pluginIDs, tasks: taskReferences)
         applySelection()
     }
 
@@ -118,11 +132,15 @@ final class AutomationModel: ObservableObject {
         logs = []
         screenshot = nil
         outputDirectory = nil
-        message = selectedTaskID == nil ? "在当前插件中选择或导入任务。" : "选择任务后点击开始。"
+        runTask = nil
+        runDevice = nil
+        isProbe = false
+        message = selectedPluginID == nil ? "选择一个插件加载。" :
+            selectedTaskID == nil ? "从任务库选择或导入任务。" : "任务已就绪，点击开始。"
     }
 
     func canRun(_ task: AutomationTask) -> Bool {
-        task.canRun && plugins.contains(where: { $0.id == task.pluginID }) && configurationIssues(for: task).isEmpty
+        task.canRun && task.pluginID == selectedPlugin?.id && configurationIssues(for: task).isEmpty
     }
 
     func issues(for task: AutomationTask) -> [String] {
@@ -135,6 +153,7 @@ final class AutomationModel: ObservableObject {
 
     func reloadPlugins() {
         guard !isBusy else { return }
+        isRefreshingTasks = true
         Task { await refreshLibrary() }
     }
 
@@ -146,10 +165,10 @@ final class AutomationModel: ObservableObject {
     }
 
     private func refreshLibrary() async {
+        defer { isRefreshingTasks = false }
         guard !isRunning else { return }
         guard let runtime = Self.locateRuntime() else {
             libraryError = "自动化运行环境尚未准备。设备预览和手动操作仍可使用。"
-            reconcileSelection()
             return
         }
         isRefreshingTasks = true
@@ -157,37 +176,78 @@ final class AutomationModel: ObservableObject {
             let catalog = try JSONDecoder().decode(Catalog.self, from: await Self.request(["catalog"], runtime: runtime))
             var errors = catalog.errors ?? []
             plugins = catalog.plugins
-            do {
-                let refresh = try await Self.request(["refresh-library", "--library", AutomationTask.libraryDirectory.path], runtime: runtime)
-                if let response = try JSONSerialization.jsonObject(with: refresh) as? [String: Any] {
-                    errors += response["errors"] as? [String] ?? []
-                }
-            } catch { errors.append(error.localizedDescription) }
+            // Catalog discovery reads manifests only. Python task inspection belongs solely
+            // to the loaded plugin; no plugin code is invoked while the host is unloaded.
             tasks = plugins.flatMap { plugin in plugin.tasks.map { AutomationTask.builtIn($0, plugin: plugin) } } + Self.readLibrary()
             reconcileSelection()
+            if let plugin = selectedPlugin {
+                do {
+                    let refresh = try await Self.request(["refresh-library", "--plugin", plugin.id,
+                                                          "--library", AutomationTask.libraryDirectory.path], runtime: runtime)
+                    if let response = try JSONSerialization.jsonObject(with: refresh) as? [String: Any] {
+                        errors += response["errors"] as? [String] ?? []
+                    }
+                } catch { errors.append(error.localizedDescription) }
+                tasks = plugins.flatMap { plugin in plugin.tasks.map { AutomationTask.builtIn($0, plugin: plugin) } } + Self.readLibrary()
+                reconcileSelection()
+            }
             libraryError = errors.isEmpty ? nil : errors.joined(separator: "\n")
         } catch {
             libraryError = error.localizedDescription
-            reconcileSelection()
         }
-        isRefreshingTasks = false
+    }
+
+    func preparePluginInstall() {
+        guard !isInstalling else { return }
+        pluginMessage = nil
+        pluginInstallError = nil
     }
 
     func installPlugin(_ package: URL) {
-        guard !isBusy, let runtime = Self.locateRuntime() else { return }
+        installPlugin(arguments: ["--package", package.path], remote: false)
+    }
+
+    func installPlugin(fromURL text: String) {
+        let address = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !isBusy else { return }
+        guard let url = URLComponents(string: address),
+              ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
+              let host = url.host, !host.isEmpty, url.user == nil, url.password == nil else {
+            pluginMessage = nil
+            pluginInstallError = "请输入有效的 HTTP 或 HTTPS 插件包链接。"
+            return
+        }
+        installPlugin(arguments: ["--url", address], remote: true)
+    }
+
+    private func installPlugin(arguments: [String], remote: Bool) {
+        guard !isBusy else { return }
+        preparePluginInstall()
+        guard let runtime = Self.locateRuntime() else {
+            pluginInstallError = "自动化运行环境尚未准备。"
+            return
+        }
         isInstalling = true
-        pluginMessage = "正在检查并安装插件…"
+        pluginMessage = remote ? "正在下载、检查并安装插件…" : "正在检查并安装插件…"
         Task {
+            defer { isInstalling = false }
             do {
-                let result = try await Self.request(["install", "--package", package.path], runtime: runtime)
+                let result = try await Self.request(["install"] + arguments, runtime: runtime,
+                                                    timeout: remote ? 180 : 60)
                 let response = try JSONSerialization.jsonObject(with: result) as? [String: Any]
-                pluginMessage = response?["message"] as? String ?? "插件已安装。"
-                isInstalling = false
+                // Installing a release must not activate its Python code, including updates
+                // to the currently loaded plugin. Its task/config memory is retained.
+                if let installedID = response?["plugin_id"] as? String, installedID == selectedPluginID {
+                    selection.unloadPlugin()
+                    applySelection()
+                    openGeneration += 1
+                }
+                pluginMessage = (response?["message"] as? String ?? "插件已安装。") + " 请选中插件后加载。"
                 await refreshLibrary()
-                if let id = response?["plugin_id"] as? String { selectPlugin(id) }
+                installGeneration += 1
             } catch {
-                pluginMessage = error.localizedDescription
-                isInstalling = false
+                pluginMessage = nil
+                pluginInstallError = error.localizedDescription
             }
         }
     }
@@ -204,8 +264,8 @@ final class AutomationModel: ObservableObject {
 
     @discardableResult
     func openTask(_ task: AutomationTask) -> Bool {
-        guard !isImporting, !isRefreshingTasks, !isInstalling, !isRunning || task.id == selectedTaskID,
-              tasks.contains(where: { $0.id == task.id }) else { return false }
+        guard !isBusy, task.pluginID == selectedPlugin?.id,
+              tasks.contains(where: { reference($0) == reference(task) }) else { return false }
         guard selection.selectTask(reference(task), tasks: taskReferences) else { return false }
         applySelection()
         openGeneration += 1
@@ -213,7 +273,8 @@ final class AutomationModel: ObservableObject {
     }
 
     func removeTask(_ task: AutomationTask) {
-        guard !isBusy, let file = task.file, let index = tasks.firstIndex(where: { $0.id == task.id }) else { return }
+        guard !isBusy, task.pluginID == selectedPlugin?.id, let file = task.file,
+              let index = tasks.firstIndex(where: { reference($0) == reference(task) }) else { return }
         do {
             try FileManager.default.trashItem(at: file, resultingItemURL: nil)
             tasks.remove(at: index)
@@ -240,6 +301,10 @@ final class AutomationModel: ObservableObject {
                 else { arguments += ["--source", source?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""] }
                 _ = try await Self.request(arguments, runtime: runtime)
                 let imported = try AutomationTask.read(output)
+                guard imported.pluginID == plugin.id else {
+                    throw NSError(domain: "AutomationRuntime", code: 1,
+                                  userInfo: [NSLocalizedDescriptionKey: "导入的任务不属于当前插件。"])
+                }
                 tasks.append(imported)
                 selection.selectTask(reference(imported), tasks: taskReferences)
                 applySelection()
@@ -293,7 +358,7 @@ final class AutomationModel: ObservableObject {
     }
 
     func setValue(_ value: AutomationValue, for parameter: AutomationParameter, task: AutomationTask) {
-        guard !isRunning else { return }
+        guard !isBusy, task.id == selectedTaskID, task.pluginID == selectedPlugin?.id else { return }
         var values = configuration(for: task)
         values[parameter.key] = value
         if let data = try? JSONEncoder().encode(values) {
@@ -302,7 +367,7 @@ final class AutomationModel: ObservableObject {
         }
     }
 
-    private static func request(_ arguments: [String], runtime: Runtime) async throws -> Data {
+    private static func request(_ arguments: [String], runtime: Runtime, timeout: TimeInterval = 60) async throws -> Data {
         try await Task.detached(priority: .userInitiated) {
             let process = Process()
             process.executableURL = runtime.python
@@ -322,13 +387,13 @@ final class AutomationModel: ObservableObject {
                     if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
                 }
             }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 60, execute: deadline)
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: deadline)
             defer { deadline.cancel() }
             let data = output.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             guard process.terminationStatus == 0 else {
                 let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                let fallback = Date().timeIntervalSince(started) >= 60 ? "插件响应超时，已结束此次操作。" : "自动化运行环境调用失败。"
+                let fallback = Date().timeIntervalSince(started) >= timeout ? "插件响应超时，已结束此次操作。" : "自动化运行环境调用失败。"
                 throw NSError(domain: "AutomationRuntime", code: Int(process.terminationStatus),
                               userInfo: [NSLocalizedDescriptionKey: response?["error"] as? String ?? fallback])
             }
@@ -354,7 +419,7 @@ final class AutomationModel: ObservableObject {
     var isPrepared: Bool { Self.locateRuntime() != nil }
 
     func start(device: DeviceSummary, probe: Bool = false) {
-        guard !isBusy else { return }
+        guard !isBusy, selectedPlugin != nil, device.isReady else { return }
         let task = selectedTask
         guard probe || task.map(canRun) == true else { return }
         guard let runtime = Self.locateRuntime() else {

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Keeps task selection scoped to a plugin, independently of catalog loading and the UI.
+/// One loaded plugin, with an independent remembered task for each plugin.
 struct AutomationSelection {
     struct TaskReference: Equatable {
         let id: String
@@ -23,31 +23,30 @@ struct AutomationSelection {
         }
     }
 
-    mutating func reconcile(pluginIDs: [String], tasks: [TaskReference], preferredPluginID: String? = nil) {
-        if let legacyTaskID, let task = tasks.first(where: { $0.id == legacyTaskID }) {
-            // Legacy documents receive their owning plugin during runtime migration.
-            if let oldPlugin = pluginID, oldPlugin != task.pluginID, rememberedTasks[oldPlugin] == task.id {
-                rememberedTasks.removeValue(forKey: oldPlugin)
+    mutating func reconcile(pluginIDs: [String], tasks: [TaskReference]) {
+        // A runtime migration may assign an old document to its owning plugin.
+        // Move its remembered selection, without implicitly loading another plugin.
+        for (owner, remembered) in rememberedTasks {
+            if let task = tasks.first(where: { $0.id == remembered }), task.pluginID != owner {
+                rememberedTasks[task.pluginID] = rememberedTasks[task.pluginID] ?? task.id
+                rememberedTasks.removeValue(forKey: owner)
             }
-            rememberedTasks[task.pluginID] = task.id
-            pluginID = task.pluginID
-            taskID = task.id
-            if task.pluginID != "unassigned" { self.legacyTaskID = nil }
-        } else if let taskID, let currentPlugin = pluginID,
-                  let task = tasks.first(where: { $0.id == taskID }), task.pluginID != currentPlugin {
-            // Follow a selected document when a migration changes its plugin attribution.
-            if rememberedTasks[currentPlugin] == task.id { rememberedTasks.removeValue(forKey: currentPlugin) }
-            pluginID = task.pluginID
-            rememberedTasks[task.pluginID] = task.id
         }
-        if pluginID == nil || !pluginIDs.contains(pluginID!) {
-            pluginID = preferredPluginID.flatMap { pluginIDs.contains($0) ? $0 : nil } ?? pluginIDs.first
+        if let legacyTaskID, let task = tasks.first(where: { $0.id == legacyTaskID }),
+           pluginIDs.contains(task.pluginID) {
+            // Only migrate a legacy global selection once. An explicit unload clears it.
+            rememberedTasks[task.pluginID] = task.id
+            pluginID = task.pluginID
+            self.legacyTaskID = nil
+        }
+        if let pluginID, !pluginIDs.contains(pluginID) {
+            self.pluginID = nil
         }
         restoreTask(from: tasks)
     }
 
     @discardableResult
-    mutating func selectPlugin(_ id: String, pluginIDs: [String], tasks: [TaskReference]) -> Bool {
+    mutating func loadPlugin(_ id: String, pluginIDs: [String], tasks: [TaskReference]) -> Bool {
         guard pluginIDs.contains(id) else { return false }
         legacyTaskID = nil
         pluginID = id
@@ -55,11 +54,16 @@ struct AutomationSelection {
         return true
     }
 
+    mutating func unloadPlugin() {
+        legacyTaskID = nil
+        pluginID = nil
+        taskID = nil
+    }
+
     @discardableResult
     mutating func selectTask(_ task: TaskReference, tasks: [TaskReference]) -> Bool {
-        guard tasks.contains(task) else { return false }
+        guard task.pluginID == pluginID, tasks.contains(task) else { return false }
         legacyTaskID = nil
-        pluginID = task.pluginID
         taskID = task.id
         rememberedTasks[task.pluginID] = task.id
         return true
@@ -68,7 +72,7 @@ struct AutomationSelection {
     mutating func removeTask(_ task: TaskReference, remainingTasks: [TaskReference], pluginIDs: [String]) {
         if rememberedTasks[task.pluginID] == task.id { rememberedTasks.removeValue(forKey: task.pluginID) }
         if legacyTaskID == task.id { legacyTaskID = nil }
-        if taskID == task.id { taskID = nil }
+        if taskID == task.id && pluginID == task.pluginID { taskID = nil }
         reconcile(pluginIDs: pluginIDs, tasks: remainingTasks)
     }
 
@@ -78,8 +82,7 @@ struct AutomationSelection {
         if let remembered = rememberedTasks[pluginID], scoped.contains(where: { $0.id == remembered }) {
             taskID = remembered
         } else {
-            taskID = scoped.first?.id
-            if let taskID { rememberedTasks[pluginID] = taskID }
+            taskID = nil
             // Preserve unavailable selections, including a removed plugin's built-in task.
             // They can be restored if that plugin is installed again.
         }
