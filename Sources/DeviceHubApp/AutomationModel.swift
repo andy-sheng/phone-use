@@ -38,33 +38,16 @@ final class AutomationModel: ObservableObject {
     @Published private(set) var completedPhases: Set<String> = []
     @Published private(set) var tasks: [AutomationTask] = []
     @Published private(set) var plugins: [AutomationPlugin] = []
-    @Published var selectedPluginID: String? {
-        didSet {
-            guard !isRunning, oldValue != selectedPluginID else { return }
-            UserDefaults.standard.set(selectedPluginID, forKey: "automation.selectedPlugin")
-            if selectedTask?.pluginID != selectedPluginID {
-                selectedTaskID = tasks.first(where: { $0.pluginID == selectedPluginID })?.id
-            }
-        }
-    }
-    @Published var selectedTaskID: String? {
-        didSet {
-            guard !isRunning, oldValue != selectedTaskID else { return }
-            UserDefaults.standard.set(selectedTaskID, forKey: "automation.selectedTask")
-            outcome = nil
-            phase = nil
-            completedPhases = []
-            logs = []
-            screenshot = nil
-            outputDirectory = nil
-            message = "选择任务后点击开始。"
-        }
-    }
+    @Published private(set) var selectedPluginID: String?
+    @Published private(set) var selectedTaskID: String?
+    private var selection = AutomationSelection()
+    private static let selectionsKey = "automation.selectedTasksByPlugin"
     @Published private(set) var isImporting = false
     @Published private(set) var importMessage: String?
     @Published private(set) var importGeneration = 0
     @Published private(set) var openGeneration = 0
     @Published private(set) var libraryError: String?
+    @Published private(set) var taskLibraryError: String?
     @Published private(set) var pluginMessage: String?
     @Published private(set) var isInstalling = false
     @Published private(set) var runTask: AutomationTask?
@@ -72,7 +55,8 @@ final class AutomationModel: ObservableObject {
     @Published private var settingsRevision = 0
 
     var selectedPlugin: AutomationPlugin? { plugins.first { $0.id == selectedPluginID } }
-    var selectedTask: AutomationTask? { tasks.first { $0.id == selectedTaskID } }
+    var selectedTask: AutomationTask? { tasks.first { $0.id == selectedTaskID && $0.pluginID == selectedPluginID } }
+    var selectedPluginTitle: String { selectedPluginID.map(pluginName) ?? "自动化" }
     var displayedTask: AutomationTask? { isRunning ? (runTask ?? selectedTask) : selectedTask }
     var visibleTasks: [AutomationTask] { tasks.filter { $0.pluginID == selectedPluginID } }
     var pluginIDs: [String] { Array(Set(plugins.map(\.id) + tasks.map(\.pluginID))).sorted() }
@@ -85,13 +69,56 @@ final class AutomationModel: ObservableObject {
 
     init() {
         tasks = Self.readLibrary()
-        selectedTaskID = UserDefaults.standard.string(forKey: "automation.selectedTask")
-        selectedPluginID = UserDefaults.standard.string(forKey: "automation.selectedPlugin")
+        let defaults = UserDefaults.standard
+        selection = AutomationSelection(pluginID: defaults.string(forKey: "automation.selectedPlugin"),
+                                        legacyTaskID: defaults.string(forKey: "automation.selectedTask"),
+                                        rememberedTasks: defaults.dictionary(forKey: Self.selectionsKey) as? [String: String])
+        selectedPluginID = selection.pluginID
+        selectedTaskID = selection.taskID
         Task { await refreshLibrary() }
     }
 
     func pluginName(_ id: String) -> String {
         plugins.first(where: { $0.id == id })?.name ?? (id == "unassigned" ? "待迁移任务" : id + "（未安装）")
+    }
+
+    @discardableResult
+    func selectPlugin(_ id: String) -> Bool {
+        guard !isBusy, selection.selectPlugin(id, pluginIDs: pluginIDs, tasks: taskReferences) else { return false }
+        applySelection()
+        openGeneration += 1
+        return true
+    }
+
+    private func reference(_ task: AutomationTask) -> AutomationSelection.TaskReference {
+        AutomationSelection.TaskReference(id: task.id, pluginID: task.pluginID)
+    }
+
+    private var taskReferences: [AutomationSelection.TaskReference] { tasks.map(reference) }
+
+    private func reconcileSelection() {
+        let preferred = plugins.first(where: { !$0.tasks.isEmpty })?.id ?? plugins.first?.id
+        selection.reconcile(pluginIDs: pluginIDs, tasks: taskReferences, preferredPluginID: preferred)
+        applySelection()
+    }
+
+    private func applySelection() {
+        let changed = selectedPluginID != selection.pluginID || selectedTaskID != selection.taskID
+        selectedPluginID = selection.pluginID
+        selectedTaskID = selection.taskID
+        let defaults = UserDefaults.standard
+        defaults.set(selection.rememberedTasks, forKey: Self.selectionsKey)
+        defaults.set(selectedPluginID, forKey: "automation.selectedPlugin")
+        defaults.set(selectedTaskID, forKey: "automation.selectedTask")
+        guard changed else { return }
+        taskLibraryError = nil
+        outcome = nil
+        phase = nil
+        completedPhases = []
+        logs = []
+        screenshot = nil
+        outputDirectory = nil
+        message = selectedTaskID == nil ? "在当前插件中选择或导入任务。" : "选择任务后点击开始。"
     }
 
     func canRun(_ task: AutomationTask) -> Bool {
@@ -119,12 +146,13 @@ final class AutomationModel: ObservableObject {
     }
 
     private func refreshLibrary() async {
-        guard !isRunning, let runtime = Self.locateRuntime() else {
+        guard !isRunning else { return }
+        guard let runtime = Self.locateRuntime() else {
             libraryError = "自动化运行环境尚未准备。设备预览和手动操作仍可使用。"
+            reconcileSelection()
             return
         }
         isRefreshingTasks = true
-        let previousTaskID = selectedTaskID
         do {
             let catalog = try JSONDecoder().decode(Catalog.self, from: await Self.request(["catalog"], runtime: runtime))
             var errors = catalog.errors ?? []
@@ -136,15 +164,12 @@ final class AutomationModel: ObservableObject {
                 }
             } catch { errors.append(error.localizedDescription) }
             tasks = plugins.flatMap { plugin in plugin.tasks.map { AutomationTask.builtIn($0, plugin: plugin) } } + Self.readLibrary()
-            if let previousTaskID, let task = tasks.first(where: { $0.id == previousTaskID }) {
-                selectedPluginID = task.pluginID
-                selectedTaskID = previousTaskID
-            } else {
-                if selectedPluginID == nil || !pluginIDs.contains(selectedPluginID!) { selectedPluginID = plugins.first(where: { !$0.tasks.isEmpty })?.id ?? plugins.first?.id ?? pluginIDs.first }
-                selectedTaskID = visibleTasks.first?.id
-            }
+            reconcileSelection()
             libraryError = errors.isEmpty ? nil : errors.joined(separator: "\n")
-        } catch { libraryError = error.localizedDescription }
+        } catch {
+            libraryError = error.localizedDescription
+            reconcileSelection()
+        }
         isRefreshingTasks = false
     }
 
@@ -159,7 +184,7 @@ final class AutomationModel: ObservableObject {
                 pluginMessage = response?["message"] as? String ?? "插件已安装。"
                 isInstalling = false
                 await refreshLibrary()
-                if let id = response?["plugin_id"] as? String { selectedPluginID = id }
+                if let id = response?["plugin_id"] as? String { selectPlugin(id) }
             } catch {
                 pluginMessage = error.localizedDescription
                 isInstalling = false
@@ -181,8 +206,8 @@ final class AutomationModel: ObservableObject {
     func openTask(_ task: AutomationTask) -> Bool {
         guard !isImporting, !isRefreshingTasks, !isInstalling, !isRunning || task.id == selectedTaskID,
               tasks.contains(where: { $0.id == task.id }) else { return false }
-        selectedPluginID = task.pluginID
-        selectedTaskID = task.id
+        guard selection.selectTask(reference(task), tasks: taskReferences) else { return false }
+        applySelection()
         openGeneration += 1
         return true
     }
@@ -193,9 +218,10 @@ final class AutomationModel: ObservableObject {
             try FileManager.default.trashItem(at: file, resultingItemURL: nil)
             tasks.remove(at: index)
             UserDefaults.standard.removeObject(forKey: settingsKey(for: task))
-            if selectedTaskID == task.id { selectedTaskID = visibleTasks.first?.id }
-            libraryError = nil
-        } catch { libraryError = "无法删除任务：\(error.localizedDescription)" }
+            selection.removeTask(reference(task), remainingTasks: taskReferences, pluginIDs: pluginIDs)
+            applySelection()
+            taskLibraryError = nil
+        } catch { taskLibraryError = "无法删除任务：\(error.localizedDescription)" }
     }
 
     func importTask(source: String? = nil, file: URL? = nil) {
@@ -215,8 +241,8 @@ final class AutomationModel: ObservableObject {
                 _ = try await Self.request(arguments, runtime: runtime)
                 let imported = try AutomationTask.read(output)
                 tasks.append(imported)
-                selectedPluginID = imported.pluginID
-                selectedTaskID = imported.id
+                selection.selectTask(reference(imported), tasks: taskReferences)
+                applySelection()
                 importMessage = canRun(imported) ? "已导入，可在连接设备后运行。" : "任务已保存，运行前请查看兼容信息。"
                 importGeneration += 1
             } catch {

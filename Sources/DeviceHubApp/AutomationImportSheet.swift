@@ -19,8 +19,8 @@ struct AutomationImportSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("导入任务").font(.title2.weight(.semibold))
-                Text("\(automation.selectedPlugin?.name ?? "插件") · 导入后保存到任务库，不会自动运行。")
+                Text("\(automation.selectedPluginTitle) · 导入任务").font(.title2.weight(.semibold))
+                Text("任务将保存在此插件的任务库中，导入后可选择运行。")
                     .font(.callout).foregroundStyle(.secondary)
             }
             if sources.count > 1 {
@@ -75,6 +75,7 @@ struct AutomationImportSheet: View {
             sourceFocused = true
         }
         .onChange(of: automation.importGeneration) { _, _ in dismiss() }
+        .onChange(of: automation.selectedPluginID) { _, _ in dismiss() }
         .onChange(of: selectedImportID) { _, _ in file = nil; source = "" }
     }
 
@@ -86,6 +87,7 @@ struct AutomationImportSheet: View {
 
     private func chooseFile() {
         let panel = NSOpenPanel()
+        panel.title = "\(automation.selectedPluginTitle) · 导入任务"
         let types = (provider?.extensions ?? []).compactMap { UTType(filenameExtension: $0) }
         if !types.isEmpty { panel.allowedContentTypes = types }
         panel.allowsMultipleSelection = false

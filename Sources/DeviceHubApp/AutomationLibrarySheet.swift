@@ -9,8 +9,8 @@ struct AutomationLibrarySheet: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("任务列表").font(.title2.weight(.semibold))
-                    Text("打开任务后，切换主界面中的当前任务。")
+                    Text("\(automation.selectedPluginTitle) · 任务库").font(.title2.weight(.semibold))
+                    Text("管理此插件的内置任务和已导入任务。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()

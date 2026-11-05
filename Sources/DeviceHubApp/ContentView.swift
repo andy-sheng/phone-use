@@ -127,7 +127,7 @@ struct ContentView: View {
                 Button {
                     trailingPanel = trailingPanel == .automation ? nil : .automation
                 } label: {
-                    Label("自动任务", systemImage: "sidebar.right")
+                    Label("插件", systemImage: "sidebar.right")
                         .foregroundStyle(trailingPanel == .automation ? Color.accentColor : .primary)
                         .overlay(alignment: .topTrailing) {
                             if automation.isRunning {
@@ -135,7 +135,7 @@ struct ContentView: View {
                             }
                         }
                 }
-                .help(trailingPanel == .automation ? "收起任务面板" : "显示任务面板")
+                .help(trailingPanel == .automation ? "收起插件面板" : "显示插件面板")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {

@@ -31,15 +31,19 @@ struct AutomationPluginsSheet: View {
                         HStack(alignment: .top, spacing: 12) {
                             Image(systemName: "puzzlepiece.extension").font(.title2).foregroundStyle(.secondary)
                             VStack(alignment: .leading, spacing: 5) {
-                                Text(plugin.name).font(.headline)
+                                HStack(spacing: 8) {
+                                    Text(plugin.name).font(.headline)
+                                    if automation.selectedPluginID == plugin.id {
+                                        Text("当前插件").font(.caption).foregroundStyle(Color.accentColor)
+                                    }
+                                }
                                 Text("v\(plugin.version) · \(plugin.location == "bundled" ? "随应用提供" : "已安装")")
                                     .font(.caption).foregroundStyle(.secondary)
                                 Text(plugin.description).font(.callout).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Button(automation.selectedPluginID == plugin.id ? "已选择" : "使用") {
-                                automation.selectedPluginID = plugin.id
-                                dismiss()
+                            Button("打开插件") {
+                                if automation.selectPlugin(plugin.id) { dismiss() }
                             }.disabled(automation.isBusy)
                         }
                         .padding(14)

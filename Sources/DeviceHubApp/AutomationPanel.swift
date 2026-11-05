@@ -50,39 +50,8 @@ struct AutomationPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("自动化").font(.headline)
-                Spacer()
-                Button(action: openLibrary) {
-                    Label("任务库", systemImage: "list.bullet.rectangle")
-                }
-                Button(action: importTask) {
-                    Label("导入", systemImage: "plus")
-                }
-                .disabled(!automation.canImport)
-                Button(action: managePlugins) { Image(systemName: "puzzlepiece.extension") }.help("管理插件")
-                Button(action: close) {
-                    Image(systemName: "sidebar.right")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("收起任务面板")
-                .accessibilityLabel("收起任务面板")
-            }
-            .padding(.horizontal, 16)
-            .frame(height: 46)
+            pluginHeader
             Divider()
-            if !automation.pluginIDs.isEmpty {
-                Picker("插件", selection: $automation.selectedPluginID) {
-                    ForEach(automation.pluginIDs, id: \.self) { id in
-                        Text(automation.pluginName(id)).tag(Optional(id))
-                    }
-                }
-                .disabled(automation.isBusy)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                Divider()
-            }
             if showsConsole {
                 VSplitView {
                     taskWorkspace
@@ -104,8 +73,121 @@ struct AutomationPanel: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
+    private var pluginHeader: some View {
+        HStack(spacing: 8) {
+            if automation.pluginIDs.isEmpty {
+                Text("插件").font(.headline)
+                Spacer()
+            } else {
+                ScrollViewReader { scroll in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 4) {
+                            ForEach(automation.pluginIDs, id: \.self) { id in
+                                let selected = automation.selectedPluginID == id
+                                Button { automation.selectPlugin(id) } label: {
+                                    Text(automation.pluginName(id))
+                                        .font(.callout.weight(selected ? .semibold : .regular))
+                                        .foregroundStyle(selected ? Color.accentColor : .secondary)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 9)
+                                        .background(selected ? Color.accentColor.opacity(0.12) : .clear,
+                                                    in: RoundedRectangle(cornerRadius: 8))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(automation.isBusy)
+                                .accessibilityLabel("切换插件：\(automation.pluginName(id))")
+                                .accessibilityAddTraits(selected ? [.isSelected] : [])
+                                .id(id)
+                            }
+                        }
+                    }
+                    .onChange(of: automation.selectedPluginID) { _, id in
+                        if let id { scroll.scrollTo(id, anchor: .center) }
+                    }
+                }
+            }
+            Button(action: managePlugins) { Image(systemName: "puzzlepiece.extension") }
+                .buttonStyle(.borderless)
+                .help("管理插件")
+                .accessibilityLabel("管理插件")
+            Button(action: close) { Image(systemName: "sidebar.right") }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("收起插件面板")
+                .accessibilityLabel("收起插件面板")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 52)
+    }
+
+    private var pluginTasks: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Text("任务").font(.callout.weight(.medium))
+                Text("\(automation.visibleTasks.count)").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button(action: openLibrary) { Image(systemName: "list.bullet.rectangle") }
+                    .buttonStyle(.borderless)
+                    .help("管理\(automation.selectedPluginTitle)的任务")
+                    .accessibilityLabel("管理当前插件任务")
+                Button(action: importTask) { Label("导入", systemImage: "plus") }
+                    .disabled(!automation.canImport)
+            }
+            if !automation.visibleTasks.isEmpty {
+                ScrollViewReader { scroll in
+                    ScrollView {
+                        LazyVStack(spacing: 4) {
+                            ForEach(automation.visibleTasks) { item in
+                                pluginTaskRow(item).id(item.id)
+                            }
+                        }
+                    }
+                    .frame(height: CGFloat(min(automation.visibleTasks.count, 3)) * 48 - 4)
+                    .onChange(of: automation.selectedTaskID) { _, id in
+                        if let id { scroll.scrollTo(id, anchor: .center) }
+                    }
+                    .onAppear {
+                        if let id = automation.selectedTaskID { scroll.scrollTo(id, anchor: .center) }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    private func pluginTaskRow(_ item: AutomationTask) -> some View {
+        let selected = automation.selectedTaskID == item.id
+        return Button { automation.openTask(item) } label: {
+            HStack(spacing: 9) {
+                Image(systemName: item.isBuiltIn ? "puzzlepiece.extension" : "doc.text")
+                    .foregroundStyle(selected ? Color.accentColor : .secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.title).font(.callout.weight(selected ? .medium : .regular)).lineLimit(1)
+                    Text(item.isBuiltIn ? "内置任务" : "已导入")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                if selected { Image(systemName: "checkmark").font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor) }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 44)
+            .contentShape(Rectangle())
+            .background(selected ? Color.accentColor.opacity(0.09) : Color.secondary.opacity(0.04),
+                        in: RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .disabled(automation.isBusy)
+        .accessibilityLabel("打开任务：\(item.title)")
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
     private var taskWorkspace: some View {
         VStack(spacing: 0) {
+            if automation.selectedPluginID != nil {
+                pluginTasks
+                Divider()
+            }
             if let task {
                 ScrollView {
                     taskDetails(task).padding(18)
@@ -113,14 +195,14 @@ struct AutomationPanel: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView {
-                    Label(automation.plugins.isEmpty ? "还没有可用插件" : "还没有打开的任务", systemImage: "puzzlepiece.extension")
+                    Label(automation.selectedPluginID == nil ? "还没有可用插件" : "此插件还没有任务", systemImage: "puzzlepiece.extension")
                 } description: {
-                    Text(automation.plugins.isEmpty ? "安装插件，为设备添加自动化任务。" : "从任务库选择内置任务，或导入当前插件支持的任务。")
+                    Text(automation.selectedPluginID == nil ? "安装插件，为设备添加自动化任务。" : "在\(automation.selectedPluginTitle)中导入任务，任务会保存在此插件下。")
                 } actions: {
-                    HStack {
-                        if automation.canImport { Button("导入任务", action: importTask).buttonStyle(.borderedProminent) }
-                        Button(automation.plugins.isEmpty ? "安装插件" : "管理插件", action: managePlugins)
-                        if !automation.tasks.isEmpty { Button("任务库", action: openLibrary) }
+                    if automation.canImport {
+                        Button("导入任务", action: importTask).buttonStyle(.borderedProminent)
+                    } else {
+                        Button("管理插件", action: managePlugins)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
