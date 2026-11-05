@@ -1,9 +1,57 @@
-.build/
-.swiftpm/
-dist/
-.venv-daemon
-.venv-maa
+# macOS and editor-local files.
+.DS_Store
+._*
+*.swp
+*.swo
+*~
+.idea/
+
+# SwiftPM, Xcode, and release outputs. Keep Package.resolved in Git if generated.
+/.build/
+/.swiftpm/
+/build/
+/dist/
+/DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcresult/
+*.xcarchive/
+*.dSYM/
+*.app/
+*.dhplugin
+
 # Generated from project.yml by `xcodegen generate`.
-DeviceHub.xcodeproj/
-phone-use.xcodeproj/
+/DeviceHub.xcodeproj/
+/phone-use.xcodeproj/
+
+# Python environments, bytecode, packaging, and tool caches.
+.venv/
+.venv-*/
+venv/
 __pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local configuration and runtime output. Keep shareable environment templates.
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+/logs/
+*.log
+*.pid
+*.sock
+
+# Downloaded OCR models, scrcpy, Python runtimes, and staged plugin resources
+# belong under .build/ (already ignored). Source assets and test fixtures stay
+# versioned; .gitattributes routes their binary formats through Git LFS.

@@ -2,6 +2,18 @@
 
 在 macOS 上连接、预览和操作 iPhone 与 Android 真机，提供原生应用、命令行、MCP 服务及插件自动化。iOS 与 Android 的连接、输入和视频流分别实现，共用设备列表与任务界面。
 
+## 获取仓库资源
+
+仓库使用 Git LFS 管理测试图片等二进制资源。安装 Git LFS 后，在克隆的仓库中执行：
+
+```sh
+git lfs install --local
+git lfs pull
+```
+
+下载生成的 OCR 模型、scrcpy 和插件资源由下方的准备脚本写入 `.build/`，不提交到 Git。
+项目协作、目录职责和测试命令见 [AGENTS.md](AGENTS.md)。
+
 ## 开发运行
 
 需要 Apple silicon Mac、macOS 15 或更新版本、Xcode 和 Python 3.13。生成 Xcode 工程还需要 XcodeGen。Android 支持需要 Android SDK Platform-Tools，并确保 `adb` 在 PATH 中；也可以通过 `DEVICEHUB_ADB` 指定路径。
