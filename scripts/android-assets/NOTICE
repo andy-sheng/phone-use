@@ -2,7 +2,7 @@ scrcpy server 3.3.4
 Copyright (C) 2018 Genymobile
 Copyright (C) 2018-2025 Romain Vimont
 
-DeviceHub redistributes the unmodified scrcpy-server-v3.3.4 binary from the
+phone-use redistributes the unmodified scrcpy-server-v3.3.4 binary from the
 official Genymobile/scrcpy release under the Apache License, Version 2.0.
 The full license is included in the adjacent LICENSE file.
 
@@ -12,5 +12,5 @@ Source code: https://github.com/Genymobile/scrcpy/tree/v3.3.4
 Binary: https://github.com/Genymobile/scrcpy/releases/download/v3.3.4/scrcpy-server-v3.3.4
 SHA256: 8588238c9a5a00aa542906b6ec7e6d5541d9ffb9b5d0f6e1bc0e365e2303079e
 
-This attribution and provenance notice was assembled by DeviceHub. The
+This attribution and provenance notice was assembled by phone-use. The
 scrcpy server binary and upstream license have not been modified.

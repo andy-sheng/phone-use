@@ -19,8 +19,8 @@ final class DaemonLauncher {
 
         var description: String {
             switch self {
-            case .runtimeMissing: "The DeviceHub daemon runtime is missing. Run scripts/setup-dev.sh or reinstall DeviceHub."
-            case .didNotStart: "The DeviceHub daemon did not start."
+            case .runtimeMissing: "The phone-use daemon runtime is missing. Run scripts/setup-dev.sh or reinstall phone-use."
+            case .didNotStart: "The phone-use daemon did not start."
             }
         }
     }

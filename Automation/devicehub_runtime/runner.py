@@ -75,7 +75,7 @@ def execute(args, packages, emit, stop, bridge_factory=None):
         if not (args.assets / "model/ocr" / name).is_file():
             raise FileNotFoundError("共享 OCR 资源未准备，请重新安装应用或运行 scripts/setup-automation.sh")
     if bridge_factory is None and not args.bridge.is_file():
-        raise FileNotFoundError("找不到 DeviceHub 设备桥接程序")
+        raise FileNotFoundError("找不到 phone-use 设备桥接程序")
     Tasker.set_stdout_level(LoggingLevelEnum.Off)
     Tasker.set_log_dir(args.output)
     Tasker.set_save_on_error(True)

@@ -20,13 +20,13 @@ let modernAppearance: [LinkerSetting] = [
 ]
 
 let package = Package(
-    name: "DeviceHub",
+    name: "phone-use",
     platforms: [.macOS(.v15)],
     products: [
         .library(name: "DeviceHubKit", targets: ["DeviceHubKit"]),
-        .executable(name: "devicehub", targets: ["devicehub"]),
-        .executable(name: "devicehub-mcp", targets: ["devicehub-mcp"]),
-        .executable(name: "DeviceHubApp", targets: ["DeviceHubApp"]),
+        .executable(name: "phone-use", targets: ["devicehub"]),
+        .executable(name: "phone-use-mcp", targets: ["devicehub-mcp"]),
+        .executable(name: "phone-use-app", targets: ["DeviceHubApp"]),
     ],
     targets: [
         .target(name: "DeviceHubKit"),

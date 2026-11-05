@@ -27,7 +27,7 @@ final class AppModel: ObservableObject {
                 for await update in try await DeviceHub.shared.deviceUpdates() {
                     apply(update)
                 }
-                errorMessage = "Lost the connection to the DeviceHub daemon. Reconnecting…"
+                errorMessage = "Lost the connection to the phone-use daemon. Reconnecting…"
             } catch {
                 errorMessage = "\(error)"
             }

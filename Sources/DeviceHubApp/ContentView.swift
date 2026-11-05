@@ -120,7 +120,7 @@ struct ContentView: View {
                 placeholder
             }
         }
-        .navigationTitle(model.selectedDevice?.name ?? "DeviceHub")
+        .navigationTitle(model.selectedDevice?.name ?? "phone-use")
         .navigationSubtitle(model.selectedDevice?.osDescription ?? "")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

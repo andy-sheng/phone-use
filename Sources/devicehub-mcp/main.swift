@@ -25,7 +25,7 @@ func pointProperty(_ description: String) -> [String: Any] {
 let tools: [[String: Any]] = [
     [
         "name": "list_devices",
-        "description": "List iOS and Android devices connected to this Mac. Only devices whose state is 'ready' can be controlled; the DeviceHub app guides the user through the other states.",
+        "description": "List iOS and Android devices connected to this Mac. Only devices whose state is 'ready' can be controlled; the phone-use app guides the user through the other states.",
         "inputSchema": ["type": "object", "properties": [String: Any]()],
     ],
     [
@@ -202,7 +202,7 @@ func handle(_ message: [String: Any]) async -> [String: Any]? {
         return reply([
             "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
             "capabilities": ["tools": [String: Any]()],
-            "serverInfo": ["name": "devicehub", "version": "0.1.0"],
+            "serverInfo": ["name": "phone-use", "version": "0.1.0"],
         ])
     case "ping":
         return reply([:])

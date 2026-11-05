@@ -487,7 +487,7 @@ final class AutomationModel: ObservableObject {
         if let resources = Bundle.main.resourceURL {
             let candidate = Runtime(python: resources.appendingPathComponent("python/bin/python3"),
                                     directory: resources.appendingPathComponent("automation"),
-                                    bridge: Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/devicehub"),
+                                    bridge: Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/phone-use"),
                                     assets: resources.appendingPathComponent("maa-assets"))
             if manager.isExecutableFile(atPath: candidate.python.path),
                manager.fileExists(atPath: candidate.directory.appendingPathComponent("devicehub_runtime").path) { return candidate }
@@ -495,7 +495,7 @@ final class AutomationModel: ObservableObject {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let candidate = Runtime(python: root.appendingPathComponent(".venv-maa/bin/python"),
                                 directory: root.appendingPathComponent("Automation"),
-                                bridge: root.appendingPathComponent(".build/debug/devicehub"),
+                                bridge: root.appendingPathComponent(".build/debug/phone-use"),
                                 assets: root.appendingPathComponent(".build/maa-core"))
         guard manager.isExecutableFile(atPath: candidate.python.path),
               manager.fileExists(atPath: candidate.directory.appendingPathComponent("devicehub_runtime").path) else { return nil }

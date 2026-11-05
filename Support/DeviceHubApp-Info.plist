@@ -5,10 +5,12 @@
 	<key>CFBundleIdentifier</key>
 	<string>dev.devicehub.app</string>
 	<key>CFBundleName</key>
-	<string>DeviceHub</string>
+	<string>phone-use</string>
+	<key>CFBundleDisplayName</key>
+	<string>phone-use</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.1.0</string>
 	<key>NSCameraUsageDescription</key>
-	<string>DeviceHub mirrors USB-connected iPhone screens through the system screen capture device.</string>
+	<string>phone-use mirrors USB-connected iPhone screens through the system screen capture device.</string>
 </dict>
 </plist>

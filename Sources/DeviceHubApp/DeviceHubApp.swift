@@ -31,7 +31,7 @@ struct DeviceHubApp: App {
     @StateObject private var automation = AutomationModel()
 
     var body: some Scene {
-        Window("DeviceHub", id: "device-main") {
+        Window("phone-use", id: "device-main") {
             ContentView()
                 .environmentObject(model)
                 .environmentObject(automation)

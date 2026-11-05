@@ -1,6 +1,6 @@
-# Xcode project for DeviceHub. Generate it with `xcodegen generate` (scripts/build-app.sh does).
-# DeviceHub.xcodeproj is derived from this file; edit this, not the project.
-name: DeviceHub
+# Xcode project for phone-use. Generate it with `xcodegen generate` (scripts/build-app.sh does).
+# phone-use.xcodeproj is derived from this file; edit this, not the project.
+name: phone-use
 options:
   bundleIdPrefix: dev.devicehub
   deploymentTarget:
@@ -20,25 +20,25 @@ settings:
     CODE_SIGN_IDENTITY: "-"
 
 packages:
-  DeviceHubPackage:
+  PhoneUsePackage:
     path: .
 
 targets:
-  DeviceHub:
+  phone-use-app:
     type: application
     platform: macOS
     sources:
       - path: Sources/DeviceHubApp
     dependencies:
-      - package: DeviceHubPackage
+      - package: PhoneUsePackage
         product: DeviceHubKit
-      - target: devicehub-mcp
+      - target: phone-use-mcp
         embed: true
         codeSign: true
         copy:
           destination: wrapper
           subpath: Contents/Helpers
-      - target: devicehub-cli
+      - target: phone-use-cli
         embed: true
         codeSign: true
         copy:
@@ -47,20 +47,21 @@ targets:
     info:
       path: Support/DeviceHub-Info.plist
       properties:
-        CFBundleName: DeviceHub
-        CFBundleDisplayName: DeviceHub
+        CFBundleName: phone-use
+        CFBundleDisplayName: phone-use
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.developer-tools
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
-        NSCameraUsageDescription: DeviceHub mirrors USB-connected iPhone screens through the system screen capture device.
+        NSCameraUsageDescription: phone-use mirrors USB-connected iPhone screens through the system screen capture device.
     entitlements:
       path: Support/DeviceHub.entitlements
       properties:
         com.apple.security.device.camera: true
     settings:
       base:
-        PRODUCT_NAME: DeviceHub
+        PRODUCT_NAME: phone-use
+        PRODUCT_MODULE_NAME: phone_use_app
         PRODUCT_BUNDLE_IDENTIFIER: dev.devicehub.app
         # The embed script writes the Python runtime into the bundle.
         ENABLE_USER_SCRIPT_SANDBOXING: NO
@@ -82,38 +83,37 @@ targets:
           [[ "${DEVICEHUB_EMBED_DAEMON}" == "YES" ]] || exit 0
           exec /bin/zsh "${SRCROOT}/scripts/embed-daemon.sh" "${TARGET_BUILD_DIR}/${WRAPPER_NAME}" "${EXPANDED_CODE_SIGN_IDENTITY:--}"
 
-  devicehub-mcp:
+  phone-use-mcp:
     type: tool
     platform: macOS
     sources:
       - path: Sources/devicehub-mcp
     dependencies:
-      - package: DeviceHubPackage
+      - package: PhoneUsePackage
         product: DeviceHubKit
     settings:
       base:
-        PRODUCT_NAME: devicehub-mcp
+        PRODUCT_NAME: phone-use-mcp
 
-  # Named apart from the app: "devicehub" and "DeviceHub" share build directories and module
-  # files on case-insensitive volumes.
-  devicehub-cli:
+  # The app and CLI share a product name, but need distinct targets and Swift modules.
+  phone-use-cli:
     type: tool
     platform: macOS
     sources:
       - path: Sources/devicehub
     dependencies:
-      - package: DeviceHubPackage
+      - package: PhoneUsePackage
         product: DeviceHubKit
     settings:
       base:
-        PRODUCT_NAME: devicehub
-        PRODUCT_MODULE_NAME: devicehub_cli
+        PRODUCT_NAME: phone-use
+        PRODUCT_MODULE_NAME: phone_use_cli
 
 schemes:
-  DeviceHub:
+  phone-use:
     build:
       targets:
-        DeviceHub: all
+        phone-use-app: all
     run:
       config: Debug
     archive:

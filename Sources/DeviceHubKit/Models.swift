@@ -158,7 +158,7 @@ public enum DeviceHubError: Error, CustomStringConvertible, Sendable {
 
     public var description: String {
         switch self {
-        case .daemonUnavailable(let detail): "DeviceHub is not running (\(detail)). Open DeviceHub.app first."
+        case .daemonUnavailable(let detail): "phone-use is not running (\(detail)). Open phone-use.app first."
         case .daemon(_, let message): message
         case .deviceNotFound(let query): "No device matches '\(query)'"
         case .deviceNotReady(let detail): detail

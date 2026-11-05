@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds dist/DeviceHub.app from the Xcode project (generated from project.yml): the app, its
+# Builds dist/phone-use.app from the Xcode project (generated from project.yml): the app, its
 # MCP server and CLI in Contents/Helpers, and the embedded Python daemon runtime.
 # Building needs Xcode; running the result does not.
 #
@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
 DERIVED=${DERIVED_DATA:-$ROOT/.build/xcode}
-APP=$ROOT/dist/DeviceHub.app
+APP=$ROOT/dist/phone-use.app
 
 xcodegen generate --quiet
 
@@ -23,7 +23,7 @@ fi
 mkdir -p "$DERIVED"
 LOG=$DERIVED/build.log
 echo "==> xcodebuild (log: $LOG)"
-if ! xcodebuild -project DeviceHub.xcodeproj -scheme DeviceHub -configuration Release \
+if ! xcodebuild -project phone-use.xcodeproj -scheme phone-use -configuration Release \
     -derivedDataPath "$DERIVED" -destination 'platform=macOS,arch=arm64' \
     -packageCachePath "$ROOT/.build/package-cache" \
     -clonedSourcePackagesDirPath "$ROOT/.build/SourcePackages" \
@@ -31,7 +31,7 @@ if ! xcodebuild -project DeviceHub.xcodeproj -scheme DeviceHub -configuration Re
     grep -E "error:|BUILD FAILED" "$LOG" | tail -20 >&2
     exit 1
 fi
-BUILT=$DERIVED/Build/Products/Release/DeviceHub.app
+BUILT=$DERIVED/Build/Products/Release/phone-use.app
 
 rm -rf "$APP"
 mkdir -p "$ROOT/dist"
@@ -39,7 +39,7 @@ ditto "$BUILT" "$APP"
 codesign --verify --deep --strict "$APP"
 
 if [[ -n "${NOTARY_PROFILE:-}" ]]; then
-    ZIP=$ROOT/dist/DeviceHub.zip
+    ZIP=$ROOT/dist/phone-use.zip
     ditto -c -k --keepParent "$APP" "$ZIP"
     xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
     xcrun stapler staple "$APP"

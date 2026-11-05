@@ -5,4 +5,5 @@ dist/
 .venv-maa
 # Generated from project.yml by `xcodegen generate`.
 DeviceHub.xcodeproj/
+phone-use.xcodeproj/
 __pycache__/

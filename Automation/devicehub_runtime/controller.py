@@ -36,12 +36,12 @@ class Bridge:
         except Exception as error:
             self._responses.put(error)
         finally:
-            self._responses.put(EOFError("DeviceHub bridge disconnected"))
+            self._responses.put(EOFError("phone-use bridge disconnected"))
 
     def request(self, method: str, **params):
         with self._lock:
             if self._closed or self.process.poll() is not None:
-                raise ConnectionError("DeviceHub bridge is closed")
+                raise ConnectionError("phone-use bridge is closed")
             self._serial += 1
             self.process.stdin.write(json.dumps({"id": self._serial, "method": method, "params": params}) + "\n")
             self.process.stdin.flush()
@@ -50,11 +50,11 @@ class Bridge:
             except queue.Empty as error:
                 self.process.stdin.close()
                 self._closed = True
-                raise TimeoutError(f"DeviceHub {method} timed out; run stopped") from error
+                raise TimeoutError(f"phone-use {method} timed out; run stopped") from error
             if isinstance(reply, Exception):
                 raise reply
             if reply.get("id") != self._serial:
-                raise ConnectionError("DeviceHub response ID mismatch")
+                raise ConnectionError("phone-use response ID mismatch")
             if "error" in reply:
                 raise RuntimeError(reply["error"])
             return reply["result"]

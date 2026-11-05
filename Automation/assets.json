@@ -1,5 +1,5 @@
 {
-  "description": "Shared OCR resources for DeviceHub Maa runtime.",
+  "description": "Shared OCR resources for phone-use Maa runtime.",
   "files": [
     {
       "repository": "MaaXYZ/MaaCommonAssets",

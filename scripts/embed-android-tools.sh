@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Bundle the build machine's Android platform-tools; no network download is required.
-# Usage: embed-android-tools.sh <DeviceHub.app> [codesign identity]
+# Usage: embed-android-tools.sh <phone-use.app> [codesign identity]
 set -euo pipefail
 ROOT=${0:A:h:h}
 APP=${1:?usage: embed-android-tools.sh <app> [identity]}
