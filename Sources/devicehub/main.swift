@@ -2,7 +2,7 @@ import DeviceHubKit
 import Foundation
 
 let usage = """
-usage: devicehub [--device <name|udid>] <command>
+usage: devicehub [--device <name|udid|android:serial>] <command>
   list
   pair                             show the Trust prompt on the device
   reveal-developer-mode            make the Developer Mode switch appear in Settings
@@ -12,7 +12,7 @@ usage: devicehub [--device <name|udid>] <command>
   longpress <x> <y> [ms]
   press <\(HardwareButton.allCases.map(\.rawValue).joined(separator: "|"))>
   screenshot <file.png>
-  launch <bundle-id>
+  launch <bundle-id|package-name>
   bench                            screenshot polling rate
   bridge                           persistent JSON-lines automation connection
 

@@ -22,14 +22,17 @@ struct ContentView: View {
     /// every status update.
     private var screenKey: String {
         guard let device = model.selectedDevice else { return "" }
-        return "\(device.udid)|\(device.connection)|\(device.isReady)"
+        return "\(device.udid)|\(device.connection)|\(device.isReady)|\(screen.reconnectGeneration)"
     }
 
     private func matching(_ devices: [DeviceSummary]) -> [DeviceSummary] {
         let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
         guard !needle.isEmpty else { return devices }
         return devices.filter {
-            $0.name.lowercased().contains(needle) || ($0.modelName?.lowercased().contains(needle) ?? false)
+            $0.name.lowercased().contains(needle)
+                || ($0.modelName?.lowercased().contains(needle) ?? false)
+                || $0.platformName.lowercased().contains(needle)
+                || $0.deviceIdentifier.lowercased().contains(needle)
         }
     }
 
@@ -87,7 +90,7 @@ struct ContentView: View {
             Section("Available") {
                 ForEach(available) { DeviceRow(device: $0) }
                 if available.isEmpty {
-                    Text("Connect an iPhone with a USB cable")
+                    Text("Connect an iPhone, iPad or Android device with a USB cable")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -150,13 +153,13 @@ struct ContentView: View {
             if screen.status != nil {
                 ProgressView().controlSize(.large)
             } else {
-                Image(systemName: "iphone.gen3")
+                Image(systemName: model.selectedDevice?.deviceIcon ?? "smartphone")
                     .font(.system(size: 54, weight: .thin))
                     .foregroundStyle(.secondary)
             }
             Text(model.selectedDevice?.name ?? "No Device")
                 .font(.title3.weight(.semibold))
-            Text(screen.status ?? model.errorMessage ?? "Connect an iPhone with a USB cable.")
+            Text(screen.status ?? model.errorMessage ?? "Connect an iPhone, iPad or Android device with a USB cable.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -172,14 +175,25 @@ private struct DeviceRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: device.isPad ? "ipad" : "iphone")
+            Image(systemName: device.deviceIcon)
                 .font(.system(size: 15))
                 .frame(width: 28, height: 28)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .foregroundStyle(device.isAttached ? .primary : .tertiary)
             VStack(alignment: .leading, spacing: 1) {
-                Text(device.name)
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(device.name)
+                        .lineLimit(1)
+                    Image(device.isAndroid ? "PlatformAndroid" : "PlatformApple", bundle: platformIconBundle)
+                        .resizable()
+                        .renderingMode(.template)
+                        .scaledToFit()
+                        .frame(width: 14, height: 14)
+                        .foregroundStyle(.secondary)
+                        .help(device.platformName)
+                        .accessibilityLabel(device.platformName)
+                        .fixedSize()
+                }
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(device.isReady || !device.isAttached ? Color.secondary : Color.orange)
@@ -194,6 +208,14 @@ private struct DeviceRow: View {
         .tag(device.id)
     }
 
+    private var platformIconBundle: Bundle {
+        #if SWIFT_PACKAGE
+        .module
+        #else
+        .main
+        #endif
+    }
+
     private var subtitle: String {
         switch device.state {
         case .ready where !device.isWired:
@@ -201,6 +223,8 @@ private struct DeviceRow: View {
         case .ready, .disconnected: device.modelName ?? device.connectionDescription
         case .probing: "Checking…"
         case .untrusted: "Not trusted"
+        case .unauthorized: "USB debugging not authorized"
+        case .offline: "Offline"
         case .developerModeOff: "Developer Mode off"
         case .developerImageMissing: "Preparing developer services"
         }

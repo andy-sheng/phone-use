@@ -1,8 +1,8 @@
 .build/
 .swiftpm/
 dist/
-.venv-daemon/
-.venv-maa/
+.venv-daemon
+.venv-maa
 # Generated from project.yml by `xcodegen generate`.
 DeviceHub.xcodeproj/
 __pycache__/

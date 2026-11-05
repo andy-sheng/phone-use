@@ -43,6 +43,13 @@ public actor DeviceHub {
         await sessions.removeValue(forKey: udid)?.close()
     }
 
+    /// Explicit reconnect also clears the daemon's geometry snapshot. Ordinary preview closure
+    /// leaves the worker alive because an automation run may still be using it.
+    public func resetSession(for udid: String) async throws {
+        await closeSession(for: udid)
+        try await daemon().closeDevice(udid)
+    }
+
     public func pair(_ udid: String) async throws {
         try await daemon().pair(udid)
     }
@@ -65,6 +72,7 @@ public actor DeviceHub {
         }
         let needle = query.lowercased()
         let match = devices.first { $0.udid.lowercased() == needle }
+            ?? devices.first { $0.deviceIdentifier.lowercased() == needle }
             ?? devices.first { $0.name.lowercased() == needle }
             ?? devices.first { $0.name.lowercased().contains(needle) }
         guard let match else { throw DeviceHubError.deviceNotFound(query) }

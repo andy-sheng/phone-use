@@ -35,8 +35,10 @@ let package = Package(
         .executableTarget(
             name: "DeviceHubApp",
             dependencies: ["DeviceHubKit"],
+            resources: [.process("Resources")],
             linkerSettings: appInfoPlist + modernAppearance
         ),
+        .testTarget(name: "DeviceHubKitTests", dependencies: ["DeviceHubKit"]),
     ],
     swiftLanguageModes: [.v5]
 )

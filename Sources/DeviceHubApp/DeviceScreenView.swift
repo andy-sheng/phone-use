@@ -13,7 +13,7 @@ struct DeviceScreenView: View {
         DeviceFrame(screenAspectRatio: screen.aspectRatio) {
             ScreenSurface(
                 screenLayer: stream.layer,
-                acceptsInput: allowsInput,
+                acceptsInput: allowsInput && screen.streamError == nil && !screen.isReconnecting,
                 onTouch: { phase, point in screen.touch(phase, at: point) },
                 onFlick: { start, delta in screen.flick(from: start, by: delta) }
             )
@@ -35,14 +35,24 @@ struct DeviceScreenView: View {
                         .padding(.vertical, 6)
                         .glassCapsule()
                 }
-                if let notice = screen.notice {
-                    Text(notice)
-                        .font(.callout)
-                        .lineLimit(2)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .glassCapsule()
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                if let notice = screen.streamError ?? screen.notice ?? screen.fallbackMessage {
+                    HStack(spacing: 10) {
+                        Text(notice)
+                            .font(.callout)
+                            .lineLimit(3)
+                        if screen.isAndroid && (screen.streamError != nil || screen.fallbackMessage != nil) {
+                            Button("Reconnect") {
+                                guard allowsInput else { return }
+                                Task { await screen.reconnect() }
+                            }
+                            .glassButton()
+                            .disabled(!allowsInput || screen.isReconnecting)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .glassCapsule()
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 controls
             }
@@ -58,7 +68,13 @@ struct DeviceScreenView: View {
         GlassGroup(spacing: 10) {
             HStack(spacing: 10) {
                 HStack(spacing: 4) {
+                    if screen.isAndroid {
+                        ControlButton("Back", systemImage: "chevron.backward") { screen.press(.back) }
+                    }
                     ControlButton("Home", systemImage: "house") { screen.press(.home) }
+                    if screen.isAndroid {
+                        ControlButton("Recent Apps", systemImage: "square.on.square") { screen.press(.appSwitch) }
+                    }
                     ControlButton("Lock", systemImage: "lock") { screen.press(.lock) }
                     ControlButton("Volume Down", systemImage: "speaker.wave.1") { screen.press(.volumeDown) }
                     ControlButton("Volume Up", systemImage: "speaker.wave.3") { screen.press(.volumeUp) }
@@ -76,12 +92,13 @@ struct DeviceScreenView: View {
                 .glassCapsule()
             }
         }
+        .environment(\.controlSize, screen.isAndroid ? .small : .regular)
     }
 
     private var launchPopover: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Launch App").font(.headline)
-            TextField("Bundle identifier, e.g. com.apple.Preferences", text: $bundleID)
+            TextField(screen.isAndroid ? "Package name, e.g. com.android.settings" : "Bundle identifier, e.g. com.apple.Preferences", text: $bundleID)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 300)
                 .onSubmit(launch)
@@ -104,6 +121,7 @@ struct DeviceScreenView: View {
 }
 
 private struct ControlButton: View {
+    @Environment(\.controlSize) private var controlSize
     let title: String
     let systemImage: String
     let action: () -> Void
@@ -118,7 +136,7 @@ private struct ControlButton: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: 15, weight: .medium))
-                .frame(width: 34, height: 34)
+                .frame(width: controlSize == .small ? 30 : 34, height: 34)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)

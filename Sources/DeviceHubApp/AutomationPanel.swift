@@ -44,8 +44,8 @@ struct AutomationPanel: View {
         if !automation.isPrepared { return "自动化运行环境尚未准备。" }
         if automation.outcome != nil { return automation.message }
         if task.map({ automation.canRun($0) }) == false { return "任务已保存。请先处理下方的兼容信息。" }
-        guard let device else { return "请先选择并连接一台 iPhone。" }
-        return device.isReady ? "请确认设备画面符合任务说明，再开始运行。" : "请先完成所选 iPhone 的连接准备。"
+        guard let device else { return "请先选择并连接一台 iPhone 或 Android 设备。" }
+        return device.isReady ? "请确认设备画面符合任务说明，再开始运行。" : "请先完成所选设备的连接准备。"
     }
 
     var body: some View {
@@ -115,7 +115,7 @@ struct AutomationPanel: View {
                 ContentUnavailableView {
                     Label(automation.plugins.isEmpty ? "还没有可用插件" : "还没有打开的任务", systemImage: "puzzlepiece.extension")
                 } description: {
-                    Text(automation.plugins.isEmpty ? "安装插件，为 iPhone 添加自动化任务。" : "从任务库选择内置任务，或导入当前插件支持的任务。")
+                    Text(automation.plugins.isEmpty ? "安装插件，为设备添加自动化任务。" : "从任务库选择内置任务，或导入当前插件支持的任务。")
                 } actions: {
                     HStack {
                         if automation.canImport { Button("导入任务", action: importTask).buttonStyle(.borderedProminent) }
@@ -190,7 +190,7 @@ struct AutomationPanel: View {
                 }
             }
             if automation.isRunning, let target = automation.runDevice {
-                Label("运行于 \(target.name)", systemImage: "iphone")
+                Label("运行于 \(target.name)", systemImage: target.deviceIcon)
                     .font(.caption).foregroundStyle(.secondary)
                 if device?.id != target.id {
                     Text("预览已切换，任务仍在原设备运行。")

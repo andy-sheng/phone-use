@@ -217,7 +217,7 @@ final class AutomationModel: ObservableObject {
                 tasks.append(imported)
                 selectedPluginID = imported.pluginID
                 selectedTaskID = imported.id
-                importMessage = canRun(imported) ? "已导入，可在连接 iPhone 后运行。" : "任务已保存，运行前请查看兼容信息。"
+                importMessage = canRun(imported) ? "已导入，可在连接设备后运行。" : "任务已保存，运行前请查看兼容信息。"
                 importGeneration += 1
             } catch {
                 try? FileManager.default.removeItem(at: output)

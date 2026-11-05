@@ -2,6 +2,11 @@ import Foundation
 
 /// A device as reported by the daemon.
 public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
+    public enum Platform: String, Codable, Sendable {
+        case ios
+        case android
+    }
+
     public enum State: String, Codable, Sendable {
         case disconnected
         case probing
@@ -9,10 +14,13 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
         case developerModeOff
         case developerImageMissing
         case ready
+        case unauthorized
+        case offline
     }
 
     public var id: String { udid }
     public let udid: String
+    public let platform: Platform
     /// How the Mac reaches the device: `usb` or `network` (Wi-Fi).
     public let connection: String
     public let name: String
@@ -29,6 +37,30 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
     public let session: String
     public let error: String?
 
+    private enum CodingKeys: String, CodingKey {
+        case udid, platform, connection, name, productType, productVersion, buildVersion, state
+        case paired, developerMode, developerImage, wireless, session, error
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        udid = try values.decode(String.self, forKey: .udid)
+        // Older daemons only discover Apple devices and do not send this field.
+        platform = try values.decodeIfPresent(Platform.self, forKey: .platform) ?? .ios
+        connection = try values.decode(String.self, forKey: .connection)
+        name = try values.decode(String.self, forKey: .name)
+        productType = try values.decodeIfPresent(String.self, forKey: .productType)
+        productVersion = try values.decodeIfPresent(String.self, forKey: .productVersion)
+        buildVersion = try values.decodeIfPresent(String.self, forKey: .buildVersion)
+        state = try values.decode(State.self, forKey: .state)
+        paired = try values.decodeIfPresent(Bool.self, forKey: .paired)
+        developerMode = try values.decodeIfPresent(Bool.self, forKey: .developerMode)
+        developerImage = try values.decodeIfPresent(Bool.self, forKey: .developerImage)
+        wireless = try values.decodeIfPresent(Bool.self, forKey: .wireless)
+        session = try values.decode(String.self, forKey: .session)
+        error = try values.decodeIfPresent(String.self, forKey: .error)
+    }
+
     public var isAttached: Bool { state != .disconnected }
     public var isReady: Bool { state == .ready }
     public var isWired: Bool { connection == "usb" }
@@ -42,13 +74,19 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
     public var osMajorVersion: Int {
         Int(productVersion?.split(separator: ".").first ?? "") ?? 0
     }
-    public var osDescription: String? { productVersion.map { "\(isPad ? "iPadOS" : "iOS") \($0)" } }
-    public var isPad: Bool { productType?.hasPrefix("iPad") == true }
+    public var osDescription: String? { productVersion.map { "\(isAndroid ? "Android" : isPad ? "iPadOS" : "iOS") \($0)" } }
+    public var isAndroid: Bool { platform == .android }
+    public var isPad: Bool { !isAndroid && productType?.hasPrefix("iPad") == true }
+    public var platformName: String { isAndroid ? "Android" : isPad ? "iPad" : "iPhone" }
+    public var deviceIcon: String { isAndroid ? "candybarphone" : isPad ? "ipad" : "iphone" }
+    public var deviceIdentifier: String {
+        isAndroid && udid.hasPrefix("android:") ? String(udid.dropFirst("android:".count)) : udid
+    }
 
     /// Marketing name for recent models, the hardware identifier otherwise.
     public var modelName: String? {
         guard let productType else { return nil }
-        return Self.marketingNames[productType] ?? productType
+        return isAndroid ? productType : Self.marketingNames[productType] ?? productType
     }
 
     private static let marketingNames: [String: String] = [
@@ -63,7 +101,7 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
     ]
 }
 
-public struct DisplayInfo: Sendable {
+public struct DisplayInfo: Codable, Sendable {
     public let pixelWidth: Double
     public let pixelHeight: Double
     public let pointScale: Double
@@ -84,14 +122,17 @@ public enum HardwareButton: String, CaseIterable, Sendable {
     case volumeUp = "volume_up"
     case volumeDown = "volume_down"
     case siri
+    case back
+    case appSwitch = "app_switch"
 
-    var usage: (page: UInt64, code: UInt64) {
+    var usage: (page: UInt64, code: UInt64)? {
         switch self {
         case .home: (0x0C, 0x40)
         case .lock: (0x0C, 0x30)
         case .volumeUp: (0x0C, 0xE9)
         case .volumeDown: (0x0C, 0xEA)
         case .siri: (0x0C, 0xCF)
+        case .back, .appSwitch: nil
         }
     }
 

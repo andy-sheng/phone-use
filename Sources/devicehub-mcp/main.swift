@@ -2,7 +2,7 @@ import DeviceHubKit
 import Foundation
 
 // Minimal MCP server over stdio (newline-delimited JSON-RPC 2.0).
-// Coordinates are iOS points with the origin at the top-left of the portrait screen,
+// Coordinates are iOS points or Android pixels, with the origin at the top-left,
 // matching the image returned by `get_screen`.
 
 struct ToolFailure: Error {
@@ -25,7 +25,7 @@ func pointProperty(_ description: String) -> [String: Any] {
 let tools: [[String: Any]] = [
     [
         "name": "list_devices",
-        "description": "List iOS devices connected to this Mac. Only devices whose state is 'ready' can be controlled; the DeviceHub app guides the user through the other states.",
+        "description": "List iOS and Android devices connected to this Mac. Only devices whose state is 'ready' can be controlled; the DeviceHub app guides the user through the other states.",
         "inputSchema": ["type": "object", "properties": [String: Any]()],
     ],
     [
@@ -81,7 +81,7 @@ let tools: [[String: Any]] = [
     ],
     [
         "name": "press_button",
-        "description": "Press a hardware button.",
+        "description": "Press a device button. back and app_switch are Android-only; siri is iOS-only.",
         "inputSchema": [
             "type": "object",
             "properties": [
@@ -94,7 +94,7 @@ let tools: [[String: Any]] = [
     ],
     [
         "name": "launch_app",
-        "description": "Launch (or relaunch) an installed app by bundle identifier.",
+        "description": "Launch (or relaunch) an installed app by iOS bundle identifier or Android package name.",
         "inputSchema": [
             "type": "object",
             "properties": [

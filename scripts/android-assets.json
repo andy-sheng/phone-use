@@ -1,0 +1,16 @@
+{
+  "scrcpy": {
+    "version": "3.3.4",
+    "filename": "scrcpy-server-v3.3.4",
+    "url": "https://github.com/Genymobile/scrcpy/releases/download/v3.3.4/scrcpy-server-v3.3.4",
+    "sha256": "8588238c9a5a00aa542906b6ec7e6d5541d9ffb9b5d0f6e1bc0e365e2303079e",
+    "checksum_source": "https://github.com/Genymobile/scrcpy/releases/download/v3.3.4/SHA256SUMS.txt",
+    "checksum_source_sha256": "4cb7069421050db158d2519ce766f5dd1ee26728a022a61a6724733bde86761a",
+    "release": "https://github.com/Genymobile/scrcpy/releases/tag/v3.3.4",
+    "license": "Apache-2.0",
+    "license_file": "android-assets/LICENSE",
+    "license_source": "https://raw.githubusercontent.com/Genymobile/scrcpy/v3.3.4/LICENSE",
+    "license_sha256": "5e6597827749877cca06765747bf29ed9205ed5021c6aec1ad42373711bcda05",
+    "notice_file": "android-assets/NOTICE"
+  }
+}

@@ -19,6 +19,13 @@ struct ScreenSurface: NSViewRepresentable {
         update(view)
     }
 
+    static func dismantleNSView(_ view: SurfaceNSView, coordinator: ()) {
+        view.releaseHeldTouch()
+        view.onTouch = nil
+        view.onFlick = nil
+        view.hostedLayer = nil
+    }
+
     private func update(_ view: SurfaceNSView) {
         view.hostedLayer = screenLayer
         view.acceptsInput = acceptsInput
@@ -29,11 +36,7 @@ struct ScreenSurface: NSViewRepresentable {
     final class SurfaceNSView: NSView {
         var acceptsInput = true {
             didSet {
-                if !acceptsInput, let heldPoint {
-                    onTouch?(.ended, heldPoint)
-                    self.heldPoint = nil
-                }
-                if !acceptsInput { scrollOrigin = nil }
+                if !acceptsInput { releaseHeldTouch() }
             }
         }
         var onTouch: ((TouchPhase, CGPoint) -> Void)?
@@ -41,6 +44,7 @@ struct ScreenSurface: NSViewRepresentable {
         var hostedLayer: CALayer? {
             didSet {
                 guard hostedLayer !== oldValue else { return }
+                releaseHeldTouch()
                 oldValue?.removeFromSuperlayer()
                 if let hostedLayer {
                     layer?.addSublayer(hostedLayer)
@@ -52,6 +56,14 @@ struct ScreenSurface: NSViewRepresentable {
         private var scrollOrigin: CGPoint?
         private var heldPoint: CGPoint?
         private var scrollOffset = CGVector.zero
+
+        func releaseHeldTouch() {
+            let point = heldPoint
+            heldPoint = nil
+            scrollOrigin = nil
+            scrollOffset = .zero
+            if let point { onTouch?(.ended, point) }
+        }
 
         override init(frame: NSRect) {
             super.init(frame: frame)
@@ -77,6 +89,7 @@ struct ScreenSurface: NSViewRepresentable {
 
         override func mouseDown(with event: NSEvent) {
             guard acceptsInput else { return }
+            releaseHeldTouch()
             let point = normalizedLocation(of: event)
             heldPoint = point
             onTouch?(.began, point)
@@ -99,7 +112,8 @@ struct ScreenSurface: NSViewRepresentable {
             guard acceptsInput else { return }
             // iOS derives its own momentum from the finger's release velocity.
             guard event.momentumPhase.isEmpty else { return }
-            let delta = CGVector(dx: event.scrollingDeltaX / bounds.width, dy: event.scrollingDeltaY / bounds.height)
+            let delta = CGVector(dx: event.scrollingDeltaX / max(bounds.width, 1),
+                                 dy: event.scrollingDeltaY / max(bounds.height, 1))
 
             guard event.hasPreciseScrollingDeltas, !event.phase.isEmpty else {
                 let scale = 12.0
@@ -108,6 +122,7 @@ struct ScreenSurface: NSViewRepresentable {
             }
 
             if event.phase.contains(.began) {
+                releaseHeldTouch()
                 let origin = normalizedLocation(of: event)
                 scrollOrigin = origin
                 heldPoint = origin
@@ -117,7 +132,7 @@ struct ScreenSurface: NSViewRepresentable {
             guard let origin = scrollOrigin else { return }
             scrollOffset.dx += delta.dx
             scrollOffset.dy += delta.dy
-            let point = CGPoint(x: origin.x + scrollOffset.dx, y: origin.y + scrollOffset.dy)
+            let point = clamped(CGPoint(x: origin.x + scrollOffset.dx, y: origin.y + scrollOffset.dy))
             heldPoint = point
             if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
                 onTouch?(.ended, point)
@@ -130,7 +145,11 @@ struct ScreenSurface: NSViewRepresentable {
 
         private func normalizedLocation(of event: NSEvent) -> CGPoint {
             let location = convert(event.locationInWindow, from: nil)
-            return CGPoint(x: location.x / max(bounds.width, 1), y: location.y / max(bounds.height, 1))
+            return clamped(CGPoint(x: location.x / max(bounds.width, 1), y: location.y / max(bounds.height, 1)))
+        }
+
+        private func clamped(_ point: CGPoint) -> CGPoint {
+            CGPoint(x: min(max(point.x, 0), 1), y: min(max(point.y, 0), 1))
         }
     }
 }

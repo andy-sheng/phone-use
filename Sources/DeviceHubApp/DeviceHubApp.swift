@@ -10,7 +10,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Launched as a bare SwiftPM executable, so opt into a Dock icon and focus explicitly.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
-        USBScreenCapture.prepare()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

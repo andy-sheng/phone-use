@@ -72,6 +72,7 @@ func runAutomationBridge(deviceQuery: String?) async {
                 switch method {
                 case "connect":
                     result = ["udid": session.device.udid, "name": session.device.name,
+                              "platform": session.device.isAndroid ? "android" : "ios",
                               "width": session.display.pixelWidth, "height": session.display.pixelHeight]
                 case "screenshot":
                     let image = try await session.screenshot()

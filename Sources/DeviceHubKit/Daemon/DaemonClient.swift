@@ -6,6 +6,7 @@ public actor DaemonClient {
         public let udid: String
         public let productVersion: String?
         public let services: [String]
+        public let display: DisplayInfo?
     }
 
     struct Port: Decodable {
@@ -99,6 +100,14 @@ public actor DaemonClient {
         try await callIgnoringResult("closeDevice", ["udid": udid])
     }
 
+    /// Android actions are sent once. A failed reply must never replay a gesture or launch.
+    public func androidCommand(_ udid: String, action: String, params: [String: String] = [:]) async throws -> Data {
+        var payload = params
+        payload["udid"] = udid
+        payload["action"] = action
+        return try await rawCall("androidCommand", payload)
+    }
+
     func openService(_ udid: String, service: String) async throws -> UInt16 {
         try await call("openService", ["udid": udid, "service": service], as: Port.self).port
     }
@@ -111,6 +120,23 @@ public actor DaemonClient {
 
     public func stopMirror(_ udid: String) async throws {
         try await callIgnoringResult("stopMirror", ["udid": udid])
+    }
+
+    /// The daemon issues `secrets.token_urlsafe` tokens; the consumer writes one back as a line.
+    private static let videoTokenBytes = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".utf8)
+
+    public func startAndroidVideo(_ udid: String) async throws -> AndroidVideoEndpoint {
+        let endpoint = try await call("startAndroidVideo", ["udid": udid], as: AndroidVideoEndpoint.self)
+        let token = endpoint.token.utf8
+        guard endpoint.port != 0, (16...128).contains(token.count),
+              token.allSatisfy(Self.videoTokenBytes.contains) else {
+            throw DeviceHubError.serviceFailed("Android video returned an invalid endpoint")
+        }
+        return endpoint
+    }
+
+    public func stopAndroidVideo(_ udid: String, token: String) async throws {
+        try await callIgnoringResult("stopAndroidVideo", ["udid": udid, "token": token])
     }
 
     // MARK: Transport

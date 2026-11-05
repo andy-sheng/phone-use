@@ -78,7 +78,7 @@ class Bridge:
                 self.process.wait()
 
 
-class IPhoneController(CustomController):
+class DeviceController(CustomController):
     """Maa supplies native-image pixels to these callbacks, after its own scaling.
 
     The Swift bridge converts those pixels to DeviceSession's normalized coordinates.
@@ -98,7 +98,7 @@ class IPhoneController(CustomController):
             return self.bridge.request(method, **params)
         except Exception as error:
             self.last_error = str(error)
-            self.emit("error", message=f"iPhone 连接失败：{error}")
+            self.emit("error", message=f"设备连接失败：{error}")
             return None
 
     def connect(self):
@@ -165,3 +165,8 @@ class IPhoneController(CustomController):
 
     def scroll(self, dx, dy):
         return False
+
+
+# Compatibility for existing plugins and replay tests. Both platforms use the same
+# bridge; DeviceSession selects the iOS or Android backend for the chosen device.
+IPhoneController = DeviceController

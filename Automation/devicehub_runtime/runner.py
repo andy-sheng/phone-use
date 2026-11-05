@@ -29,7 +29,7 @@ class DeviceLease:
             fcntl.flock(self.file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             self.file.close()
-            raise RuntimeError("此 iPhone 已有自动任务运行，请先停止另一个任务") from None
+            raise RuntimeError("此设备已有自动任务运行，请先停止另一个任务") from None
 
     def close(self):
         self.file.close()
@@ -67,7 +67,7 @@ def execute(args, packages, emit, stop, bridge_factory=None):
     from maa.resource import Resource
     from maa.tasker import Tasker
 
-    from .controller import Bridge, IPhoneController
+    from .controller import Bridge, DeviceController
     from .images import save_png
 
     package, task_id, document, config = preflight(args, packages)
@@ -99,13 +99,13 @@ def execute(args, packages, emit, stop, bridge_factory=None):
                 raise ValueError("插件流程不符合 MaaFramework 协议")
         if stop.is_set():
             raise InterruptedError("任务已停止")
-        emit("progress", message="正在连接 iPhone", framework=Library.version(), phase="connecting")
+        emit("progress", message="正在连接设备", framework=Library.version(), phase="connecting")
         bridge = (bridge_factory or Bridge)(args.bridge, args.device)
-        controller = IPhoneController(bridge, emit)
+        controller = DeviceController(bridge, emit)
         if not controller.post_connection().wait().succeeded:
-            raise RuntimeError(controller.last_error or "iPhone 连接失败")
+            raise RuntimeError(controller.last_error or "设备连接失败")
         lease = DeviceLease(controller.info["udid"])
-        emit("progress", message="iPhone 已连接", phase="connecting", phase_status="completed")
+        emit("progress", message=f"{controller.info.get('name', '设备')} 已连接", phase="connecting", phase_status="completed")
         controller.set_screenshot_target_short_side(720)
         tasker = Tasker()
         if not tasker.bind(resource, controller) or not tasker.inited:
@@ -124,7 +124,7 @@ def execute(args, packages, emit, stop, bridge_factory=None):
             (args.output / "ocr.json").write_text(json.dumps(words, ensure_ascii=False, indent=2))
             if stop.is_set():
                 raise InterruptedError("任务已停止")
-            emit("result", status="probe_complete", message="已读取 iPhone 画面并完成 OCR，未发送触摸操作",
+            emit("result", status="probe_complete", message="已读取设备画面并完成 OCR，未发送触摸操作",
                  native_size=[controller.info["width"], controller.info["height"]],
                  recognition_size=[image.shape[1], image.shape[0]], words=len(words), screenshot=str(path))
             return 0

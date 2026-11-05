@@ -61,6 +61,11 @@ final class DaemonLauncher {
         if runtime.bundled {
             // Writing bytecode into the signed bundle would invalidate its signature.
             environment["PYTHONDONTWRITEBYTECODE"] = "1"
+            // The daemon resolves the bundled adb fallback and the pinned scrcpy server from here.
+            if environment["DEVICEHUB_ANDROID_ASSETS"] == nil,
+               let assets = Bundle.main.resourceURL?.appendingPathComponent("android") {
+                environment["DEVICEHUB_ANDROID_ASSETS"] = assets.path
+            }
         }
         process.environment = environment
         let pipe = Pipe()
