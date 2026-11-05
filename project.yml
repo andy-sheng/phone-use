@@ -54,6 +54,11 @@ targets:
         LSApplicationCategoryType: public.app-category.developer-tools
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSCameraUsageDescription: phone-use mirrors USB-connected iPhone screens through the system screen capture device.
+        NSLocalNetworkUsageDescription: phone-use discovers and pairs iPhone and iPad devices on your local network.
+        NSBonjourServices:
+          - _remotepairing._tcp
+          - _remotepairing-manual-pairing._tcp
+          - _remotepairing-pairable-host._tcp
         UTExportedTypeDeclarations:
           - UTTypeIdentifier: dev.devicehub.plugin
             UTTypeDescription: phone-use Plugin

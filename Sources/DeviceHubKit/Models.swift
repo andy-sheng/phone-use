@@ -25,7 +25,7 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
     public let connection: String
     public let name: String
     public let productType: String?
-    public let productVersion: String?
+    public private(set) var productVersion: String?
     public let buildVersion: String?
     public let state: State
     public let paired: Bool?
@@ -62,6 +62,15 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
     }
 
     public var isAttached: Bool { state != .disconnected }
+
+    /// A device paired entirely over Wi-Fi may first learn its OS version when
+    /// the worker opens its tunnel. Use that version for video and HID policy.
+    func withProductVersion(_ version: String?) -> DeviceSummary {
+        var updated = self
+        updated.productVersion = version ?? productVersion
+        return updated
+    }
+
     public var isReady: Bool { state == .ready }
     public var isWired: Bool { connection == "usb" }
     public var connectionDescription: String {

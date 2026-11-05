@@ -84,6 +84,22 @@ public actor DaemonClient {
         try await callIgnoringResult("pair", ["udid": udid])
     }
 
+    public func startWirelessPairing() async throws -> WirelessPairingStatus {
+        try await call("startWirelessPairing", as: WirelessPairingStatus.self)
+    }
+
+    public func wirelessPairingStatus(_ sessionID: String) async throws -> WirelessPairingStatus {
+        try await call("wirelessPairingStatus", ["sessionID": sessionID], as: WirelessPairingStatus.self)
+    }
+
+    public func pairNearbyDevice(_ deviceID: String, sessionID: String) async throws {
+        try await callIgnoringResult("pairNearbyDevice", ["sessionID": sessionID, "deviceID": deviceID])
+    }
+
+    public func stopWirelessPairing(_ sessionID: String) async throws {
+        try await callIgnoringResult("stopWirelessPairing", ["sessionID": sessionID])
+    }
+
     public func revealDeveloperMode(_ udid: String) async throws {
         try await callIgnoringResult("revealDeveloperMode", ["udid": udid])
     }

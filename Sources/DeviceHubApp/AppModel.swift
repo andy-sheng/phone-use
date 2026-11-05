@@ -42,6 +42,16 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func selectPairedDevice(_ udid: String?) async {
+        guard let udid else { return }
+        do {
+            apply(try await DeviceHub.shared.devices())
+            if devices.contains(where: { $0.udid == udid }) { selection = udid }
+        } catch {
+            actionError = "\(error)"
+        }
+    }
+
     /// Runs one onboarding step for the selected device, surfacing failures in the setup view.
     func perform(_ title: String, _ action: @escaping (String) async throws -> Void) {
         guard let udid = selection, actionInProgress == nil else { return }

@@ -15,6 +15,39 @@ never calls Apple services. The screen model does not choose a codec or operate 
 CoreMediaIO or a video socket. Providers own platform-specific preparation and recovery
 policy. In particular, selecting Android does not trigger Apple USB re-enumeration.
 
+## iOS nearby pairing
+
+`wireless_pairing.py` owns explicit, three-minute discovery and pairing sessions.
+It browses `_remotepairing-manual-pairing._tcp` without requiring an existing pair
+record, and advertises `_remotepairing-pairable-host._tcp` for iOS/iPadOS 27's
+device-initiated flow in Settings > Developer > Paired Macs. The host listens on
+one dual-stack port. The app displays the setup code through a callback; the
+daemon never prompts on stdin or prints the code to stdout or logs.
+
+The local RPC methods are `startWirelessPairing`, `wirelessPairingStatus`,
+`pairNearbyDevice` and `stopWirelessPairing`. Status and actions require both the
+session ID and its owning socket connection. A stale stop request cannot close
+a replacement session. Closing the sheet, losing its RPC connection, expiry or
+daemon shutdown cancels discovery and handshakes, closes peer sockets, and
+withdraws the advertisement. Only a successful authenticated pairing persists
+a pair record and joins the normal shared device list; browsing alone never
+makes an unknown device ready. Xcode's pairing keys are not imported.
+
+Normal Wi-Fi discovery combines system `usbmuxd` devices with connection type
+`Network` and `_remotepairing._tcp` advertisements matching the library's pair
+records. System connections work even when this tool has never created a remote
+pair record: their name, OS version and readiness come from trusted network
+lockdown, and the worker opens `CoreDeviceProxy` over that same network link.
+The system trust stays in the system; this path neither imports Xcode keys nor
+performs a new pairing. USB keeps priority when both links are present.
+A first connection without USB obtains its actual OS version from the worker
+before selecting mirror video and the iOS 27 HID authentication policy.
+
+Offline tests cover discovery without prior records, address fallback without
+replaying consent, failed code verification, cancellation, timeout, client
+ownership, and USB session preservation. They do not establish physical-device
+pairing, local network permission attribution, or Wi-Fi video/input acceptance.
+
 ## Android input ownership
 
 The preview and an automation run open separate sessions on the same Android worker and

@@ -1,9 +1,9 @@
 """How devices are found and how a tunnel to them is built, one implementation per link type.
 
 * ``usb``: usbmuxd lists the device and the tunnel is CoreDeviceProxy over lockdown.
-* ``network``: the device advertises RemotePairing over Bonjour and is recognised by the authTag
-  derived from its RemotePairing record. `pair_wireless` creates that record over USB without a
-  prompt on the device, so a device set up over USB once is reachable over Wi-Fi afterwards.
+* ``network``: already-trusted devices exposed by the system's usbmuxd over Wi-Fi, plus
+  RemotePairing advertisements matched to this tool's own pairing records. The system
+  path reuses its existing trust without importing Xcode keys or creating a new pairing.
 
 The supervisor, the worker and the Swift client only ever see the ``connection`` string.
 """
@@ -16,12 +16,13 @@ from dataclasses import dataclass
 from typing import Any, Optional, Protocol
 
 from pymobiledevice3.bonjour import iter_browse_remotepairing
-from pymobiledevice3.exceptions import RemotePairingCompletedError
+from pymobiledevice3.exceptions import InvalidServiceError, RemotePairingCompletedError
 from pymobiledevice3.lockdown import UsbmuxLockdownClient, create_using_usbmux
 from pymobiledevice3.pair_records import iter_remote_pair_records_by_identifier
 from pymobiledevice3.remote import userspace_tunnel
 from pymobiledevice3.remote.remote_service_discovery import RemoteServiceDiscoveryService
 from pymobiledevice3.remote.tunnel_service import (
+    CoreDeviceTunnelProxy,
     PEER_ALT_IRK_KEY,
     RemotePairingLockdownService,
     _match_remote_pair_record,
@@ -131,12 +132,29 @@ class NetworkDiscovery:
     def __init__(self) -> None:
         self._seen: dict[str, float] = {}
         self._task: Optional[asyncio.Task[None]] = None
+        self._system_devices: set[str] = set()
+
+    def has_system_connection(self, udid: str) -> bool:
+        return udid in self._system_devices
+
+    def remember(self, udid: str) -> None:
+        """Bridge successful nearby pairing into normal discovery until its next browse."""
+        self._seen[udid] = time.monotonic()
 
     async def attached(self) -> list[Attachment]:
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._browse())
+        # Xcode/Finder can already have a trusted Wi-Fi connection even when
+        # there are no pymobiledevice3 RemotePairing records at all.
+        try:
+            self._system_devices = {device.serial for device in await list_devices()
+                                    if device.connection_type == "Network"}
+        except Exception as error:
+            logger.debug("system Wi-Fi discovery failed: %r", error)
+            self._system_devices = set()
         now = time.monotonic()
-        return [Attachment(udid, NETWORK) for udid, seen in self._seen.items() if now - seen < NETWORK_TTL]
+        seen = {udid for udid, last_seen in self._seen.items() if now - last_seen < NETWORK_TTL}
+        return [Attachment(udid, NETWORK) for udid in sorted(seen | self._system_devices)]
 
     async def _browse(self) -> None:
         while True:
@@ -152,10 +170,32 @@ class NetworkDiscovery:
             await asyncio.sleep(BROWSE_PAUSE)
 
     async def lockdown(self, udid: str) -> UsbmuxLockdownClient:
+        if self.has_system_connection(udid):
+            return await create_using_usbmux(serial=udid, autopair=False, connection_type="Network")
         raise RpcError("needsUsb", "This step needs the device connected to this Mac with a USB cable")
 
 
-async def _remote_pairing_provider(serial: Optional[str], autopair: bool, remotepairing_fallback: bool) -> Any:
+async def _network_tunnel_provider(serial: Optional[str], autopair: bool, remotepairing_fallback: bool) -> Any:
+    # A worker owns one tunnel, so this hook can use the same in-process stack
+    # with CoreDeviceProxy over an existing system Wi-Fi connection as over USB.
+    try:
+        devices = await list_devices()
+    except Exception as error:
+        logger.debug("system Wi-Fi discovery failed while opening a tunnel: %r", error)
+        devices = []
+    if any(device.serial == serial and device.connection_type == "Network" for device in devices):
+        lockdown = await create_using_usbmux(serial=serial, autopair=False, connection_type="Network")
+        try:
+            if not lockdown.paired:
+                raise RpcError("notReady", "The system Wi-Fi connection is not trusted")
+            return await CoreDeviceTunnelProxy.create(lockdown), lockdown
+        except InvalidServiceError:
+            # Older systems may expose network lockdown without CoreDeviceProxy.
+            # Preserve their existing RemotePairing transport.
+            await lockdown.close()
+        except BaseException:
+            await lockdown.close()
+            raise
     services = await get_remote_pairing_tunnel_services(bonjour_timeout=NETWORK_CONNECT_TIMEOUT, udid=serial)
     if not services:
         raise ConnectionError(f"{serial} did not answer over the network")
@@ -167,12 +207,12 @@ async def _remote_pairing_provider(serial: Optional[str], autopair: bool, remote
 
 
 class NetworkTunnel:
-    """RemotePairing over the network into the same in-process TCP/IP stack as `UsbTunnel`."""
+    """System Wi-Fi or RemotePairing into the same TCP/IP stack as `UsbTunnel`."""
 
     def __init__(self, udid: str) -> None:
         # UserspaceRsdTunnel only reaches devices through usbmuxd. Its provider hook is process-wide,
         # which is safe because a worker process holds exactly one tunnel.
-        userspace_tunnel._create_no_root_tunnel_provider = _remote_pairing_provider
+        userspace_tunnel._create_no_root_tunnel_provider = _network_tunnel_provider
         self._tunnel = UserspaceRsdTunnel(serial=udid, autopair=False)
 
     async def open(self) -> RemoteServiceDiscoveryService:

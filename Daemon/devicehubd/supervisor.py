@@ -5,6 +5,7 @@ Clients (the app, the MCP server, the CLI) connect to a Unix socket and speak th
 
 * ``hello``, ``listDevices``, ``subscribe`` (then ``devicesChanged`` notifications)
 * ``pair``, ``revealDeveloperMode``, ``mountDeveloperImage`` -- onboarding steps
+* ``startWirelessPairing``, ``wirelessPairingStatus``, ``pairNearbyDevice``, ``stopWirelessPairing``
 * ``openDevice`` -> ``{udid, productVersion, services}``; ``closeDevice``
 * ``openService`` -> ``{port}``: a loopback port relaying to that device service
 * ``startMirror`` -> ``{port, path}`` (iOS 27+); ``stopMirror``
@@ -36,10 +37,12 @@ from devicehubd.protocol import RpcError
 from devicehubd.transports import (
     DISCOVERIES,
     NETWORK,
+    NetworkDiscovery,
     discovery_for,
     has_wireless_pairing,
     pair_wireless,
 )
+from devicehubd.wireless_pairing import PairedDevice, WirelessPairing
 
 logger = logging.getLogger("devicehubd")
 
@@ -223,6 +226,9 @@ class Supervisor:
         self.android = AndroidDiscovery()
         self._android_seen: dict[str, AndroidAttachment] = {}
         self._android_failures = 0
+        self._wireless_pairing: Optional[WirelessPairing] = None
+        self._wireless_owner: Optional[asyncio.StreamWriter] = None
+        self._wireless_lock = asyncio.Lock()
 
     # MARK: Device tracking
 
@@ -332,16 +338,16 @@ class Supervisor:
                     record.product_version = await self.android.version(record.adb_serial)
                 except Exception as e:
                     logger.debug("Android version probe failed: %r", e)
-        elif record.connection == NETWORK:
+        elif (record.connection == NETWORK
+              and not discovery_for(NETWORK).has_system_connection(record.udid)):
             self._probe_network(record)
         else:
-            await self._probe_usb(record)
+            await self._probe_lockdown(record)
         if record.to_json() != before:
             await self.broadcast()
 
     def _probe_network(self, record: DeviceRecord) -> None:
-        """Only devices with a RemotePairing record are found on the network, and that record is
-        made over an already trusted USB connection, so there is nothing left to ask the device."""
+        """Use cached metadata for authenticated RemotePairing peers without a system lockdown link."""
         for key, value in self._cache.get(record.udid, {}).items():
             if key in CACHED_FIELDS and value is not None:
                 setattr(record, key, value)
@@ -352,7 +358,7 @@ class Supervisor:
         # The worker mounts the image over the tunnel when it is missing.
         record.developer_image = True
 
-    async def _probe_usb(self, record: DeviceRecord) -> None:
+    async def _probe_lockdown(self, record: DeviceRecord) -> None:
         udid = record.udid
         try:
             lockdown = await discovery_for(record.connection).lockdown(udid)
@@ -368,7 +374,10 @@ class Supervisor:
             record.paired = await lockdown.validate_pairing() if not lockdown.paired else True
             if record.paired:
                 record.name = lockdown.all_values.get("DeviceName") or record.name
-                await self._ensure_wireless(record, lockdown)
+                if record.connection == NETWORK:
+                    record.wireless = True
+                else:
+                    await self._ensure_wireless(record, lockdown)
                 async with MobileImageMounterService(lockdown=lockdown) as mounter:
                     record.developer_mode = bool(await mounter.query_developer_mode_status())
                     if record.developer_mode and not record.image_needs_tunnel:
@@ -432,6 +441,55 @@ class Supervisor:
         return [record.to_json() for record in self.records.values()]
 
     # MARK: Onboarding
+
+    async def start_wireless_pairing(self, writer: asyncio.StreamWriter) -> dict[str, Any]:
+        async with self._wireless_lock:
+            # serve_client dispatches requests in tasks. EOF can close the
+            # socket before a queued start request gets its first turn.
+            if writer.is_closing():
+                raise RpcError("disconnected", "The nearby pairing client disconnected")
+            if self._wireless_pairing is not None:
+                if self._wireless_pairing.active:
+                    raise RpcError("pairingBusy", "A nearby pairing window is already open")
+                await self._wireless_pairing.close()
+            pairing = WirelessPairing(self._wireless_paired)
+            self._wireless_pairing, self._wireless_owner = pairing, writer
+            try:
+                await pairing.start()
+            except Exception as e:
+                raise RpcError("discoveryFailed", "Cannot start nearby pairing. Check local network access for phone-use.") from e
+            return pairing.snapshot()
+
+    def wireless_pairing(self, params: dict[str, Any], writer: asyncio.StreamWriter) -> WirelessPairing:
+        pairing = self._wireless_pairing
+        if (pairing is None or self._wireless_owner is not writer
+                or params.get("sessionID") != pairing.session_id):
+            raise RpcError("pairingNotFound", "This nearby pairing session has ended")
+        return pairing
+
+    async def stop_wireless_pairing(self, writer: asyncio.StreamWriter, session_id: Optional[str] = None) -> None:
+        async with self._wireless_lock:
+            pairing = self._wireless_pairing
+            if (pairing is not None and self._wireless_owner is writer
+                    and (session_id is None or session_id == pairing.session_id)):
+                await pairing.close()
+                self._wireless_pairing = self._wireless_owner = None
+
+    async def _wireless_paired(self, device: PairedDevice) -> None:
+        for discovery in DISCOVERIES:
+            if isinstance(discovery, NetworkDiscovery):
+                discovery.remember(device.identifier)
+        record = self.records.get(device.identifier)
+        if record is None or not record.attached:
+            record = DeviceRecord(device.identifier, NETWORK)
+            self.records[device.identifier] = record
+        record.paired = record.wireless = True
+        if record.connection == NETWORK:
+            self._probe_network(record)
+            record.developer_mode = True
+        record.name, record.product_type = device.name, device.model
+        self._remember(record)
+        await self.broadcast()
 
     def _ios_record(self, udid: Optional[str]) -> DeviceRecord:
         record = self._record(udid)
@@ -658,6 +716,22 @@ class Supervisor:
         if method == "subscribe":
             self.subscribers.add(writer)
             return {"devices": self.device_list()}
+        if method == "startWirelessPairing":
+            return await self.start_wireless_pairing(writer)
+        if method == "wirelessPairingStatus":
+            return self.wireless_pairing(params, writer).snapshot()
+        if method == "pairNearbyDevice":
+            identifier = params.get("deviceID")
+            if not isinstance(identifier, str) or not identifier:
+                raise RpcError("invalidParams", "Missing nearby device ID")
+            self.wireless_pairing(params, writer).pair(identifier)
+            return {}
+        if method == "stopWirelessPairing":
+            session_id = params.get("sessionID")
+            if not isinstance(session_id, str) or not session_id:
+                raise RpcError("invalidParams", "Missing nearby pairing session ID")
+            await self.stop_wireless_pairing(writer, session_id)
+            return {}
         if method == "pair":
             await self.pair(udid)
             return {}
@@ -722,9 +796,12 @@ class Supervisor:
             pass
         finally:
             self.subscribers.discard(writer)
+            await self.stop_wireless_pairing(writer)
             with contextlib.suppress(Exception):
                 writer.close()
 
     async def shutdown(self) -> None:
+        if self._wireless_owner is not None:
+            await self.stop_wireless_pairing(self._wireless_owner)
         workers = list(self.workers.values())
         await asyncio.gather(*(worker.wait_closed() for worker in workers), return_exceptions=True)

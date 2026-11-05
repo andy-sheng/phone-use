@@ -23,8 +23,9 @@ public final class DeviceSession: @unchecked Sendable {
         set { touchErrors.handler = newValue }
     }
 
-    static func open(_ device: DeviceSummary, daemon: DaemonClient) async throws -> DeviceSession {
-        let opened = try await daemon.openDevice(device.udid)
+    static func open(_ initialDevice: DeviceSummary, daemon: DaemonClient) async throws -> DeviceSession {
+        let opened = try await daemon.openDevice(initialDevice.udid)
+        let device = initialDevice.withProductVersion(opened.productVersion)
         let connection: any DeviceConnection
         let display: DisplayInfo
         switch device.platform {

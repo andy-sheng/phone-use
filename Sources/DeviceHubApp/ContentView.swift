@@ -11,7 +11,7 @@ struct ContentView: View {
     @State private var showsTaskLibrary = false
 
     private enum TaskSheet: String, Identifiable {
-        case importTask, plugins
+        case importTask, plugins, wirelessPairing
         var id: String { rawValue }
     }
 
@@ -84,6 +84,7 @@ struct ContentView: View {
             switch sheet {
             case .importTask: AutomationImportSheet(automation: automation)
             case .plugins: AutomationPluginsSheet(automation: automation)
+            case .wirelessPairing: WirelessPairingSheet()
             }
         }
         .onChange(of: automation.importGeneration) { _, _ in
@@ -107,7 +108,7 @@ struct ContentView: View {
             Section("Available") {
                 ForEach(available) { DeviceRow(device: $0) }
                 if available.isEmpty {
-                    Text("Connect an iPhone, iPad or Android device with a USB cable")
+                    Text("Connect a device with USB, or use Pair Nearby Device for iPhone / iPad")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -120,6 +121,14 @@ struct ContentView: View {
         }
         .searchable(text: $search, placement: .sidebar, prompt: "Search")
         .navigationSplitViewColumnWidth(min: 220, ideal: 250)
+        .safeAreaInset(edge: .bottom) {
+            Button { presentedSheet = .wirelessPairing } label: {
+                Label("配对附近设备…", systemImage: "plus")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .padding(12)
+        }
     }
 
     private var detail: some View {
@@ -140,6 +149,12 @@ struct ContentView: View {
         .navigationTitle(model.selectedDevice?.name ?? "phone-use")
         .navigationSubtitle(model.selectedDevice?.osDescription ?? "")
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { presentedSheet = .wirelessPairing } label: {
+                    Label("配对附近设备", systemImage: "wifi")
+                }
+                .help("通过 Wi-Fi 配对附近的 iPhone 或 iPad")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     trailingPanel = trailingPanel == .automation ? nil : .automation
@@ -176,7 +191,7 @@ struct ContentView: View {
             }
             Text(model.selectedDevice?.name ?? "No Device")
                 .font(.title3.weight(.semibold))
-            Text(screen.status ?? model.errorMessage ?? "Connect an iPhone, iPad or Android device with a USB cable.")
+            Text(screen.status ?? model.errorMessage ?? "Connect a device with USB, or choose Pair Nearby Device to connect an iPhone / iPad over Wi-Fi.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

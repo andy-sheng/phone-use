@@ -12,6 +12,14 @@
 	<string>0.1.0</string>
 	<key>NSCameraUsageDescription</key>
 	<string>phone-use mirrors USB-connected iPhone screens through the system screen capture device.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>phone-use discovers and pairs iPhone and iPad devices on your local network.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_remotepairing._tcp</string>
+		<string>_remotepairing-manual-pairing._tcp</string>
+		<string>_remotepairing-pairable-host._tcp</string>
+	</array>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>
