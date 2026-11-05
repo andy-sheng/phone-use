@@ -1,0 +1,33 @@
+{
+  "description": "Shared OCR resources for DeviceHub Maa runtime.",
+  "files": [
+    {
+      "repository": "MaaXYZ/MaaCommonAssets",
+      "commit": "dabcd4681ac990dc4361de26416d986abd80e4aa",
+      "path": "OCR/ppocr_v6/small/det.onnx",
+      "destination": "model/ocr/det.onnx",
+      "blob_sha": "1b6cd44fed65c3f8b8186c8baaee85198d15df35"
+    },
+    {
+      "repository": "MaaXYZ/MaaCommonAssets",
+      "commit": "dabcd4681ac990dc4361de26416d986abd80e4aa",
+      "path": "OCR/ppocr_v6/small/rec.onnx",
+      "destination": "model/ocr/rec.onnx",
+      "blob_sha": "1acdeb6a697ef98fdacc0365f184bf601168838c"
+    },
+    {
+      "repository": "MaaXYZ/MaaCommonAssets",
+      "commit": "dabcd4681ac990dc4361de26416d986abd80e4aa",
+      "path": "OCR/ppocr_v6/small/keys.txt",
+      "destination": "model/ocr/keys.txt",
+      "blob_sha": "270082aa29aec1ff3ac74d0d575c90399216f74d"
+    },
+    {
+      "repository": "MaaXYZ/MaaCommonAssets",
+      "commit": "dabcd4681ac990dc4361de26416d986abd80e4aa",
+      "path": "LICENSE",
+      "destination": "licenses/MaaCommonAssets-LICENSE",
+      "blob_sha": "621998429826652e69641c75d6616e2a4a35e92d"
+    }
+  ]
+}

@@ -5,6 +5,7 @@ import SwiftUI
 /// Hosts the device screen layer and turns mouse and trackpad input over it into normalized touches.
 struct ScreenSurface: NSViewRepresentable {
     let screenLayer: CALayer
+    var acceptsInput = true
     let onTouch: (TouchPhase, CGPoint) -> Void
     let onFlick: (CGPoint, CGVector) -> Void
 
@@ -20,11 +21,21 @@ struct ScreenSurface: NSViewRepresentable {
 
     private func update(_ view: SurfaceNSView) {
         view.hostedLayer = screenLayer
+        view.acceptsInput = acceptsInput
         view.onTouch = onTouch
         view.onFlick = onFlick
     }
 
     final class SurfaceNSView: NSView {
+        var acceptsInput = true {
+            didSet {
+                if !acceptsInput, let heldPoint {
+                    onTouch?(.ended, heldPoint)
+                    self.heldPoint = nil
+                }
+                if !acceptsInput { scrollOrigin = nil }
+            }
+        }
         var onTouch: ((TouchPhase, CGPoint) -> Void)?
         var onFlick: ((CGPoint, CGVector) -> Void)?
         var hostedLayer: CALayer? {
@@ -39,6 +50,7 @@ struct ScreenSurface: NSViewRepresentable {
         }
 
         private var scrollOrigin: CGPoint?
+        private var heldPoint: CGPoint?
         private var scrollOffset = CGVector.zero
 
         override init(frame: NSRect) {
@@ -52,8 +64,8 @@ struct ScreenSurface: NSViewRepresentable {
         }
 
         override var isFlipped: Bool { true }
-        override var acceptsFirstResponder: Bool { true }
-        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override var acceptsFirstResponder: Bool { acceptsInput }
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { acceptsInput }
 
         override func layout() {
             super.layout()
@@ -64,18 +76,27 @@ struct ScreenSurface: NSViewRepresentable {
         }
 
         override func mouseDown(with event: NSEvent) {
-            onTouch?(.began, normalizedLocation(of: event))
+            guard acceptsInput else { return }
+            let point = normalizedLocation(of: event)
+            heldPoint = point
+            onTouch?(.began, point)
         }
 
         override func mouseDragged(with event: NSEvent) {
-            onTouch?(.moved, normalizedLocation(of: event))
+            guard acceptsInput, heldPoint != nil else { return }
+            let point = normalizedLocation(of: event)
+            heldPoint = point
+            onTouch?(.moved, point)
         }
 
         override func mouseUp(with event: NSEvent) {
+            guard acceptsInput, heldPoint != nil else { return }
             onTouch?(.ended, normalizedLocation(of: event))
+            heldPoint = nil
         }
 
         override func scrollWheel(with event: NSEvent) {
+            guard acceptsInput else { return }
             // iOS derives its own momentum from the finger's release velocity.
             guard event.momentumPhase.isEmpty else { return }
             let delta = CGVector(dx: event.scrollingDeltaX / bounds.width, dy: event.scrollingDeltaY / bounds.height)
@@ -89,6 +110,7 @@ struct ScreenSurface: NSViewRepresentable {
             if event.phase.contains(.began) {
                 let origin = normalizedLocation(of: event)
                 scrollOrigin = origin
+                heldPoint = origin
                 scrollOffset = .zero
                 onTouch?(.began, origin)
             }
@@ -96,9 +118,11 @@ struct ScreenSurface: NSViewRepresentable {
             scrollOffset.dx += delta.dx
             scrollOffset.dy += delta.dy
             let point = CGPoint(x: origin.x + scrollOffset.dx, y: origin.y + scrollOffset.dy)
+            heldPoint = point
             if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
                 onTouch?(.ended, point)
                 scrollOrigin = nil
+                heldPoint = nil
             } else if event.phase.contains(.changed) {
                 onTouch?(.moved, point)
             }

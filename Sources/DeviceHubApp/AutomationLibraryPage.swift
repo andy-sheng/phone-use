@@ -18,21 +18,21 @@ struct AutomationLibraryPage: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("已保存 \(automation.tasks.count) 份作业").font(.callout).foregroundStyle(.secondary)
+                Text("共 \(automation.tasks.count) 项任务").font(.callout).foregroundStyle(.secondary)
                 Spacer()
             }
-            TextField("搜索作业", text: $search).textFieldStyle(.roundedBorder)
+            TextField("搜索任务", text: $search).textFieldStyle(.roundedBorder)
             if automation.isRunning {
-                Text("当前作业正在运行，停止后可切换到其他作业。")
+                Text("当前任务正在运行，停止后可切换到其他任务。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if matches.isEmpty {
                 ContentUnavailableView {
-                    Label(automation.tasks.isEmpty ? "暂无已保存作业" : "没有匹配的作业", systemImage: "tray")
+                    Label(automation.tasks.isEmpty ? "暂无已保存任务" : "没有匹配的任务", systemImage: "tray")
                 } description: {
-                    Text(automation.tasks.isEmpty ? "导入的作业会保存在这里。" : "换个名称、作者或作业编号搜索。")
+                    Text(automation.tasks.isEmpty ? "导入的任务会保存在这里。" : "换个名称、作者或任务编号搜索。")
                 } actions: {
-                    if automation.tasks.isEmpty { Button("导入作业", action: importTask) }
+                    if automation.tasks.isEmpty && automation.canImport { Button("导入任务", action: importTask) }
                 }
             } else {
                 ScrollView {
@@ -42,22 +42,23 @@ struct AutomationLibraryPage: View {
                                 Image(systemName: "doc.text").font(.title3).foregroundStyle(.secondary)
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(item.title).font(.callout.weight(.semibold)).lineLimit(2)
+                                    Text(automation.pluginName(item.pluginID) + (item.isBuiltIn ? " · 内置任务" : "")).font(.caption2).foregroundStyle(.secondary)
                                     Text(item.metadata.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                     if !item.metadata.author.isEmpty {
                                         Text(item.metadata.author).font(.caption2).foregroundStyle(.secondary)
                                     }
                                     if automation.selectedTaskID == item.id {
-                                        Text("当前作业").font(.caption2).foregroundStyle(Color.accentColor)
+                                        Text("当前任务").font(.caption2).foregroundStyle(Color.accentColor)
                                     }
                                 }
                                 Spacer(minLength: 4)
                                 Button("打开") { open(item) }
-                                    .disabled(automation.isImporting || automation.isRefreshingTasks || (automation.isRunning && automation.selectedTaskID != item.id))
-                                    .accessibilityLabel("打开作业：\(item.title)")
+                                    .disabled(automation.isInstalling || automation.isImporting || automation.isRefreshingTasks || (automation.isRunning && automation.selectedTaskID != item.id))
+                                    .accessibilityLabel("打开任务：\(item.title)")
                                 Button { automation.removeTask(item) } label: { Image(systemName: "trash") }
                                     .buttonStyle(.borderless).foregroundStyle(.secondary)
-                                    .disabled(automation.isRunning || automation.isImporting || automation.isRefreshingTasks)
-                                    .accessibilityLabel("删除作业：\(item.title)")
+                                    .disabled(automation.isBusy || item.isBuiltIn)
+                                    .accessibilityLabel("删除任务：\(item.title)")
                                     .help("删除列表中的副本，移至废纸篓")
                             }
                             .padding(14)

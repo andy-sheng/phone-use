@@ -40,7 +40,7 @@ struct AutomationConsole: View {
                     ScrollView([.vertical, .horizontal]) {
                         VStack(alignment: .leading, spacing: 0) {
                             if automation.logs.isEmpty {
-                                Text("等待作业输出…")
+                                Text("等待任务输出…")
                                     .foregroundStyle(.tertiary)
                             } else {
                                 Text(output)

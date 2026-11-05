@@ -73,6 +73,11 @@ targets:
     postCompileScripts:
       - name: Embed Daemon Runtime
         basedOnDependencyAnalysis: false
+        outputFiles:
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/automation"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/daemon"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/maa-assets"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/python"
         script: |
           [[ "${DEVICEHUB_EMBED_DAEMON}" == "YES" ]] || exit 0
           exec /bin/zsh "${SRCROOT}/scripts/embed-daemon.sh" "${TARGET_BUILD_DIR}/${WRAPPER_NAME}" "${EXPANDED_CODE_SIGN_IDENTITY:--}"

@@ -5,6 +5,7 @@ import SwiftUI
 struct DeviceScreenView: View {
     @ObservedObject var screen: ScreenModel
     let stream: any ScreenStream
+    var allowsInput = true
     @State private var showingLaunch = false
     @State private var bundleID = ""
 
@@ -12,6 +13,7 @@ struct DeviceScreenView: View {
         DeviceFrame(screenAspectRatio: screen.aspectRatio) {
             ScreenSurface(
                 screenLayer: stream.layer,
+                acceptsInput: allowsInput,
                 onTouch: { phase, point in screen.touch(phase, at: point) },
                 onFlick: { start, delta in screen.flick(from: start, by: delta) }
             )
@@ -26,6 +28,13 @@ struct DeviceScreenView: View {
         }
         .overlay(alignment: .bottom) {
             VStack(spacing: 12) {
+                if !allowsInput {
+                    Label("自动化运行中，停止任务后可手动操作", systemImage: "lock")
+                        .font(.caption)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .glassCapsule()
+                }
                 if let notice = screen.notice {
                     Text(notice)
                         .font(.callout)
@@ -40,6 +49,9 @@ struct DeviceScreenView: View {
             .padding(.bottom, 20)
             .animation(.smooth, value: screen.notice)
         }
+        .onChange(of: allowsInput) { _, enabled in
+            if !enabled { showingLaunch = false }
+        }
     }
 
     private var controls: some View {
@@ -51,11 +63,13 @@ struct DeviceScreenView: View {
                     ControlButton("Volume Down", systemImage: "speaker.wave.1") { screen.press(.volumeDown) }
                     ControlButton("Volume Up", systemImage: "speaker.wave.3") { screen.press(.volumeUp) }
                 }
+                .disabled(!allowsInput)
                 .padding(4)
                 .glassCapsule()
                 HStack(spacing: 4) {
                     ControlButton("Save Screenshot", systemImage: "camera.viewfinder") { screen.saveScreenshot() }
                     ControlButton("Launch App", systemImage: "app.badge") { showingLaunch.toggle() }
+                        .disabled(!allowsInput)
                         .popover(isPresented: $showingLaunch, arrowEdge: .top) { launchPopover }
                 }
                 .padding(4)
@@ -83,6 +97,7 @@ struct DeviceScreenView: View {
     }
 
     private func launch() {
+        guard allowsInput else { return }
         screen.launchApp(bundleID: bundleID.trimmingCharacters(in: .whitespaces))
         showingLaunch = false
     }

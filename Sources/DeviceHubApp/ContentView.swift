@@ -10,7 +10,7 @@ struct ContentView: View {
     @State private var presentedSheet: TaskSheet?
 
     private enum TaskSheet: String, Identifiable {
-        case library, importTask
+        case library, importTask, plugins
         var id: String { rawValue }
     }
 
@@ -46,6 +46,7 @@ struct ContentView: View {
                         case .automation:
                             AutomationPanel(device: model.selectedDevice, automation: automation,
                                             importTask: { presentedSheet = .importTask }, openLibrary: { presentedSheet = .library },
+                                            managePlugins: { presentedSheet = .plugins },
                                             close: { trailingPanel = nil })
                         case .deviceInfo:
                             if let device = model.selectedDevice {
@@ -70,6 +71,7 @@ struct ContentView: View {
             switch sheet {
             case .library: AutomationLibrarySheet().environmentObject(automation)
             case .importTask: AutomationImportSheet(automation: automation)
+            case .plugins: AutomationPluginsSheet(automation: automation)
             }
         }
         .onChange(of: automation.importGeneration) { _, _ in
@@ -109,7 +111,8 @@ struct ContentView: View {
                 DeviceSetupView(device: device)
                     .padding(24)
             } else if let stream = screen.stream {
-                DeviceScreenView(screen: screen, stream: stream)
+                DeviceScreenView(screen: screen, stream: stream,
+                                 allowsInput: !automation.isRunning || automation.isProbe || automation.runDevice?.id != model.selectedDevice?.id)
             } else {
                 placeholder
             }
