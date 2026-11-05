@@ -148,7 +148,10 @@ def read_manifest(root):
         raise ValueError("Capabilities must be an array")
     versions = {"runtime": VERSION, "python": ".".join(map(str, sys.version_info[:3]))}
     if "maafw" in requirements:
-        versions["maafw"] = importlib.metadata.version("maafw")
+        try:
+            versions["maafw"] = importlib.metadata.version("maafw")
+        except importlib.metadata.PackageNotFoundError as error:
+            raise ValueError("自动化运行环境缺少 MaaFramework，请完成运行环境准备或重新安装 phone-use。") from error
     for name, actual in versions.items():
         if name in requirements and not matches_version(actual, requirements[name]):
             raise ValueError(f"插件要求 {name} {requirements[name]}，当前为 {actual}")

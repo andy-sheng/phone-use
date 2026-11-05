@@ -33,42 +33,46 @@ struct AutomationPluginsSheet: View {
             Text("Python 插件会在本机执行代码，请安装来自可信作者的插件包。")
                 .font(.caption).foregroundStyle(.secondary)
             Divider()
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    if automation.plugins.isEmpty {
-                        ContentUnavailableView("暂无可用插件", systemImage: "puzzlepiece.extension",
-                                               description: Text("安装 .dhplugin 插件文件，或输入插件包的下载 URL。"))
-                    }
-                    ForEach(automation.plugins) { plugin in
-                        Button { candidateID = plugin.id } label: {
-                            HStack(alignment: .top, spacing: 12) {
-                                Image(systemName: candidateID == plugin.id ? "largecircle.fill.circle" : "circle")
-                                    .font(.title3)
-                                    .foregroundStyle(candidateID == plugin.id ? Color.accentColor : .secondary)
-                                VStack(alignment: .leading, spacing: 5) {
-                                    HStack(spacing: 8) {
-                                        Text(plugin.name).font(.headline)
-                                        if automation.selectedPluginID == plugin.id {
-                                            Text("已加载").font(.caption).foregroundStyle(Color.accentColor)
+            if automation.plugins.isEmpty {
+                ContentUnavailableView("暂无可用插件", systemImage: "puzzlepiece.extension",
+                                       description: Text("安装 .dhplugin 插件文件，或输入插件包的下载 URL。"))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(automation.plugins) { plugin in
+                            Button { candidateID = plugin.id } label: {
+                                HStack(alignment: .top, spacing: 12) {
+                                    Image(systemName: candidateID == plugin.id ? "largecircle.fill.circle" : "circle")
+                                        .font(.title3)
+                                        .foregroundStyle(candidateID == plugin.id ? Color.accentColor : .secondary)
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        HStack(spacing: 8) {
+                                            Text(plugin.name).font(.headline)
+                                            if automation.selectedPluginID == plugin.id {
+                                                Text("已加载").font(.caption).foregroundStyle(Color.accentColor)
+                                            }
                                         }
+                                        Text("v\(plugin.version) · \(plugin.location == "bundled" ? "随应用提供" : "已安装")")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                        Text(plugin.description).font(.callout).foregroundStyle(.secondary)
                                     }
-                                    Text("v\(plugin.version) · \(plugin.location == "bundled" ? "随应用提供" : "已安装")")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                    Text(plugin.description).font(.callout).foregroundStyle(.secondary)
+                                    Spacer()
                                 }
-                                Spacer()
+                                .padding(14)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                                .background(candidateID == plugin.id ? Color.accentColor.opacity(0.09) : Color.secondary.opacity(0.06),
+                                            in: RoundedRectangle(cornerRadius: 10))
                             }
-                            .padding(14)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
-                            .background(candidateID == plugin.id ? Color.accentColor.opacity(0.09) : Color.secondary.opacity(0.06),
-                                        in: RoundedRectangle(cornerRadius: 10))
+                            .buttonStyle(.plain)
+                            .disabled(automation.isBusy)
+                            .accessibilityLabel("选择插件：\(plugin.name)")
+                            .accessibilityAddTraits(candidateID == plugin.id ? [.isSelected] : [])
                         }
-                        .buttonStyle(.plain)
-                        .disabled(automation.isBusy)
-                        .accessibilityLabel("选择插件：\(plugin.name)")
-                        .accessibilityAddTraits(candidateID == plugin.id ? [.isSelected] : [])
                     }
+                    .frame(maxWidth: .infinity)
                 }
             }
             if let message = automation.pluginMessage {
