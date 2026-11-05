@@ -14,6 +14,7 @@ usage: devicehub [--device <name|udid>] <command>
   screenshot <file.png>
   launch <bundle-id>
   bench                            screenshot polling rate
+  bridge                           persistent JSON-lines automation connection
 
 Needs a running DeviceHub (or a daemon at $DEVICEHUB_SOCKET).
 """
@@ -65,6 +66,8 @@ func run() async throws {
     }
     let hub = DeviceHub.shared
     switch command {
+    case "bridge":
+        await runAutomationBridge(deviceQuery: deviceQuery)
     case "list":
         for device in try await hub.devices() {
             print([device.name, device.state.rawValue, device.productType ?? "", device.osDescription ?? "",

@@ -56,6 +56,12 @@ public final class DeviceSession: @unchecked Sendable {
         touches.yield((phase, x, y))
     }
 
+    /// Sends a touch and waits for delivery. Automation callers need failures to propagate,
+    /// rather than enqueueing events through the interactive preview's fire-and-forget API.
+    public func sendTouch(_ phase: TouchPhase, x: Double, y: Double) async throws {
+        try await channels.sendTouch(phase, x: x, y: y)
+    }
+
     public func tap(x: Double, y: Double) async throws {
         try await channels.sendTouch(.began, x: x, y: y)
         try await Task.sleep(for: .milliseconds(50))

@@ -3,9 +3,20 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var automation: AutomationModel
     @StateObject private var screen = ScreenModel()
     @State private var search = ""
-    @State private var showingInspector = false
+    @State private var trailingPanel: TrailingPanel? = .automation
+    @State private var presentedSheet: TaskSheet?
+
+    private enum TaskSheet: String, Identifiable {
+        case library, importTask
+        var id: String { rawValue }
+    }
+
+    private enum TrailingPanel {
+        case automation, deviceInfo
+    }
 
     /// The screen restarts only when the device changes, switches link or becomes (un)ready, not on
     /// every status update.
@@ -26,13 +37,27 @@ struct ContentView: View {
         NavigationSplitView {
             sidebar
         } detail: {
-            detail
-                .inspector(isPresented: $showingInspector) {
-                    if let device = model.selectedDevice {
-                        DeviceInspector(device: device, screen: screen)
-                            .inspectorColumnWidth(min: 260, ideal: 290, max: 360)
+            HSplitView {
+                detail
+                    .frame(minWidth: 300, maxWidth: .infinity, maxHeight: .infinity)
+                if trailingPanel != nil {
+                    Group {
+                        switch trailingPanel {
+                        case .automation:
+                            AutomationPanel(device: model.selectedDevice, automation: automation,
+                                            importTask: { presentedSheet = .importTask }, openLibrary: { presentedSheet = .library },
+                                            close: { trailingPanel = nil })
+                        case .deviceInfo:
+                            if let device = model.selectedDevice {
+                                DeviceInspector(device: device, screen: screen)
+                            }
+                        case nil:
+                            EmptyView()
+                        }
                     }
+                    .frame(minWidth: 340, idealWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
                 }
+            }
         }
         .task { await model.run() }
         .task(id: screenKey) {
@@ -40,6 +65,17 @@ struct ContentView: View {
                 await screen.run(device: device)
             }
         }
+        .frame(minWidth: 940, minHeight: 680)
+        .sheet(item: $presentedSheet) { sheet in
+            switch sheet {
+            case .library: AutomationLibrarySheet().environmentObject(automation)
+            case .importTask: AutomationImportSheet(automation: automation)
+            }
+        }
+        .onChange(of: automation.importGeneration) { _, _ in
+            trailingPanel = .automation
+        }
+        .onChange(of: automation.openGeneration) { _, _ in trailingPanel = .automation }
     }
 
     private var sidebar: some View {
@@ -83,7 +119,21 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    showingInspector.toggle()
+                    trailingPanel = trailingPanel == .automation ? nil : .automation
+                } label: {
+                    Label("自动任务", systemImage: "sidebar.right")
+                        .foregroundStyle(trailingPanel == .automation ? Color.accentColor : .primary)
+                        .overlay(alignment: .topTrailing) {
+                            if automation.isRunning {
+                                Circle().fill(.orange).frame(width: 6, height: 6).offset(x: 4, y: -2)
+                            }
+                        }
+                }
+                .help(trailingPanel == .automation ? "收起任务面板" : "显示任务面板")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    trailingPanel = trailingPanel == .deviceInfo ? nil : .deviceInfo
                 } label: {
                     Label("Device Info", systemImage: "info.circle")
                 }

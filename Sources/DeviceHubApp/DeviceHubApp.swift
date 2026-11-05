@@ -4,6 +4,7 @@ import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var model: AppModel?
+    var automation: AutomationModel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Launched as a bare SwiftPM executable, so opt into a Dock icon and focus explicitly.
@@ -13,7 +14,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        MainActor.assumeIsolated { model?.stop() }
+        MainActor.assumeIsolated {
+            automation?.stop()
+            model?.stop()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -25,13 +29,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct DeviceHubApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
+    @StateObject private var automation = AutomationModel()
 
     var body: some Scene {
-        WindowGroup("DeviceHub") {
+        Window("DeviceHub", id: "device-main") {
             ContentView()
                 .environmentObject(model)
-                .onAppear { appDelegate.model = model }
+                .environmentObject(automation)
+                .onAppear {
+                    appDelegate.model = model
+                    appDelegate.automation = automation
+                }
         }
-        .defaultSize(width: 900, height: 920)
+        .defaultSize(width: 1280, height: 920)
+
     }
 }
