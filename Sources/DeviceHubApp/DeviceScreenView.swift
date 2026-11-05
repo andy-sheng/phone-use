@@ -1,6 +1,58 @@
 import DeviceHubKit
 import SwiftUI
 
+/// Selection shows an idle screen until the user explicitly opens its preview.
+struct DeviceConnectionView: View {
+    let device: DeviceSummary
+    let isConnecting: Bool
+    let status: String?
+    let error: String?
+    let connect: () -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        DeviceFrame(screenAspectRatio: device.isPad ? 3.0 / 4.0 : 393.0 / 852.0) {
+            ZStack {
+                Color(nsColor: .windowBackgroundColor)
+                VStack(spacing: 16) {
+                    Image(systemName: device.deviceIcon)
+                        .font(.system(size: 36, weight: .light))
+                        .foregroundStyle(.secondary)
+                    Text(device.name)
+                        .font(.headline)
+                        .multilineTextAlignment(.center)
+                    if isConnecting {
+                        ProgressView().controlSize(.regular)
+                        Text(status ?? "正在连接…")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button("取消", action: cancel)
+                            .glassButton()
+                            .accessibilityIdentifier("device.connection.cancel")
+                    } else {
+                        Button(error == nil ? "连接" : "重试", action: connect)
+                            .glassButton(prominent: true)
+                            .controlSize(.large)
+                            .accessibilityIdentifier("device.connect")
+                        Text(error ?? "点击连接，查看并操作设备屏幕")
+                            .font(.caption)
+                            .foregroundStyle(error == nil ? Color.secondary : Color.orange)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(5)
+                    }
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .padding(.top, 52)
+        .padding(.bottom, 84)
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 /// The live device screen in a device frame, with floating glass controls.
 struct DeviceScreenView: View {
     @ObservedObject var screen: ScreenModel

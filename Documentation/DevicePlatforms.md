@@ -15,6 +15,25 @@ never calls Apple services. The screen model does not choose a codec or operate 
 CoreMediaIO or a video socket. Providers own platform-specific preparation and recovery
 policy. In particular, selecting Android does not trigger Apple USB re-enumeration.
 
+## Preview connections
+
+Selecting or discovering a device shows an idle device frame with a central
+Connect button. `ScreenModel` requires an explicit request for that device before
+calling the platform's preparation provider or opening a `DeviceSession`.
+Changing selection clears the request, including when switching back to a
+previous device. A transient readiness/link change on the same device retains
+an existing request so USB screen-capture re-enumeration can finish normally.
+
+The connection placeholder shows progress and Cancel while opening, and Retry
+after a failed attempt. Each view task has a generation so a late result from a
+cancelled or replaced attempt cannot overwrite the new selection's state.
+Preview cancellation stops its stream without closing shared daemon workers
+used by automation, CLI or MCP. Their explicit session-opening behavior stays
+independent of the preview's Connect button.
+
+`DeviceHubAppTests` exercises selection without transport side effects, explicit
+retry, cancellation and late completion; it is included in `swift test`.
+
 ## iOS nearby pairing
 
 `wireless_pairing.py` owns explicit, three-minute discovery and pairing sessions.

@@ -39,6 +39,7 @@ let package = Package(
             linkerSettings: appInfoPlist + modernAppearance
         ),
         .testTarget(name: "DeviceHubKitTests", dependencies: ["DeviceHubKit"]),
+        .testTarget(name: "DeviceHubAppTests", dependencies: ["DeviceHubApp", "DeviceHubKit"]),
     ],
     swiftLanguageModes: [.v5]
 )

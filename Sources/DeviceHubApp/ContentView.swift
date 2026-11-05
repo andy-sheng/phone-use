@@ -23,7 +23,7 @@ struct ContentView: View {
     /// every status update.
     private var screenKey: String {
         guard let device = model.selectedDevice else { return "" }
-        return "\(device.udid)|\(device.connection)|\(device.isReady)|\(screen.reconnectGeneration)"
+        return "\(device.udid)|\(device.connection)|\(device.isReady)|\(screen.requestedDeviceID ?? "")|\(screen.reconnectGeneration)"
     }
 
     private func matching(_ devices: [DeviceSummary]) -> [DeviceSummary] {
@@ -75,10 +75,9 @@ struct ContentView: View {
         }
         .task { await model.run() }
         .task(id: screenKey) {
-            if let device = model.selectedDevice {
-                await screen.run(device: device)
-            }
+            await screen.run(device: model.selectedDevice)
         }
+        .onChange(of: model.selection) { _, selectedID in screen.selectionChanged(to: selectedID) }
         .frame(minWidth: 940, minHeight: 680)
         .sheet(item: $presentedSheet) { sheet in
             switch sheet {
@@ -136,12 +135,21 @@ struct ContentView: View {
             Color(nsColor: .underPageBackgroundColor)
                 .extendedUnderSidebar()
                 .ignoresSafeArea()
-            if let device = model.selectedDevice, !device.isReady {
-                DeviceSetupView(device: device)
-                    .padding(24)
-            } else if let stream = screen.stream {
-                DeviceScreenView(screen: screen, stream: stream,
-                                 allowsInput: !automation.isRunning || automation.isProbe || automation.runDevice?.id != model.selectedDevice?.id)
+            if let device = model.selectedDevice {
+                if !device.isReady {
+                    DeviceSetupView(device: device)
+                        .padding(24)
+                } else if screen.requestedDeviceID == device.id, screen.isShowingDevice(device.id), let stream = screen.stream {
+                    DeviceScreenView(screen: screen, stream: stream,
+                                     allowsInput: !automation.isRunning || automation.isProbe || automation.runDevice?.id != device.id)
+                } else {
+                    DeviceConnectionView(device: device,
+                                         isConnecting: screen.isShowingDevice(device.id) && screen.isConnecting,
+                                         status: screen.isShowingDevice(device.id) ? screen.status : nil,
+                                         error: screen.isShowingDevice(device.id) ? screen.connectionError : nil,
+                                         connect: { screen.requestConnection(to: device) },
+                                         cancel: { screen.cancelConnection() })
+                }
             } else {
                 placeholder
             }

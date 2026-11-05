@@ -12,6 +12,9 @@ final class ScreenModel: ObservableObject {
     @Published private(set) var isAndroid = false
     @Published private(set) var streamError: String?
     @Published private(set) var fallbackMessage: String?
+    @Published private(set) var requestedDeviceID: String?
+    @Published private(set) var isConnecting = false
+    @Published private(set) var connectionError: String?
     @Published private(set) var isReconnecting = false
     @Published private(set) var reconnectGeneration = 0
     /// A short confirmation or error shown over the screen, cleared after a few seconds.
@@ -21,40 +24,98 @@ final class ScreenModel: ObservableObject {
     private var noticeTask: Task<Void, Never>?
     private var currentDeviceID: String?
     private var manualTouch: (session: DeviceSession, point: CGPoint)?
+    private var runGeneration = UUID()
+    private let prepareSession: @MainActor (DeviceSummary) async -> Void
+    private let openSession: @MainActor (String) async throws -> DeviceSession
+    private let connectionAttempts: Int
+    private let retryDelay: Duration
 
-    /// Connects to the device and keeps its screen stream alive until the surrounding task is cancelled.
-    func run(device: DeviceSummary) async {
+    init(prepareSession: @escaping @MainActor (DeviceSummary) async -> Void = { await prepareScreenSession(for: $0) },
+         openSession: @escaping @MainActor (String) async throws -> DeviceSession = { try await DeviceHub.shared.session(for: $0) },
+         connectionAttempts: Int = 5, retryDelay: Duration = .seconds(2)) {
+        self.prepareSession = prepareSession
+        self.openSession = openSession
+        self.connectionAttempts = max(connectionAttempts, 1)
+        self.retryDelay = retryDelay
+    }
+
+    /// Discovery and selection alone never prepare USB capture or open a device session.
+    func requestConnection(to device: DeviceSummary) {
+        guard device.isReady else { return }
+        if requestedDeviceID == device.id && (isConnecting || stream != nil) { return }
+        requestedDeviceID = device.id
+        reconnectGeneration += 1
+    }
+
+    func selectionChanged(to deviceID: String?) {
+        if requestedDeviceID != deviceID { requestedDeviceID = nil }
+    }
+
+    func cancelConnection() {
+        requestedDeviceID = nil
+        reconnectGeneration += 1
+    }
+
+    func isShowingDevice(_ deviceID: String) -> Bool {
+        currentDeviceID == deviceID
+    }
+
+    private func isCurrentRequest(_ deviceID: String, generation: UUID) -> Bool {
+        runGeneration == generation && requestedDeviceID == deviceID && !Task.isCancelled
+    }
+
+    /// Runs only an explicitly requested preview, for the lifetime of the surrounding view task.
+    func run(device: DeviceSummary?) async {
+        guard !Task.isCancelled else { return }
+        let generation = UUID()
+        runGeneration = generation
         releaseManualTouch()
         stream?.stop()
         stream = nil
         session = nil
         display = nil
         framesPerSecond = nil
-        isAndroid = device.isAndroid
-        currentDeviceID = device.id
+        isAndroid = device?.isAndroid ?? false
+        currentDeviceID = device?.id
+        aspectRatio = device?.isPad == true ? 3.0 / 4.0 : 393.0 / 852.0
+        isConnecting = false
+        connectionError = nil
+        status = nil
         streamError = nil
         fallbackMessage = nil
         noticeTask?.cancel()
         notice = nil
-        guard device.isReady else {
-            status = nil
-            await DeviceHub.shared.closeSession(for: device.udid)
-            return
+        guard let device, device.isReady, requestedDeviceID == device.id else { return }
+        isConnecting = true
+        defer {
+            if runGeneration == generation { isConnecting = false }
         }
         status = "Connecting to \(device.name)…"
-        await prepareScreenSession(for: device)
+        await prepareSession(device)
+        guard isCurrentRequest(device.id, generation: generation) else { return }
         var opened: DeviceSession?
-        for attempt in 1...5 {
-            guard !Task.isCancelled else { return }
+        var lastError: String?
+        for attempt in 1...connectionAttempts {
+            guard isCurrentRequest(device.id, generation: generation) else { return }
             do {
-                opened = try await DeviceHub.shared.session(for: device.udid)
+                opened = try await openSession(device.udid)
                 break
             } catch {
-                status = attempt == 5 ? "\(error)" : "Waiting for \(device.name)…"
-                try? await Task.sleep(for: .seconds(2))
+                guard isCurrentRequest(device.id, generation: generation) else { return }
+                lastError = String(describing: error)
+                if attempt < connectionAttempts {
+                    status = "Waiting for \(device.name)…"
+                    do { try await Task.sleep(for: retryDelay) }
+                    catch { return }
+                }
             }
         }
-        guard let session = opened, !Task.isCancelled else { return }
+        guard isCurrentRequest(device.id, generation: generation) else { return }
+        guard let session = opened else {
+            connectionError = lastError ?? "Unable to connect to \(device.name)."
+            status = nil
+            return
+        }
         self.session = session
         session.onTouchError = { [weak self, weak session] message in
             Task { @MainActor in
@@ -67,17 +128,18 @@ final class ScreenModel: ObservableObject {
         status = "Starting screen…"
 
         var stream = await makeScreenStream(for: session)
-        guard !Task.isCancelled else { stream.stop(); return }
+        guard isCurrentRequest(device.id, generation: generation) else { stream.stop(); return }
         attach(stream)
         status = nil
+        isConnecting = false
 
         // A video source can come up late, for example after the device re-enumerates on USB,
         // so screenshot polling keeps retrying until one is available.
-        while !Task.isCancelled {
+        while isCurrentRequest(device.id, generation: generation) {
             try? await Task.sleep(for: .seconds(stream.kind == .screenshots ? 5 : 1))
-            guard stream.recoveryPolicy == .retryVideo, !Task.isCancelled,
+            guard stream.recoveryPolicy == .retryVideo, isCurrentRequest(device.id, generation: generation),
                   let video = await makeVideoScreenStream(for: session) else { continue }
-            guard !Task.isCancelled else {
+            guard isCurrentRequest(device.id, generation: generation) else {
                 video.stop()
                 break
             }
