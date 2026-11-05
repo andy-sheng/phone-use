@@ -11,7 +11,7 @@ ROOT=${0:A:h:h}
 APP=${1:?usage: embed-daemon.sh <app> [identity]}
 IDENTITY=${2:-}
 RESOURCES=$APP/Contents/Resources
-CACHE=${DEVICEHUB_BUILD_CACHE:-$HOME/Library/Caches/DeviceHubBuild}
+CACHE=${DEVICEHUB_BUILD_CACHE:-$ROOT/.build/runtime-cache}
 mkdir -p "$CACHE" "$RESOURCES"
 
 # The first resolved build is pinned in the cache so later builds stay reproducible; delete

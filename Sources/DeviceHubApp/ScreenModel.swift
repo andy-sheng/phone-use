@@ -47,18 +47,34 @@ final class ScreenModel: ObservableObject {
         aspectRatio = session.display.pixelWidth / session.display.pixelHeight
         status = "Starting screen…"
 
-        let stream = await makeScreenStream(for: session)
-        stream.onFrame = { [weak self] fps in self?.framesPerSecond = fps }
-        self.stream = stream
+        var stream = await makeScreenStream(for: session)
+        attach(stream)
         status = nil
 
+        // A video source can come up late, for example after the device re-enumerates on USB,
+        // so screenshot polling keeps retrying until one is available.
         while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: .seconds(stream.kind == .screenshots ? 5 : 1))
+            guard stream.kind == .screenshots, !Task.isCancelled,
+                  let video = await makeVideoScreenStream(for: session) else { continue }
+            guard !Task.isCancelled else {
+                video.stop()
+                break
+            }
+            stream.stop()
+            stream = video
+            attach(video)
         }
         stream.stop()
         if self.stream === stream {
             self.stream = nil
         }
+    }
+
+    private func attach(_ stream: any ScreenStream) {
+        framesPerSecond = nil
+        stream.onFrame = { [weak self] fps in self?.framesPerSecond = fps }
+        self.stream = stream
     }
 
     func touch(_ phase: TouchPhase, at point: CGPoint) {

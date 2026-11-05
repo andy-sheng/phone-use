@@ -7,10 +7,11 @@ struct ContentView: View {
     @State private var search = ""
     @State private var showingInspector = false
 
-    /// The screen restarts only when the device changes or becomes (un)ready, not on every status update.
+    /// The screen restarts only when the device changes, switches link or becomes (un)ready, not on
+    /// every status update.
     private var screenKey: String {
         guard let device = model.selectedDevice else { return "" }
-        return "\(device.udid)|\(device.isReady)"
+        return "\(device.udid)|\(device.connection)|\(device.isReady)"
     }
 
     private func matching(_ devices: [DeviceSummary]) -> [DeviceSummary] {
@@ -142,7 +143,9 @@ private struct DeviceRow: View {
 
     private var subtitle: String {
         switch device.state {
-        case .ready, .disconnected: device.modelName ?? device.connection.uppercased()
+        case .ready where !device.isWired:
+            [device.modelName, device.connectionDescription].compactMap { $0 }.joined(separator: " · ")
+        case .ready, .disconnected: device.modelName ?? device.connectionDescription
         case .probing: "Checking…"
         case .untrusted: "Not trusted"
         case .developerModeOff: "Developer Mode off"

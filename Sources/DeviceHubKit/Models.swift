@@ -13,7 +13,7 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
 
     public var id: String { udid }
     public let udid: String
-    /// How the Mac reaches the device: `usb` today, `network` once Wi-Fi is supported.
+    /// How the Mac reaches the device: `usb` or `network` (Wi-Fi).
     public let connection: String
     public let name: String
     public let productType: String?
@@ -23,6 +23,8 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
     public let paired: Bool?
     public let developerMode: Bool?
     public let developerImage: Bool?
+    /// Whether the device is paired for Wi-Fi, which happens on its own while it is on USB.
+    public let wireless: Bool?
     /// `closed`, `opening`, `open` or `failed`.
     public let session: String
     public let error: String?
@@ -30,6 +32,13 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
     public var isAttached: Bool { state != .disconnected }
     public var isReady: Bool { state == .ready }
     public var isWired: Bool { connection == "usb" }
+    public var connectionDescription: String {
+        switch connection {
+        case "usb": "USB"
+        case "network": "Wi-Fi"
+        default: connection.capitalized
+        }
+    }
     public var osMajorVersion: Int {
         Int(productVersion?.split(separator: ".").first ?? "") ?? 0
     }

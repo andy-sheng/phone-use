@@ -25,6 +25,8 @@ LOG=$DERIVED/build.log
 echo "==> xcodebuild (log: $LOG)"
 if ! xcodebuild -project DeviceHub.xcodeproj -scheme DeviceHub -configuration Release \
     -derivedDataPath "$DERIVED" -destination 'platform=macOS,arch=arm64' \
+    -packageCachePath "$ROOT/.build/package-cache" \
+    -clonedSourcePackagesDirPath "$ROOT/.build/SourcePackages" \
     "${SIGNING[@]}" build > "$LOG" 2>&1; then
     grep -E "error:|BUILD FAILED" "$LOG" | tail -20 >&2
     exit 1

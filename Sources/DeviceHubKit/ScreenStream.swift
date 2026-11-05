@@ -26,6 +26,17 @@ public protocol ScreenStream: AnyObject {
 /// Starts the best available screen source for the device, falling back in order of quality.
 @MainActor
 public func makeScreenStream(for session: DeviceSession) async -> any ScreenStream {
+    if let video = await makeVideoScreenStream(for: session) {
+        return video
+    }
+    let fallback = ScreenshotScreenStream(session: session)
+    try? await fallback.start()
+    return fallback
+}
+
+/// Starts the best video source (mirror, then USB capture), or returns nil when none works.
+@MainActor
+public func makeVideoScreenStream(for session: DeviceSession) async -> (any ScreenStream)? {
     var candidates: [any ScreenStream] = []
     if session.device.osMajorVersion >= 27 {
         candidates.append(MirrorScreenStream(session: session))
@@ -42,9 +53,7 @@ public func makeScreenStream(for session: DeviceSession) async -> any ScreenStre
             FileHandle.standardError.write(Data("\(candidate.kind.rawValue) unavailable: \(error)\n".utf8))
         }
     }
-    let fallback = ScreenshotScreenStream(session: session)
-    try? await fallback.start()
-    return fallback
+    return nil
 }
 
 // MARK: - Mirror stream

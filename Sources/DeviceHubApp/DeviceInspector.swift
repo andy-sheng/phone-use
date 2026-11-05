@@ -13,7 +13,7 @@ struct DeviceInspector: View {
                 LabeledContent("Model", value: device.modelName ?? "–")
                 LabeledContent("System", value: device.osDescription ?? "–")
                 LabeledContent("Build", value: device.buildVersion ?? "–")
-                LabeledContent("Connection", value: device.isWired ? "USB" : device.connection.capitalized)
+                LabeledContent("Connection", value: device.connectionDescription)
                 LabeledContent("UDID") {
                     Text(device.udid)
                         .font(.caption.monospaced())
@@ -25,6 +25,7 @@ struct DeviceInspector: View {
                 Check("Trusted", device.paired)
                 Check("Developer Mode", device.developerMode)
                 Check("Developer services", device.developerImage ?? (device.isReady ? true : nil))
+                Check("Wi-Fi", device.wireless)
                 LabeledContent("Session", value: device.session.capitalized)
             }
             if let display = screen.display {

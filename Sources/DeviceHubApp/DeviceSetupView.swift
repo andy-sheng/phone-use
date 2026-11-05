@@ -52,7 +52,11 @@ struct DeviceSetupView: View {
     private var steps: some View {
         switch device.state {
         case .disconnected:
-            Text("Connect \(device.name) to this Mac with a USB cable.")
+            if device.wireless == true {
+                Text("Connect \(device.name) to this Mac with a USB cable, or unlock it on the same Wi-Fi network as this Mac.")
+            } else {
+                Text("Connect \(device.name) to this Mac with a USB cable.")
+            }
         case .probing:
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)

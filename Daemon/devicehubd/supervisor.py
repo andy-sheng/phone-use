@@ -12,10 +12,12 @@ Clients (the app, the MCP server, the CLI) connect to a Unix socket and speak th
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 
 from packaging.version import Version
@@ -29,7 +31,13 @@ from pymobiledevice3.services.mobile_image_mounter import (
 
 from devicehubd import VERSION, protocol
 from devicehubd.protocol import RpcError
-from devicehubd.transports import DISCOVERIES, discovery_for
+from devicehubd.transports import (
+    DISCOVERIES,
+    NETWORK,
+    discovery_for,
+    has_wireless_pairing,
+    pair_wireless,
+)
 
 logger = logging.getLogger("devicehubd")
 
@@ -37,6 +45,9 @@ POLL_INTERVAL = 1.5
 REPROBE_INTERVAL = 5.0
 WORKER_START_TIMEOUT = 90.0
 TUNNEL_MOUNTS_VERSION = Version("27.0")
+# What USB probes learned, so devices that show up only on the network still have a name.
+DEVICE_CACHE = Path.home() / "Library" / "Application Support" / "DeviceHub" / "devices.json"
+CACHED_FIELDS = ("name", "product_type", "product_version", "build_version", "developer_mode")
 
 
 @dataclass
@@ -51,6 +62,7 @@ class DeviceRecord:
     paired: Optional[bool] = None
     developer_mode: Optional[bool] = None
     developer_image: Optional[bool] = None
+    wireless: Optional[bool] = None
     session: str = "closed"
     error: Optional[str] = None
     probed_at: float = 0.0
@@ -85,9 +97,26 @@ class DeviceRecord:
             "paired": self.paired,
             "developerMode": self.developer_mode,
             "developerImage": self.developer_image,
+            "wireless": self.wireless,
             "session": self.session,
             "error": self.error,
         }
+
+
+def _load_cache() -> dict[str, dict[str, Any]]:
+    try:
+        cache = json.loads(DEVICE_CACHE.read_text())
+    except (OSError, ValueError):
+        return {}
+    return cache if isinstance(cache, dict) else {}
+
+
+def _save_cache(cache: dict[str, dict[str, Any]]) -> None:
+    try:
+        DEVICE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        DEVICE_CACHE.write_text(json.dumps(cache, indent=2, ensure_ascii=False))
+    except OSError as e:
+        logger.warning("saving the device cache failed: %r", e)
 
 
 @dataclass
@@ -124,6 +153,8 @@ class Supervisor:
         self.subscribers: set[asyncio.StreamWriter] = set()
         self._device_locks: dict[str, asyncio.Lock] = {}
         self._probing: set[str] = set()
+        self._wireless_failed: set[str] = set()
+        self._cache: dict[str, dict[str, Any]] = _load_cache()
 
     # MARK: Device tracking
 
@@ -137,13 +168,18 @@ class Supervisor:
             for discovery in DISCOVERIES:
                 try:
                     for attachment in await discovery.attached():
-                        seen[attachment.udid] = attachment.connection
+                        seen.setdefault(attachment.udid, attachment.connection)
                 except Exception as e:
                     logger.debug("%s discovery failed: %r", discovery.connection, e)
             changed = False
             for udid, connection in seen.items():
                 record = self.records.get(udid)
                 if record is None or not record.attached or record.connection != connection:
+                    if record is not None and record.attached:
+                        # The old link's tunnel is about to die; reopen over the new one.
+                        worker = self.workers.pop(udid, None)
+                        if worker is not None:
+                            worker.stop()
                     self.records[udid] = record = DeviceRecord(
                         udid, connection, name=record.name if record else None
                     )
@@ -181,6 +217,28 @@ class Supervisor:
             return
         record.probed_at = asyncio.get_running_loop().time()
         before = record.to_json()
+        if record.connection == NETWORK:
+            self._probe_network(record)
+        else:
+            await self._probe_usb(record)
+        if record.to_json() != before:
+            await self.broadcast()
+
+    def _probe_network(self, record: DeviceRecord) -> None:
+        """Only devices with a RemotePairing record are found on the network, and that record is
+        made over an already trusted USB connection, so there is nothing left to ask the device."""
+        for key, value in self._cache.get(record.udid, {}).items():
+            if key in CACHED_FIELDS and value is not None:
+                setattr(record, key, value)
+        record.paired = True
+        record.wireless = True
+        if record.developer_mode is None:
+            record.developer_mode = True
+        # The worker mounts the image over the tunnel when it is missing.
+        record.developer_image = True
+
+    async def _probe_usb(self, record: DeviceRecord) -> None:
+        udid = record.udid
         try:
             lockdown = await discovery_for(record.connection).lockdown(udid)
         except Exception as e:
@@ -195,6 +253,7 @@ class Supervisor:
             record.paired = await lockdown.validate_pairing() if not lockdown.paired else True
             if record.paired:
                 record.name = lockdown.all_values.get("DeviceName") or record.name
+                await self._ensure_wireless(record, lockdown)
                 async with MobileImageMounterService(lockdown=lockdown) as mounter:
                     record.developer_mode = bool(await mounter.query_developer_mode_status())
                     if record.developer_mode and not record.image_needs_tunnel:
@@ -207,8 +266,25 @@ class Supervisor:
         finally:
             with contextlib.suppress(Exception):
                 await lockdown.close()
-        if record.to_json() != before:
-            await self.broadcast()
+        self._remember(record)
+
+    async def _ensure_wireless(self, record: DeviceRecord, lockdown: Any) -> None:
+        """Pairs for Wi-Fi while the device is on the cable; the device shows no prompt for it."""
+        if record.udid not in self._wireless_failed and not has_wireless_pairing(record.udid):
+            try:
+                await pair_wireless(lockdown)
+                logger.info("paired %s for Wi-Fi", record.udid)
+            except Exception as e:
+                self._wireless_failed.add(record.udid)
+                logger.warning("Wi-Fi pairing of %s failed: %r", record.udid, e)
+        record.wireless = has_wireless_pairing(record.udid)
+
+    def _remember(self, record: DeviceRecord) -> None:
+        entry = {key: getattr(record, key) for key in CACHED_FIELDS}
+        if record.product_type is None or self._cache.get(record.udid) == entry:
+            return
+        self._cache[record.udid] = entry
+        _save_cache(self._cache)
 
     async def _mount_over_lockdown(self, record: DeviceRecord, lockdown: Any) -> None:
         try:
@@ -324,6 +400,7 @@ class Supervisor:
                     worker.ready.set_result(message)
                 record.session = "open"
                 record.developer_image = True
+                record.product_version = message.get("productVersion") or record.product_version
                 await self.broadcast()
             elif event in ("failed", "closed"):
                 failure = message.get("error")
