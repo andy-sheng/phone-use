@@ -11,12 +11,12 @@ git lfs install --local
 git lfs pull
 ```
 
-下载生成的 OCR 模型、scrcpy 和插件资源由下方的准备脚本写入 `.build/`，不提交到 Git。
+下载生成的 ADB、OCR 模型、scrcpy 和插件资源由下方的准备脚本写入 `.build/`，不提交到 Git。
 项目协作、目录职责和测试命令见 [AGENTS.md](AGENTS.md)。
 
 ## 开发运行
 
-需要 Apple silicon Mac、macOS 15 或更新版本、Xcode 和 Python 3.13。生成 Xcode 工程还需要 XcodeGen。Android 支持需要 Android SDK Platform-Tools，并确保 `adb` 在 PATH 中；也可以通过 `DEVICEHUB_ADB` 指定路径。
+需要 Apple silicon Mac、macOS 15 或更新版本、Xcode 和 Python 3.13。生成 Xcode 工程还需要 XcodeGen。Android 支持使用独立的 Android SDK Platform-Tools，无需安装 Android Studio；`setup-dev.sh` 会下载并校验固定版本的 ADB 和 scrcpy。
 
 ```sh
 scripts/setup-dev.sh
@@ -34,6 +34,24 @@ swift run phone-use-app
 Android 设备需要启用 USB 调试并授权电脑；输入控制还可能需要厂商的 USB 调试安全设置。
 
 在侧栏选中设备后，点击屏幕中央的「连接」才会建立预览会话并加载画面。连接过程中可取消，失败后可点击「重试」；切换设备后需要重新点击连接。
+
+## ADB 依赖下载
+
+首次运行 `scripts/setup-dev.sh` 会从 Google 官方下载固定版本的 macOS Platform-Tools，缓存 ZIP 和解压后的工具位于 `.build/android/`。再次运行会校验并复用缓存。只需单独准备 ADB 时：
+
+```sh
+python3.13 scripts/prepare-android-tools.py --download
+```
+
+版本、下载地址、ZIP 和解压文件的 SHA-256、上游校验来源及许可证信息记录在 `scripts/android-assets.json`。缓存不完整时会从已校验的 ZIP 重建或重新下载；下载文件校验失败会停止，不使用未验证的文件。只提取运行 ADB 必需的 `adb`、`lib64/libc++.dylib`、原始 `NOTICE.txt` 和 `source.properties`。
+
+离线机器可先从清单中的官方地址获取同一版本 ZIP，再导入（同样校验 SHA-256）：
+
+```sh
+python3.13 scripts/prepare-android-tools.py --archive /path/to/platform-tools_r37.0.1-darwin.zip
+```
+
+开发运行优先复用 PATH、Android SDK 或 Homebrew 中已有的 ADB，找不到时自动使用 `.build/android/platform-tools/adb`，无需修改 PATH。可以通过 `DEVICEHUB_ADB=/absolute/path/to/adb` 显式指定其他工具。
 
 ## iPhone / iPad 无线连接
 
@@ -54,7 +72,9 @@ Android 设备需要启用 USB 调试并授权电脑；输入控制还可能需�
 scripts/build-app.sh
 ```
 
-输出为 `dist/phone-use.app`，包含 Python 运行时、CLI 和 MCP 服务。Xcode 工程由 `project.yml` 生成，名称为 `phone-use.xcodeproj`，scheme 为 `phone-use`。
+输出为 `dist/phone-use.app`，包含 Python 运行时、CLI、MCP 服务和独立 ADB；使用者无需安装 Android Studio 或自行下载 ADB。Xcode 工程由 `project.yml` 生成，名称为 `phone-use.xcodeproj`，scheme 为 `phone-use`。
+
+打包前先完成上述依赖准备。Release 构建会在编译前检查 Android 资源，打包阶段只校验、复制已准备的固定版本并签名，不自动联网下载 Android 资源。ADB、所需动态库及上游许可证位于 `Contents/Resources/android/platform-tools/`。如需打包自定义版本，可显式设置 `DEVICEHUB_ADB`；此时使用指定工具及其相邻的 `lib64/`、`NOTICE.txt`、`source.properties`，不应用固定版本校验。
 
 | 入口 | SwiftPM 产品 | 应用包内位置 |
 | --- | --- | --- |

@@ -90,6 +90,9 @@ Android SDK, Homebrew) and uses the copy bundled under `DEVICEHUB_ANDROID_ASSETS
 a fallback: adb clients restart a server of a different version, so a bundled adb that
 differs from Android Studio's would keep dropping every device connection. ADB discovery
 tolerates a few consecutive failures before treating Android devices as detached.
+In development, `.build/android/platform-tools/adb` is the final fallback when no
+bundled assets directory is configured. `setup-dev.sh` prepares this standalone copy;
+Android Studio and PATH changes are not required.
 
 ## Android video
 
@@ -121,9 +124,21 @@ input even when a rotation preserves the dimensions.
 
 ## Dependencies and checks
 
-`scripts/android-assets.json` pins the upstream server version and checksums.
-`scripts/prepare-android-video.py` prepares the development cache explicitly; release
-embedding verifies and copies cached assets without silently downloading them.
+`scripts/android-assets.json` pins both the official macOS Platform-Tools ZIP and the
+scrcpy server, with upstream URLs, checksums and license provenance.
+`scripts/setup-dev.sh` invokes `prepare-android-tools.py --download` and
+`prepare-android-video.py --download` explicitly. Verified downloads and extracted
+files are reused under `.build/android/`; `--archive` can prepare ADB from the same
+pinned ZIP without network access. Both the ZIP and extracted ADB, runtime library,
+upstream `NOTICE.txt` and `source.properties` are checked against pinned SHA-256s.
+
+`build-app.sh` checks Android assets before starting Xcode. Release embedding stays
+offline and copies only ADB, its runtime library and upstream notices, then signs the
+Mach-O files. The default build uses the prepared pinned copy rather than whichever
+SDK happens to be installed. An explicit `DEVICEHUB_ADB` preserves the custom-tool
+build override (including its adjacent library and notice files); this override is
+outside the pinned asset checks. Runtime ADB selection still prefers the user's SDK
+to avoid restarting an existing ADB server with a different version.
 
 Daemon tests cover routing, authentication, timeouts and cleanup. Swift tests cover
 framing, H.264 configuration, geometry and stream cancellation. Hardware checks are

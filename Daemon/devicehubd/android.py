@@ -37,6 +37,10 @@ def find_adb() -> str | None:
     ]
     if bundled := android_assets_dir():
         candidates.append(str(bundled / "platform-tools" / "adb"))
+    else:
+        # setup-dev.sh prepares the standalone tools here; no Android Studio or PATH
+        # changes are needed when running directly from the checkout.
+        candidates.append(str(Path(__file__).resolve().parents[2] / ".build/android/platform-tools/adb"))
     return next((path for path in candidates if path and Path(path).is_file() and os.access(path, os.X_OK)), None)
 
 

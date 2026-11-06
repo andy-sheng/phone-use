@@ -79,6 +79,28 @@ blocked no permissions (user in plugdev group; are your udev rules wrong?)
                 user.unlink()
                 self.assertEqual(find_adb(), str(bundled))
 
+    def test_development_cache_supplies_adb_without_sdk_or_path_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            cached = root / ".build/android/platform-tools/adb"
+            user = root / "sdk/platform-tools/adb"
+            for path in (cached, user):
+                path.parent.mkdir(parents=True)
+                path.write_text("#!/bin/sh\n")
+                path.chmod(0o755)
+            real_is_file = Path.is_file
+            only_fixture = lambda path: path.is_relative_to(root) and real_is_file(path)
+            with patch.dict(os.environ, {}, clear=True), \
+                    patch("devicehubd.android.__file__", str(root / "Daemon/devicehubd/android.py")), \
+                    patch("devicehubd.android.shutil.which", return_value=None), \
+                    patch("devicehubd.android.Path.home", return_value=root), \
+                    patch.object(Path, "is_file", only_fixture):
+                self.assertEqual(find_adb(), str(cached))
+                with patch.dict(os.environ, {"ANDROID_HOME": str(root / "sdk")}):
+                    self.assertEqual(find_adb(), str(user))
+                with patch.dict(os.environ, {"DEVICEHUB_ANDROID_ASSETS": str(root / "missing-bundle")}):
+                    self.assertIsNone(find_adb())
+
 
 class DiscoveryAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_adb_invoked_without_shell(self):

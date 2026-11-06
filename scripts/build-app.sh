@@ -12,6 +12,18 @@ ROOT=$PWD
 DERIVED=${DERIVED_DATA:-$ROOT/.build/xcode}
 APP=$ROOT/dist/phone-use.app
 
+# Fail before compilation if Android assets have not been prepared. Release builds
+# never download them; setup-dev.sh owns dependency preparation.
+ASSET_PYTHON=${PYTHON:-python3}
+if [[ -x "$ROOT/.venv-daemon/bin/python" ]]; then ASSET_PYTHON="$ROOT/.venv-daemon/bin/python"; fi
+if [[ -z "${DEVICEHUB_ADB:-}" ]]; then
+    "$ASSET_PYTHON" "$ROOT/scripts/prepare-android-tools.py"
+elif [[ ! -x "$DEVICEHUB_ADB" ]] && ! command -v "$DEVICEHUB_ADB" >/dev/null 2>&1; then
+    echo "error: DEVICEHUB_ADB must name an executable adb." >&2
+    exit 1
+fi
+"$ASSET_PYTHON" "$ROOT/scripts/prepare-android-video.py"
+
 xcodegen generate --quiet
 
 SIGNING=(CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual)

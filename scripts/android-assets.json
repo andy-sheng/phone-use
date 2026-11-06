@@ -1,4 +1,21 @@
 {
+  "platform_tools": {
+    "version": "37.0.1",
+    "filename": "platform-tools_r37.0.1-darwin.zip",
+    "url": "https://dl.google.com/android/repository/platform-tools_r37.0.1-darwin.zip",
+    "sha256": "ee39ad5967e95c2a07f04dbcbde96b1a0c916ba376096db5d2f498b7727a5d1d",
+    "checksum_source": "https://dl.google.com/android/repository/repository2-1.xml",
+    "upstream_sha1": "6ae73f4de6452dc57e62ec02b68eed92a4c21661",
+    "release": "https://developer.android.com/tools/releases/platform-tools",
+    "license": "Apache-2.0 and third-party licenses in upstream NOTICE.txt",
+    "license_file": "platform-tools/NOTICE.txt",
+    "files": {
+      "adb": "1811e253b21b12cbfda7201ebaf86c10e7ddcb5c606a7a81f7c82b4c429c2d3b",
+      "lib64/libc++.dylib": "861dfb2d769b81267c118cb061aab1b2637686363a2ecf162411774fa6a37faf",
+      "NOTICE.txt": "356cc66516060e4da6bdc53e6f0bbb8e8101673f326b73c68d535eddd04dd7b1",
+      "source.properties": "2dccd788c0234d8cf7f7457377e57f57527a86a629c6ed54feb8af0f549dac38"
+    }
+  },
   "scrcpy": {
     "version": "3.3.4",
     "filename": "scrcpy-server-v3.3.4",
