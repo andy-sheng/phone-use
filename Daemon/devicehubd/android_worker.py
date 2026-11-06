@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from devicehubd import protocol
+from devicehubd.android_display import read_display_geometry
 from devicehubd.android_video import AndroidVideoManager
 from devicehubd.protocol import RpcError
 
@@ -80,10 +81,13 @@ class AndroidDevice:
 
     def __init__(self, adb_path: str, serial: str, *, controller_factory=make_controller,
                  permission_checker=check_input_permission,
+                 geometry_reader=read_display_geometry,
                  stopped: threading.Event | None = None) -> None:
         self.adb_path, self.serial = adb_path, serial
         self._factory = controller_factory
         self._permission_checker = permission_checker
+        self._geometry_reader = geometry_reader
+        self._rotation: int | None = None
         self._input_checked = False
         self.stopped = stopped or threading.Event()
         self.controller = None
@@ -113,6 +117,7 @@ class AndroidDevice:
             raise RpcError("androidConfigurationFailed", "Maa could not enable native-resolution screenshots")
         self._wait(self.controller.post_connection(), "connection (MaaTouch/minitouch required)", timeout=70)
         self._capture(initial=True)
+        self._check_geometry()
         return {"services": [], "display": {"pixelWidth": self.width, "pixelHeight": self.height, "pointScale": 1}}
 
     def _capture(self, *, initial: bool = False):
@@ -126,10 +131,8 @@ class AndroidDevice:
             raise RpcError("invalidScreenshot", "Screenshot dimensions do not match the native display")
         if initial:
             self.width, self.height = width, height
-        # Maa 5.6 exposes the raw resolution, but no display-rotation value.
-        # This catches dimension changes (including portrait/landscape), not a
-        # 180-degree rotation that keeps the same dimensions. Callers requiring
-        # fixed orientation should lock device rotation before opening a session.
+        # Screenshots validate their own dimensions. Coordinate-bearing input
+        # separately checks live display metadata, including 180-degree turns.
         elif self.geometry_changed or (width, height) != (self.width, self.height):
             self.geometry_changed = True
             with contextlib.suppress(Exception):
@@ -168,10 +171,19 @@ class AndroidDevice:
         if self.stopped.is_set():
             raise RpcError("disconnected", "The Android session is closing")
 
+    def _check_geometry(self) -> None:
+        # Maa's cached resolution only changes after a screenshot. A screenshot
+        # on some phones takes over a second, stretching each drag into a long
+        # press. Read live input-display metadata instead, including rotation.
+        geometry = self._geometry_reader(self.adb_path, self.serial)
+        if (self.geometry_changed or (geometry.width, geometry.height) != (self.width, self.height)
+                or self._rotation is not None and geometry.rotation != self._rotation):
+            self.geometry_changed = True
+            raise RpcError("displayChanged", "Android screen size or orientation changed; close and reopen the device")
+        self._rotation = geometry.rotation
+
     def _prepare_input(self) -> None:
-        # Maa resolution is refreshed by a screenshot, not by reading its cached
-        # property. Verify before every coordinate-bearing input.
-        self._capture()
+        self._check_geometry()
         self._check_input()
 
     def release(self, owner: str | None = None) -> None:

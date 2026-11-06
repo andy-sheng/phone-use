@@ -75,6 +75,14 @@ can only be moved or lifted by the session that pressed it, so closing the previ
 rejected preview gesture, never lifts a finger held by automation. Rotation and worker
 shutdown still release input unconditionally.
 
+Coordinate-bearing input checks the live default-display viewport from `dumpsys input`
+instead of taking a screenshot before each touch sample. Some phones take over a second
+to capture a frame, which delays clicks and turns continuous drags into long presses.
+The metadata check validates dimensions and rotation against the opened session,
+including 180-degree turns. A failed check rejects input and releases that owner's
+contact; it never guesses an orientation or replays the gesture. Screenshots remain
+native-resolution operations for preview fallback and automation recognition.
+
 ## ADB selection
 
 `DEVICEHUB_ADB` wins when set. Otherwise the daemon prefers a user-installed adb (PATH,
@@ -108,8 +116,8 @@ gesture. Closing the device worker closes both its control and video resources.
 Packet sizes, startup waits and transport backpressure are bounded. Malformed data
 fails the stream. SPS/PPS changes reset the H.264 format; a changed display aspect
 ratio stops the preview to avoid sending coordinates for a stale orientation. Native
-screenshot geometry checks continue to protect input. Fixed-coordinate tasks should
-lock orientation because a 180-degree rotation may preserve the dimensions.
+screenshot geometry checks validate captures, while live display metadata checks protect
+input even when a rotation preserves the dimensions.
 
 ## Dependencies and checks
 
