@@ -38,38 +38,33 @@ struct ContentView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        DeviceWorkspaceView(showsPanel: trailingPanel != nil) {
             sidebar
         } detail: {
-            HSplitView {
-                detail
-                    .frame(minWidth: 300, maxWidth: .infinity, maxHeight: .infinity)
-                if trailingPanel != nil {
-                    // Keep one split-view child while navigating within the pane so its
-                    // divider position does not reset with each page's view identity.
-                    VStack(spacing: 0) {
-                        switch trailingPanel {
-                        case .automation:
-                            if showsTaskLibrary, automation.selectedPlugin != nil {
-                                AutomationLibraryPage(automation: automation,
-                                                      open: { _ = automation.openTask($0) },
-                                                      importTask: { presentedSheet = .importTask },
-                                                      back: { showsTaskLibrary = false })
-                            } else {
-                                AutomationPanel(device: model.selectedDevice, automation: automation,
-                                                openLibrary: { showsTaskLibrary = true },
-                                                managePlugins: { presentedSheet = .plugins },
-                                                close: { trailingPanel = nil })
-                            }
-                        case .deviceInfo:
-                            if let device = model.selectedDevice {
-                                DeviceInspector(device: device, screen: screen)
-                            }
-                        case nil:
-                            EmptyView()
-                        }
+            detail
+        } panel: {
+            // Keep one split-view child while navigating within the pane so its
+            // divider position does not reset with each page's view identity.
+            VStack(spacing: 0) {
+                switch trailingPanel {
+                case .automation:
+                    if showsTaskLibrary, automation.selectedPlugin != nil {
+                        AutomationLibraryPage(automation: automation,
+                                              open: { _ = automation.openTask($0) },
+                                              importTask: { presentedSheet = .importTask },
+                                              back: { showsTaskLibrary = false })
+                    } else {
+                        AutomationPanel(device: model.selectedDevice, automation: automation,
+                                        openLibrary: { showsTaskLibrary = true },
+                                        managePlugins: { presentedSheet = .plugins },
+                                        close: { trailingPanel = nil })
                     }
-                    .frame(minWidth: 340, idealWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+                case .deviceInfo:
+                    if let device = model.selectedDevice {
+                        DeviceInspector(device: device, screen: screen)
+                    }
+                case nil:
+                    EmptyView()
                 }
             }
         }
@@ -78,7 +73,6 @@ struct ContentView: View {
             await screen.run(device: model.selectedDevice)
         }
         .onChange(of: model.selection) { _, selectedID in screen.selectionChanged(to: selectedID) }
-        .frame(minWidth: 940, minHeight: 680)
         .sheet(item: $presentedSheet) { sheet in
             switch sheet {
             case .importTask: AutomationImportSheet(automation: automation)
@@ -119,7 +113,6 @@ struct ContentView: View {
             }
         }
         .searchable(text: $search, placement: .sidebar, prompt: "Search")
-        .navigationSplitViewColumnWidth(min: 220, ideal: 250)
         .safeAreaInset(edge: .bottom) {
             Button { presentedSheet = .wirelessPairing } label: {
                 Label("配对附近设备…", systemImage: "plus")
