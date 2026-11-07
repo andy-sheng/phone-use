@@ -11,7 +11,7 @@ git lfs install --local
 git lfs pull
 ```
 
-下载生成的 ADB、OCR 模型、scrcpy 和插件资源由下方的准备脚本写入 `.build/`，不提交到 Git。
+下载生成的 ADB、OCR 模型和 scrcpy由下方的准备脚本写入 `.build/`，不提交到 Git。
 项目协作、目录职责和测试命令见 [AGENTS.md](AGENTS.md)。
 
 ## 开发运行
@@ -87,5 +87,7 @@ MCP 使用标准输入输出传输。将客户端的启动命令设为应用包�
 ## 改名兼容
 
 项目与对外产物由 DeviceHub 改名为 phone-use。为延续现有安装的权限、任务和设备记录，应用标识 `dev.devicehub.app`、`~/Library/Application Support/DeviceHub`、日志目录、`DEVICEHUB_*` 环境变量及插件数据格式保持兼容。内部 Swift 模块 `DeviceHubKit` 和 Python 模块也沿用原名。
+
+应用不附带插件；按需通过插件文件或下载 URL 安装。
 
 详见[插件自动化](Automation/README.md)和[平台隔离与视频流](Documentation/DevicePlatforms.md)。

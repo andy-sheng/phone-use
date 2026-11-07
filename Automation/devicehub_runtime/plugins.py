@@ -186,7 +186,7 @@ def read_manifest(root):
 class PluginPackage:
     root: Path
     manifest: dict
-    location: str = "bundled"
+    location: str = "external"
 
     @property
     def id(self):
@@ -217,8 +217,7 @@ class PluginPackage:
 
 
 def default_roots():
-    base = Path(__file__).resolve().parent.parent
-    return [base / "plugins", base.parent / ".build/plugins", INSTALLED_ROOT]
+    return [INSTALLED_ROOT]
 
 
 def discover(roots=None):
@@ -234,7 +233,7 @@ def discover(roots=None):
                 continue
             try:
                 manifest = read_manifest(file.parent)
-                location = "installed" if file.resolve().is_relative_to(INSTALLED_ROOT.resolve()) else "bundled"
+                location = "installed" if file.resolve().is_relative_to(INSTALLED_ROOT.resolve()) else "external"
                 plugin = PluginPackage(file.parent.resolve(), manifest, location)
                 identity = (plugin.id, version_tuple(manifest["version"]))
                 if identity in versions_seen:
@@ -249,7 +248,7 @@ def discover(roots=None):
                     current[plugin.id] = plugin
             except Exception as error:
                 errors.append(f"{file.parent.name}：{error}")
-        packages.update(current)  # Later roots explicitly override bundled packages.
+        packages.update(current)  # Later explicitly supplied roots take precedence.
     return packages, errors
 
 

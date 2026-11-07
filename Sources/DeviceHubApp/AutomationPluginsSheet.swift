@@ -54,7 +54,7 @@ struct AutomationPluginsSheet: View {
                                                 Text("已加载").font(.caption).foregroundStyle(Color.accentColor)
                                             }
                                         }
-                                        Text("v\(plugin.version) · \(plugin.location == "bundled" ? "随应用提供" : "已安装")")
+                                        Text("v\(plugin.version) · 已安装")
                                             .font(.caption).foregroundStyle(.secondary)
                                         Text(plugin.description).font(.callout).foregroundStyle(.secondary)
                                     }

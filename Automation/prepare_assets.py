@@ -7,8 +7,6 @@ import shutil
 import urllib.request
 from pathlib import Path
 
-from devicehub_runtime.images import prepare_variants
-
 
 def git_blob_hash(data: bytes) -> str:
     return hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
@@ -38,8 +36,6 @@ def prepare(output: Path, manifest_path: Path | None = None, cache: Path | None 
         temporary = target.with_name(target.name + ".part")
         temporary.write_bytes(data)
         temporary.replace(target)
-    templates = [item["destination"].removeprefix("image/") for item in manifest["files"] if item["destination"].startswith("image/")]
-    prepare_variants(output / "image", templates)
     (output / "provenance.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
     print(f"Assets ready: {output.resolve()}", flush=True)
 
