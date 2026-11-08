@@ -37,7 +37,7 @@ actor RemoteXPCConnection {
         try await stream.open()
         try await stream.write(HTTP2Frame.preface)
         try await writeFrame(.settings([
-            (HTTP2Frame.settingsMaxConcurrentStreams, 100),
+            (HTTP2Frame.settingsMaxConcurrentStreams, UInt32(100)),
             (HTTP2Frame.settingsInitialWindowSize, Self.localWindow),
         ]))
         try await writeFrame(.windowUpdate(stream: 0, increment: Self.localWindow - 65535))
