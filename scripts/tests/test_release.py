@@ -80,6 +80,13 @@ class ReleaseTests(unittest.TestCase):
 
 
 class PublishTests(unittest.TestCase):
+    def test_a_draft_is_reused_when_its_unpublished_tag_returns_404(self):
+        draft = {"id": 42, "tag_name": "v0.3.0", "draft": True}
+        with patch.object(publisher, "api", side_effect=[None, [draft]]) as api:
+            self.assertEqual(publisher.find_release("owner/releases", "v0.3.0"), draft)
+        self.assertEqual(api.call_count, 2)
+        self.assertIn("per_page=100", api.call_args.args[0])
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

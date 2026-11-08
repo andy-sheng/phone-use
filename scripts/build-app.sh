@@ -6,6 +6,7 @@
 #   SIGN_IDENTITY   e.g. "Developer ID Application: Example (TEAMID)"; ad-hoc by default
 #   TEAM_ID         development team for SIGN_IDENTITY
 #   NOTARY_PROFILE  notarytool keychain profile; when set the app is notarized and stapled
+#   NOTARY_KEYCHAIN optional keychain containing that profile
 #   VERSION / BUILD_NUMBER  optional release metadata overrides
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -57,7 +58,9 @@ codesign --verify --deep --strict "$APP"
 if [[ -n "${NOTARY_PROFILE:-}" ]]; then
     ZIP=$ROOT/dist/phone-use.zip
     ditto -c -k --keepParent "$APP" "$ZIP"
-    xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+    NOTARY_AUTH=(--keychain-profile "$NOTARY_PROFILE")
+    [[ -z "${NOTARY_KEYCHAIN:-}" ]] || NOTARY_AUTH+=(--keychain "$NOTARY_KEYCHAIN")
+    xcrun notarytool submit "$ZIP" "${NOTARY_AUTH[@]}" --wait
     xcrun stapler staple "$APP"
     ditto -c -k --keepParent "$APP" "$ZIP"
 fi

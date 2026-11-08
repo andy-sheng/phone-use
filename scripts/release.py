@@ -69,6 +69,7 @@ def notarize(artifact, work, profile):
     auth = ["--keychain-profile", profile]
     if keychain := os.environ.get("NOTARY_KEYCHAIN"):
         auth += ["--keychain", keychain]
+    print(f"Uploading {artifact.name} to Apple for notarization...", flush=True)
     submitted = json.loads(run(["xcrun", "notarytool", "submit", artifact, *auth, "--output-format", "json"]))
     submission = submitted["id"]
     (work / f"{artifact.name}.submission.json").write_text(json.dumps(submitted, indent=2))

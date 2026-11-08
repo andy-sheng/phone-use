@@ -73,11 +73,11 @@ git push origin v0.3.1
 python3 scripts/prepare-sparkle.py
 ```
 
-本机凭据使用登录钥匙串中的 `phone-use-notary` profile。将 `SIGN_IDENTITY` 设置为 Developer ID Application 证书名称后，明确指定保存凭据的钥匙串：
+本机凭据使用登录钥匙串中的 `phone-use-notary` profile。将 `SIGN_IDENTITY` 设置为 Developer ID Application 证书名称后，明确指定保存凭据的钥匙串。本机构建编号同样必须高于线上清单中的最大编号，下面的 `1002` 只是示例，发布前需核对并递增：
 
 ```sh
 NOTARY_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db" \
-python3 scripts/release.py --version 0.3.1 --build-number 2 \
+python3 scripts/release.py --version 0.3.1 --build-number 1002 \
   --repository andy-sheng/phone-use-releases
 ```
 

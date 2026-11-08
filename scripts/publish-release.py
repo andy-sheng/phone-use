@@ -25,6 +25,25 @@ def api(path, *, method="GET", data=None, optional=False):
     return json.loads(result.stdout) if result.stdout.strip() else None
 
 
+def find_release(repository, tag):
+    release = api(f"repos/{repository}/releases/tags/{tag}", optional=True)
+    if release is not None:
+        return release
+    # GitHub can return 404 for a draft's tag before that tag has been created.
+    # Drafts are visible in the authenticated release list and must be reused.
+    page = 1
+    while True:
+        releases = api(f"repos/{repository}/releases?per_page=100&page={page}")
+        matches = [item for item in releases if item["tag_name"] == tag]
+        if len(matches) > 1:
+            raise ValueError("Multiple drafts share this tag; inspect them before publishing")
+        if matches:
+            return matches[0]
+        if len(releases) < 100:
+            return None
+        page += 1
+
+
 def publish(output):
     manifest = json.loads((output / "release-manifest.json").read_text())
     repository = manifest["repository"]
@@ -49,12 +68,13 @@ def publish(output):
                 raise ValueError(f"Artifact checksum mismatch: {name}")
         artifacts += [path, path.with_name(name + ".sha256")]
     artifacts.append(output / "release-manifest.json")
-    release = api(f"repos/{repository}/releases/tags/{tag}", optional=True)
+    release = find_release(repository, tag)
     if release is None:
         release = api(f"repos/{repository}/releases", method="POST", data={
             "tag_name": tag, "target_commitish": repo["default_branch"], "name": f"phone-use {version}",
             "draft": True, "body": "macOS 15+ · Apple Silicon\n\n已完成 Developer ID 签名和 Apple 公证。打开 DMG，将 phone-use 拖入 Applications 安装。"})
     if release["draft"]:
+        print(f"Uploading {len(artifacts)} verified assets to draft {tag}...", flush=True)
         result = subprocess.run(["gh", "release", "upload", tag, "--repo", repository, "--clobber",
                                  *map(str, artifacts)], capture_output=True, text=True)
         if result.returncode:
@@ -64,6 +84,7 @@ def publish(output):
     for name, expected in manifest["artifacts"].items():
         if name not in assets or assets[name].get("digest") != f"sha256:{expected}":
             raise ValueError("Release asset does not match this build; published releases are never overwritten")
+    print("Remote archive checksums verified.", flush=True)
     if release["draft"]:
         api(f"repos/{repository}/releases/{release['id']}", method="PATCH", data={"draft": False, "make_latest": "true"})
     # The download is public before the feed can advertise it. Only static files
