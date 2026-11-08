@@ -50,13 +50,10 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
-          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           python3 - <<'PY'
           import os
           required = ["DEVELOPER_ID_P12", "DEVELOPER_ID_P12_PASSWORD", "APPLE_ID", "APPLE_TEAM_ID", "APPLE_APP_SPECIFIC_PASSWORD", "SPARKLE_PRIVATE_KEY"]
-          if os.environ["RELEASE_REPOSITORY"] != os.environ["GITHUB_REPOSITORY"]:
-              required.append("RELEASES_TOKEN")
           missing = [name for name in required if not os.environ.get(name)]
           if missing:
               raise SystemExit("Missing Actions secrets: " + ", ".join(missing))
@@ -132,6 +129,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Validate publishing credentials
+        env:
+          RELEASE_REPOSITORY: ${{ vars.RELEASE_REPOSITORY || github.repository }}
+          RELEASES_TOKEN_CONFIGURED: ${{ secrets.RELEASES_TOKEN != '' }}
+        run: |
+          if [[ "$RELEASE_REPOSITORY" != "$GITHUB_REPOSITORY" && "$RELEASES_TOKEN_CONFIGURED" != true ]]; then
+            echo "::error::Missing Actions secret RELEASES_TOKEN for the public release repository."
+            exit 1
+          fi
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: verified-release
