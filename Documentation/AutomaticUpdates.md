@@ -1,6 +1,6 @@
 # 自动更新与发布
 
-phone-use 使用 Sparkle 2。应用菜单中的「检查更新…」会下载并验证更新，用户确认后替换整个应用并重启。后台自动检查遵循 Sparkle 保存的用户偏好；不启用静默安装。自动任务正在运行时，安装重启延后到任务结束。
+phone-use 使用 Sparkle 2。应用菜单中的「检查更新…」会下载并验证更新，用户确认后替换整个应用并重启。后台自动检查遵循 Sparkle 保存的用户偏好；不启用静默安装。应用内自动任务正在运行时，安装重启延后到任务结束。
 
 应用标识仍为 `dev.devicehub.app`。设备记录、设置、已安装插件和任务保留在应用包外，更新不会将它们作为应用资源替换。外部插件不随发布包附带。
 
@@ -38,6 +38,8 @@ phone-use 使用 Sparkle 2。应用菜单中的「检查更新…」会下载并
 
 `RELEASES_TOKEN` 不需要源码仓库访问权，也不需要 Workflow、Actions 或 Administration 权限。构建运行在私有源码仓库，其日志、诊断和 CI artifact 也保持私有。发布脚本只向公开仓库上传已验证的安装包、校验和、发布元数据和静态更新清单。
 
+发布令牌到期前需更新同名 Secret。令牌只供 CI 发布使用；已经发布的安装包和客户端读取公开清单不依赖这个令牌。
+
 CI 将证书导入临时钥匙串，验证公证凭据，并在 `always()` 清理步骤删除临时私钥文件和钥匙串。缓存只包含公开依赖和模型，不包含签名文件。发布只在版本标签或手动 dispatch 上运行，不在 PR 上使用签名密钥。
 
 ## 发布新版本
@@ -73,11 +75,11 @@ git push origin v0.3.1
 python3 scripts/prepare-sparkle.py
 ```
 
-本机凭据使用登录钥匙串中的 `phone-use-notary` profile。将 `SIGN_IDENTITY` 设置为 Developer ID Application 证书名称后，明确指定保存凭据的钥匙串。本机构建编号同样必须高于线上清单中的最大编号，下面的 `1002` 只是示例，发布前需核对并递增：
+本机凭据使用登录钥匙串中的 `phone-use-notary` profile。将 `SIGN_IDENTITY` 设置为 Developer ID Application 证书名称后，明确指定保存凭据的钥匙串。本机构建编号同样必须高于线上清单中的最大编号，下面的 `1004` 只是示例，发布前需核对并递增：
 
 ```sh
 NOTARY_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db" \
-python3 scripts/release.py --version 0.3.1 --build-number 1002 \
+python3 scripts/release.py --version 0.3.1 --build-number 1004 \
   --repository andy-sheng/phone-use-releases
 ```
 
@@ -88,5 +90,15 @@ python3 scripts/release.py --version 0.3.1 --build-number 1002 \
 首次带 Sparkle 的版本需要用户手动安装一次。原来的 0.2.0 没有更新器，不能凭空自动获取这一能力。后续版本可通过应用内更新。
 
 正式升级回归应使用两个已签名、公证且 build number 递增的版本，确认更新提示、签名验证、安装替换和重新启动；还要确认运行中的自动任务会延后重启。仅编译通过或运行清单解析测试不代表升级链路已验证。
+
+## 首次发布验证
+
+2026-11-08 已发布 [0.3.0（build 1003）](https://github.com/andy-sheng/phone-use-releases/releases/tag/v0.3.0)，[GitHub Actions 完整运行成功](https://github.com/andy-sheng/phone-use/actions/runs/42446336646)。
+
+- macOS 26 ARM64 云端构建、Swift/Python/发布脚本回归、151 个原生文件签名、公证、票据和 Gatekeeper 检查均通过。
+- DMG 和更新 ZIP 可匿名下载，远端摘要与发布清单一致；Pages 已部署，线上清单通过 Sparkle 签名验证。
+- 本机独立测试副本从 build 1 经正式在线更新替换为 1003，观察到旧进程退出及安装器自行启动新进程；安装后的签名、公证票据和 Gatekeeper 检查通过，应用版本面板显示 0.3.0 (1003)。
+
+真实升级回归在空闲状态下执行；应用内任务运行时延后重启的判断由单元测试覆盖。
 
 参考：[Sparkle 接入](https://sparkle-project.org/documentation/)、[Sparkle 发布](https://sparkle-project.org/documentation/publishing/)、[Apple 公证](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)。
