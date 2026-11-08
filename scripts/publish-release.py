@@ -44,6 +44,21 @@ def find_release(repository, tag):
         page += 1
 
 
+def upload_draft_assets(repository, tag, paths, existing):
+    assets = {asset["name"]: asset for asset in existing}
+    for path in paths:
+        with path.open("rb") as stream:
+            digest = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
+        if assets.get(path.name, {}).get("digest") == digest:
+            print(f"Reusing verified draft asset {path.name}", flush=True)
+            continue
+        print(f"Uploading draft asset {path.name}...", flush=True)
+        result = subprocess.run(["gh", "release", "upload", tag, "--repo", repository,
+                                 "--clobber", str(path)], capture_output=True, text=True)
+        if result.returncode:
+            raise RuntimeError(result.stderr.strip())
+
+
 def publish(output):
     manifest = json.loads((output / "release-manifest.json").read_text())
     repository = manifest["repository"]
@@ -74,11 +89,7 @@ def publish(output):
             "tag_name": tag, "target_commitish": repo["default_branch"], "name": f"phone-use {version}",
             "draft": True, "body": "macOS 15+ · Apple Silicon\n\n已完成 Developer ID 签名和 Apple 公证。打开 DMG，将 phone-use 拖入 Applications 安装。"})
     if release["draft"]:
-        print(f"Uploading {len(artifacts)} verified assets to draft {tag}...", flush=True)
-        result = subprocess.run(["gh", "release", "upload", tag, "--repo", repository, "--clobber",
-                                 *map(str, artifacts)], capture_output=True, text=True)
-        if result.returncode:
-            raise RuntimeError(result.stderr.strip())
+        upload_draft_assets(repository, tag, artifacts, release["assets"])
         release = api(f"repos/{repository}/releases/{release['id']}")
     assets = {asset["name"]: asset for asset in release["assets"]}
     for name, expected in manifest["artifacts"].items():

@@ -80,6 +80,14 @@ class ReleaseTests(unittest.TestCase):
 
 
 class PublishTests(unittest.TestCase):
+    def test_retry_reuses_a_draft_asset_with_the_exact_checksum(self):
+        archive = self.output / self.assets[0]["name"]
+        checksum = archive.with_name(archive.name + ".sha256")
+        with patch.object(publisher.subprocess, "run", return_value=SimpleNamespace(returncode=0, stderr="")) as upload:
+            publisher.upload_draft_assets("owner/releases", "v0.3.0", [archive, checksum], self.assets)
+        self.assertEqual(upload.call_count, 1)
+        self.assertEqual(upload.call_args.args[0][-1], str(checksum))
+
     def test_a_draft_is_reused_when_its_unpublished_tag_returns_404(self):
         draft = {"id": 42, "tag_name": "v0.3.0", "draft": True}
         with patch.object(publisher, "api", side_effect=[None, [draft]]) as api:
