@@ -84,6 +84,10 @@ scripts/build-app.sh
 
 MCP 使用标准输入输出传输。将客户端的启动命令设为应用包中 MCP 服务的绝对路径，并先启动应用。已有配置如引用 `DeviceHub.app` 或 `devicehub-mcp`，需要更新为上述路径。
 
+## 自动更新与发布
+
+正式应用通过 Sparkle 检查并安装更新；安装包由 GitHub Releases 提供，更新清单由 GitHub Pages 托管。推送 `vMAJOR.MINOR.PATCH` 标签可触发 Actions 完成测试、签名、公证和发布。首次配置、密钥管理与验证步骤见 [自动更新与发布](Documentation/AutomaticUpdates.md)。
+
 ## 改名兼容
 
 项目与对外产物由 DeviceHub 改名为 phone-use。为延续现有安装的权限、任务和设备记录，应用标识 `dev.devicehub.app`、`~/Library/Application Support/DeviceHub`、日志目录、`DEVICEHUB_*` 环境变量及插件数据格式保持兼容。内部 Swift 模块 `DeviceHubKit` 和 Python 模块也沿用原名。

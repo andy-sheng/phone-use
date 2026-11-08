@@ -11,7 +11,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: 0.2.0
+    MARKETING_VERSION: 0.3.0
     CURRENT_PROJECT_VERSION: 1
     # The embedded Python runtime is Apple silicon only.
     ARCHS: arm64
@@ -22,6 +22,9 @@ settings:
 packages:
   PhoneUsePackage:
     path: .
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.1
 
 targets:
   phone-use-app:
@@ -32,6 +35,8 @@ targets:
     dependencies:
       - package: PhoneUsePackage
         product: DeviceHubKit
+      - package: Sparkle
+        product: Sparkle
       - target: phone-use-mcp
         embed: true
         codeSign: true
@@ -53,6 +58,11 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.developer-tools
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        SUFeedURL: $(SPARKLE_FEED_URL)
+        SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
+        SUVerifyUpdateBeforeExtraction: true
+        SURequireSignedFeed: true
+        SUAllowsAutomaticUpdates: false
         NSCameraUsageDescription: phone-use mirrors USB-connected iPhone screens through the system screen capture device.
         NSLocalNetworkUsageDescription: phone-use discovers and pairs iPhone and iPad devices on your local network.
         NSBonjourServices:
@@ -77,12 +87,15 @@ targets:
         PRODUCT_NAME: phone-use
         PRODUCT_MODULE_NAME: phone_use_app
         PRODUCT_BUNDLE_IDENTIFIER: dev.devicehub.app
+        SPARKLE_FEED_URL: https://andy-sheng.github.io/phone-use-releases/appcast.xml
+        SPARKLE_PUBLIC_KEY: c1KqCiZCOZcNqR5JoImkDmcXj1hkr4GAW2//VzWuots=
         # The embed script writes the Python runtime into the bundle.
         ENABLE_USER_SCRIPT_SANDBOXING: NO
       configs:
         # Debug runs the daemon from the checkout's .venv-daemon (scripts/setup-dev.sh).
         Debug:
           DEVICEHUB_EMBED_DAEMON: NO
+          CODE_SIGN_ENTITLEMENTS: Support/DeviceHub-Debug.entitlements
         Release:
           DEVICEHUB_EMBED_DAEMON: YES
     postCompileScripts:

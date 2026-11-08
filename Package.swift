@@ -28,13 +28,16 @@ let package = Package(
         .executable(name: "phone-use-mcp", targets: ["devicehub-mcp"]),
         .executable(name: "phone-use-app", targets: ["DeviceHubApp"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1"),
+    ],
     targets: [
         .target(name: "DeviceHubKit"),
         .executableTarget(name: "devicehub", dependencies: ["DeviceHubKit"]),
         .executableTarget(name: "devicehub-mcp", dependencies: ["DeviceHubKit"]),
         .executableTarget(
             name: "DeviceHubApp",
-            dependencies: ["DeviceHubKit"],
+            dependencies: ["DeviceHubKit", .product(name: "Sparkle", package: "Sparkle")],
             resources: [.process("Resources")],
             linkerSettings: appInfoPlist + modernAppearance
         ),

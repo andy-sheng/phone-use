@@ -34,6 +34,16 @@
 	<string>phone-use mirrors USB-connected iPhone screens through the system screen capture device.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>phone-use discovers and pairs iPhone and iPad devices on your local network.</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>$(SPARKLE_FEED_URL)</string>
+	<key>SUPublicEDKey</key>
+	<string>$(SPARKLE_PUBLIC_KEY)</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

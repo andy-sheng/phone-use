@@ -29,6 +29,7 @@ struct DeviceHubApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel()
     @StateObject private var automation = AutomationModel()
+    @StateObject private var updater = AppUpdater()
 
     var body: some Scene {
         Window("phone-use", id: "device-main") {
@@ -38,9 +39,16 @@ struct DeviceHubApp: App {
                 .onAppear {
                     appDelegate.model = model
                     appDelegate.automation = automation
+                    updater.setTaskRunning(automation.isBusy)
                 }
+                .onChange(of: automation.isBusy) { _, running in updater.setTaskRunning(running) }
         }
         .defaultSize(width: 1280, height: 920)
-
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("检查更新…", action: updater.checkForUpdates)
+                    .disabled(!updater.canCheckForUpdates || automation.isBusy)
+            }
+        }
     }
 }

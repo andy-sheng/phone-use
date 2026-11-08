@@ -6,6 +6,7 @@
 #   SIGN_IDENTITY   e.g. "Developer ID Application: Example (TEAMID)"; ad-hoc by default
 #   TEAM_ID         development team for SIGN_IDENTITY
 #   NOTARY_PROFILE  notarytool keychain profile; when set the app is notarized and stapled
+#   VERSION / BUILD_NUMBER  optional release metadata overrides
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
@@ -27,10 +28,10 @@ fi
 xcodegen generate --quiet
 
 SIGNING=(CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual)
-if [[ -n "${SIGN_IDENTITY:-}" ]]; then
-    SIGNING=(CODE_SIGN_IDENTITY="$SIGN_IDENTITY" CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="${TEAM_ID:-}"
-             OTHER_CODE_SIGN_FLAGS=--timestamp)
-fi
+# Build with the reusable ad-hoc Python cache, then sign the complete assembled bundle.
+# This also covers Sparkle's nested helper applications, frameworks and XPC services.
+[[ -z "${VERSION:-}" ]] || SIGNING+=(MARKETING_VERSION="$VERSION")
+[[ -z "${BUILD_NUMBER:-}" ]] || SIGNING+=(CURRENT_PROJECT_VERSION="$BUILD_NUMBER")
 
 mkdir -p "$DERIVED"
 LOG=$DERIVED/build.log
@@ -48,6 +49,9 @@ BUILT=$DERIVED/Build/Products/Release/phone-use.app
 rm -rf "$APP"
 mkdir -p "$ROOT/dist"
 ditto "$BUILT" "$APP"
+if [[ -n "${SIGN_IDENTITY:-}" ]]; then
+    "$ASSET_PYTHON" "$ROOT/scripts/sign-app.py" "$APP" "$SIGN_IDENTITY"
+fi
 codesign --verify --deep --strict "$APP"
 
 if [[ -n "${NOTARY_PROFILE:-}" ]]; then
