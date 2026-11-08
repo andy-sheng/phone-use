@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Keeps the navigation sidebar and the resizable device/task panes inside the window.
@@ -9,7 +10,8 @@ struct DeviceWorkspaceView<Sidebar: View, Detail: View, Panel: View>: View {
 
     private let previewMinimumWidth: CGFloat = 300
     private let panelMinimumWidth: CGFloat = 340
-    private let dividerWidth: CGFloat = 1
+    // Both native split views need room for their platform-specific dividers.
+    private let dividerWidth = NSSplitView().dividerThickness
 
     private var detailMinimumWidth: CGFloat {
         previewMinimumWidth + (showsPanel ? panelMinimumWidth + dividerWidth : 0)
@@ -21,7 +23,7 @@ struct DeviceWorkspaceView<Sidebar: View, Detail: View, Panel: View>: View {
                 sidebar
                     .navigationSplitViewColumnWidth(
                         min: 220, ideal: 250,
-                        max: max(220, window.size.width - detailMinimumWidth)
+                        max: max(220, window.size.width - detailMinimumWidth - dividerWidth)
                     )
             } detail: {
                 GeometryReader { available in

@@ -36,8 +36,8 @@ final class WorkspaceLayoutTests: XCTestCase {
                     navigation.setPosition(sidebarWidth, ofDividerAt: 0)
                     layout(host)
 
-                    let context = "window=\(size), sidebar=\(sidebarWidth), panel=\(showsPanel)"
                     let splits = splitViews(in: host)
+                    let context = "window=\(size), sidebar=\(sidebarWidth), panel=\(showsPanel), dividers=\(splits.map(\.dividerThickness))"
                     XCTAssertEqual(splits.count, 2, context)
                     for split in splits {
                         assertContained(split.convert(split.bounds, to: host), in: host.bounds, context)
