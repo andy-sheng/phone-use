@@ -65,6 +65,19 @@ def previous_feed(url, destination, build_number, version=None):
     destination.write_bytes(data)
 
 
+def tolerated_notary_issue(issue):
+    """Only Apple's warning that it cannot unpack the pinned scrcpy server is accepted.
+
+    That file is a Dalvik archive pushed to Android devices, verified against its pinned digest
+    before embedding, and holds no macOS code. Since 2026-11 Apple warns that it cannot unpack it;
+    every other issue, and any error for that path, still fails the release.
+    """
+    scrcpy = json.loads((ROOT / "scripts/android-assets.json").read_text(encoding="utf-8"))["scrcpy"]["filename"]
+    return (issue.get("severity") == "warning"
+            and (issue.get("path") or "").endswith(f".app/Contents/Resources/android/{scrcpy}")
+            and "could not be unpacked" in (issue.get("message") or ""))
+
+
 def notarize(artifact, work, profile):
     auth = ["--keychain-profile", profile]
     if keychain := os.environ.get("NOTARY_KEYCHAIN"):
@@ -83,7 +96,10 @@ def notarize(artifact, work, profile):
     details = json.loads(log.read_text())
     if result["status"] != "Accepted" or details["status"] != "Accepted":
         raise RuntimeError(f"Apple rejected {artifact.name}; inspect {log}")
-    if details.get("issues"):
+    issues = details.get("issues") or []
+    for issue in filter(tolerated_notary_issue, issues):
+        print(f"Tolerated notary warning: {issue.get('path')}: {issue.get('message')}", flush=True)
+    if [issue for issue in issues if not tolerated_notary_issue(issue)]:
         raise RuntimeError(f"Apple reported notarization issues; inspect {log}")
     with artifact.open("rb") as stream:
         if details["sha256"] != hashlib.file_digest(stream, "sha256").hexdigest():

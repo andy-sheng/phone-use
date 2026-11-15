@@ -45,6 +45,36 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(commands, ["submit", "wait", "log"])
             self.assertTrue((work / "update.zip.notary-log.json").exists())
 
+    def notarize_with_log(self, log):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            artifact = work / "update.zip"
+            artifact.write_bytes(b"accepted archive")
+            log = {"status": "Accepted", "sha256": hashlib.sha256(b"accepted archive").hexdigest(), **log}
+
+            def execute(command, **kwargs):
+                if command[2] == "submit":
+                    return SimpleNamespace(returncode=0, stdout='{"id":"submission-id"}', stderr="")
+                if command[2] == "wait":
+                    return SimpleNamespace(returncode=0, stdout='{"status":"Accepted"}', stderr="")
+                Path(command[-1]).write_text(json.dumps(log))
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with patch.object(release.subprocess, "run", side_effect=execute):
+                return release.notarize(artifact, work, "test-profile")
+
+    def test_only_the_pinned_scrcpy_unpack_warning_is_tolerated(self):
+        scrcpy = json.loads((release.ROOT / "scripts/android-assets.json").read_text())["scrcpy"]["filename"]
+        tolerated = {"severity": "warning", "path": f"notary-app.zip/phone-use.app/Contents/Resources/android/{scrcpy}",
+                     "message": f"The archive at .../{scrcpy} could not be unpacked. Any executables contained "
+                                "in the archive will not be notarized."}
+        self.assertEqual(self.notarize_with_log({"issues": [tolerated]}), "submission-id")
+        for issue in [{**tolerated, "severity": "error"},
+                      {**tolerated, "path": "notary-app.zip/phone-use.app/Contents/Resources/other.jar"},
+                      {**tolerated, "message": "The binary is not signed."}]:
+            with self.subTest(issue=issue), self.assertRaisesRegex(RuntimeError, "notarization issues"):
+                self.notarize_with_log({"issues": [tolerated, issue]})
+
     def test_initial_feed_404_is_allowed_but_server_errors_are_not(self):
         with tempfile.TemporaryDirectory() as directory:
             destination = Path(directory) / "appcast.xml"
