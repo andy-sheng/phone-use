@@ -1,0 +1,81 @@
+{
+  "fill": {
+    "linear-gradient": [
+      "display-p3:0.15,0.14,0.13,1",
+      "display-p3:0.04,0.04,0.04,1"
+    ],
+    "orientation": {
+      "start": {
+        "x": 0.5,
+        "y": 0
+      },
+      "stop": {
+        "x": 0.5,
+        "y": 1
+      }
+    }
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "glass": true,
+          "image-name": "phone.svg",
+          "name": "phone"
+        },
+        {
+          "glass": true,
+          "image-name": "screen.svg",
+          "name": "screen"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.3
+      }
+    },
+    {
+      "layers": [
+        {
+          "glass": true,
+          "image-name": "floor.svg",
+          "name": "floor"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.3
+      }
+    },
+    {
+      "layers": [
+        {
+          "glass": false,
+          "image-name": "reflection.svg",
+          "name": "reflection"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}
