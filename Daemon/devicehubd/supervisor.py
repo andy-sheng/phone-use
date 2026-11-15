@@ -36,6 +36,7 @@ from devicehubd.android import AndroidAttachment, AndroidDiscovery
 from devicehubd.protocol import RpcError
 from devicehubd.transports import (
     DISCOVERIES,
+    ENDPOINTS_ENV,
     NETWORK,
     NetworkDiscovery,
     discovery_for,
@@ -251,6 +252,14 @@ class Supervisor:
                 logger.debug("%s discovery failed: %r", discovery.connection, e)
         android = await self._discover_android()
         seen.update({udid: item.connection for udid, item in android.items()})
+        # A live Wi-Fi worker holds a tunnel to the device, which is better evidence than a
+        # Bonjour/usbmuxd listing that drops sleeping devices. If the tunnel breaks the worker
+        # exits, and the next poll detaches the device as usual.
+        for udid, worker in self.workers.items():
+            record = self.records.get(udid)
+            if (udid not in seen and record is not None and record.attached and record.platform == "ios"
+                    and record.connection == NETWORK and not worker.stopping and worker.process.returncode is None):
+                seen[udid] = NETWORK
         changed = False
         for udid, connection in seen.items():
             record = self.records.get(udid)
@@ -572,9 +581,13 @@ class Supervisor:
             arguments = ["devicehubd.android_worker", "--adb", self.android.adb_path, "--serial", record.adb_serial]
         else:
             arguments = ["devicehubd.worker", "--udid", record.udid, "--connection", record.connection]
+        environment = None
+        network = discovery_for(NETWORK) if record.platform == "ios" and record.connection == NETWORK else None
+        if isinstance(network, NetworkDiscovery):
+            environment = {**os.environ, ENDPOINTS_ENV: json.dumps(network.endpoints(record.udid))}
         process = await asyncio.create_subprocess_exec(
             sys.executable, "-m", *arguments,
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, env=environment,
             limit=WORKER_READ_LIMIT,
         )
         loop = asyncio.get_running_loop()

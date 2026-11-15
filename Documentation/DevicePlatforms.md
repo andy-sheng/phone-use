@@ -59,6 +59,16 @@ pair record: their name, OS version and readiness come from trusted network
 lockdown, and the worker opens `CoreDeviceProxy` over that same network link.
 The system trust stays in the system; this path neither imports Xcode keys nor
 performs a new pairing. USB keeps priority when both links are present.
+
+Bonjour browsing (RemotePairing discovery, connection and nearby pairing) goes
+through the system mDNSResponder (`dns_sd`), not pymobiledevice3's own UDP 5353
+sockets: when a VPN or TUN proxy owns the multicast route, raw queries leave
+through the tunnel and no device answers. Sleeping iPhones drop out of both
+Bonjour and the `usbmuxd` list while staying reachable, so the daemon keeps
+`usbmuxd` sightings for 90 s and RemotePairing sightings for 30 s, renews a quiet
+RemotePairing peer with a plain TCP connect to its last advertised address, and
+hands those addresses to the worker to try before a fresh browse. A device with
+an open Wi-Fi session stays attached while its worker's tunnel is alive.
 A first connection without USB obtains its actual OS version from the worker
 before selecting mirror video and the iOS 27 HID authentication policy.
 

@@ -43,7 +43,7 @@ class WirelessPairingTests(unittest.IsolatedAsyncioTestCase):
             yield advertisement("television", "AppleTV14,1")
             browsed.set()
 
-        with patch("devicehubd.wireless_pairing.iter_browse_service", browse):
+        with patch("devicehubd.system_bonjour.iter_browse", browse):
             self.pairing._spawn(self.pairing._browse())
             await asyncio.wait_for(browsed.wait(), 1)
             self.assertEqual(self.pairing.snapshot()["devices"], [{"id": "nearby", "name": "Test iPhone"}])
@@ -75,7 +75,7 @@ class WirelessPairingTests(unittest.IsolatedAsyncioTestCase):
         with patch("devicehubd.wireless_pairing.socket.socket", return_value=listener), \
                 patch("devicehubd.wireless_pairing.asyncio.start_server", new=AsyncMock(return_value=server)), \
                 patch("devicehubd.wireless_pairing.MDNSResponder", return_value=advertiser), \
-                patch("devicehubd.wireless_pairing.iter_browse_service", browse):
+                patch("devicehubd.system_bonjour.iter_browse", browse):
             await self.pairing.start()
             await asyncio.wait_for(started.wait(), 1)
             self.assertEqual(self.pairing.state, "waiting")

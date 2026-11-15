@@ -18,7 +18,6 @@ from pymobiledevice3.bonjour import (
     REMOTEPAIRING_MANUAL_PAIRING_SERVICE_NAME,
     REMOTEPAIRING_PAIRABLE_HOST_SERVICE_NAME,
     ServiceInstance,
-    iter_browse_service,
 )
 from pymobiledevice3.exceptions import RemotePairingCompletedError
 from pymobiledevice3.remote.tunnel_service import (
@@ -27,6 +26,7 @@ from pymobiledevice3.remote.tunnel_service import (
     RemotePairingManualPairingService,
 )
 
+from devicehubd import system_bonjour
 from devicehubd.protocol import RpcError
 from devicehubd.transports import BROWSE_PAUSE, BROWSE_WINDOW, NETWORK_TTL
 
@@ -126,7 +126,7 @@ class WirelessPairing:
     async def _browse(self) -> None:
         while self.active:
             try:
-                async for answer in iter_browse_service(REMOTEPAIRING_MANUAL_PAIRING_SERVICE_NAME, BROWSE_WINDOW):
+                async for answer in system_bonjour.iter_browse(REMOTEPAIRING_MANUAL_PAIRING_SERVICE_NAME, BROWSE_WINDOW):
                     identifier = answer.properties.get("identifier")
                     model = answer.properties.get("model", "")
                     if (identifier and answer.addresses and 0 < answer.port < 65536
