@@ -34,13 +34,19 @@ final class DaemonLauncher {
     func start() async throws {
         stopping = false
         if await DaemonClient.isReachable() { return }
-        guard let runtime = Self.locateRuntime() else { throw LaunchError.runtimeMissing }
-        try spawn(runtime)
+        // The daemon we launched may still be starting or restarting; never run two side by side,
+        // because the extra one would only exit with the app.
+        if process?.isRunning != true {
+            guard let runtime = Self.locateRuntime() else { throw LaunchError.runtimeMissing }
+            try spawn(runtime)
+        }
         for _ in 0..<60 {
             try await Task.sleep(for: .milliseconds(250))
             if await DaemonClient.isReachable() { return }
             if process?.isRunning == false { break }
         }
+        // Alive but unreachable: stop it so the next attempt starts a fresh one.
+        if let process, process.isRunning { process.terminate() }
         throw LaunchError.didNotStart
     }
 
@@ -72,16 +78,18 @@ final class DaemonLauncher {
         process.standardInput = pipe
         process.standardOutput = FileHandle.standardError
         process.standardError = FileHandle.standardError
-        process.terminationHandler = { [weak self] _ in
-            Task { @MainActor in self?.daemonExited(runtime) }
+        process.terminationHandler = { [weak self] exited in
+            let id = ObjectIdentifier(exited)
+            Task { @MainActor in self?.daemonExited(id, runtime) }
         }
         try process.run()
         self.process = process
         stdin = pipe
     }
 
-    private func daemonExited(_ runtime: Runtime) {
-        guard !stopping else { return }
+    private func daemonExited(_ exited: ObjectIdentifier, _ runtime: Runtime) {
+        // Only the current daemon is restarted; a replaced one exiting is expected.
+        guard !stopping, process.map(ObjectIdentifier.init) == exited else { return }
         let now = Date()
         recentExits = recentExits.filter { now.timeIntervalSince($0) < 60 } + [now]
         guard recentExits.count <= 5 else {
@@ -90,7 +98,8 @@ final class DaemonLauncher {
         }
         Task {
             try? await Task.sleep(for: .seconds(2))
-            guard !stopping else { return }
+            // start() may already have launched a replacement meanwhile.
+            guard !stopping, process?.isRunning != true else { return }
             try? spawn(runtime)
         }
     }

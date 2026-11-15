@@ -20,6 +20,7 @@ from typing import Any
 from devicehubd import protocol
 from devicehubd.android_display import read_display_geometry
 from devicehubd.android_video import AndroidVideoManager
+from devicehubd.lifetime import WORKER_EXIT_DEADLINE, exit_after
 from devicehubd.protocol import RpcError
 
 logger = logging.getLogger("devicehubd.android")
@@ -378,6 +379,8 @@ async def run(adb_path: str, serial: str, out: Any) -> int:
         emit({"event": "failed", "error": detail})
         return 1
     finally:
+        # The supervisor escalates to SIGKILL on its own; this covers a supervisor that is already gone.
+        exit_after(WORKER_EXIT_DEADLINE)
         stopped.set()
         reading.cancel()
         await video.close()
@@ -396,7 +399,8 @@ def main() -> None:
     # before loading Maa and redirect every other stdout write to stderr.
     out = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
-    code = asyncio.run(run(args.adb, args.serial, out))
+    # Skip asyncio.run teardown: it would wait for a Maa call still blocked in an executor thread.
+    code = asyncio.Runner().run(run(args.adb, args.serial, out))
     os._exit(code)
 
 

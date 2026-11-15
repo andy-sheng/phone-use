@@ -20,6 +20,7 @@ from pymobiledevice3.remote.remote_service_discovery import RemoteServiceDiscove
 from pymobiledevice3.services.mobile_image_mounter import auto_mount
 
 from devicehubd import protocol
+from devicehubd.lifetime import WORKER_EXIT_DEADLINE, exit_after
 from devicehubd.protocol import RpcError
 from devicehubd.transports import Tunnel, make_tunnel
 
@@ -216,6 +217,8 @@ async def run(udid: str, connection: str, out: Any) -> int:
     command_task = asyncio.create_task(commands())
     tunnel_task = asyncio.create_task(worker.watch_tunnel())
     done, _ = await asyncio.wait({command_task, tunnel_task}, return_when=asyncio.FIRST_COMPLETED)
+    # The supervisor escalates to SIGKILL on its own; this covers a supervisor that is already gone.
+    exit_after(WORKER_EXIT_DEADLINE)
     if tunnel_task in done:
         await worker.emit({"event": "closed", "error": {"code": "disconnected", "message": "The device tunnel closed"}})
     command_task.cancel()
@@ -234,8 +237,9 @@ def main() -> None:
     # Library code may print; keep the protocol stream on a private copy of stdout.
     out = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
-    code = asyncio.run(run(args.udid, args.connection, out))
-    # pymobiledevice3 may leave background tasks around; the supervisor only needs us gone.
+    # pymobiledevice3 may leave background tasks around; skip asyncio.run teardown, which would
+    # wait for them, because the supervisor only needs us gone.
+    code = asyncio.Runner().run(run(args.udid, args.connection, out))
     os._exit(code)
 
 

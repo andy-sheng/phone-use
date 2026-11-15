@@ -17,6 +17,7 @@ import contextlib
 import json
 import logging
 import os
+import signal
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -814,7 +815,20 @@ class Supervisor:
                 writer.close()
 
     async def shutdown(self) -> None:
+        workers = list(self.workers.values())
+        # Start every worker's stop escalation first so a slow pairing teardown cannot delay it.
+        for worker in workers:
+            worker.stop()
         if self._wireless_owner is not None:
             await self.stop_wireless_pairing(self._wireless_owner)
-        workers = list(self.workers.values())
         await asyncio.gather(*(worker.wait_closed() for worker in workers), return_exceptions=True)
+
+    def kill_workers(self) -> None:
+        """Last resort on daemon exit, safe from any thread: never leave device workers orphaned."""
+        workers: list[WorkerHandle] = []
+        with contextlib.suppress(RuntimeError):
+            workers = list(self.workers.values())
+        for worker in workers:
+            if worker.process.returncode is None:
+                with contextlib.suppress(OSError):
+                    os.kill(worker.process.pid, signal.SIGKILL)
