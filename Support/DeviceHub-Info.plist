@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>phone-use</string>
+	<string>PhoneUse</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>phone-use</string>
+	<string>PhoneUse</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -31,9 +31,9 @@
 		<string>_remotepairing-pairable-host._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>phone-use mirrors USB-connected iPhone screens through the system screen capture device.</string>
+	<string>PhoneUse mirrors USB-connected iPhone screens through the system screen capture device.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>phone-use discovers and pairs iPhone and iPad devices on your local network.</string>
+	<string>PhoneUse discovers and pairs iPhone and iPad devices on your local network.</string>
 	<key>SUAllowsAutomaticUpdates</key>
 	<false/>
 	<key>SUFeedURL</key>

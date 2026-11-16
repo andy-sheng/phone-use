@@ -9,7 +9,7 @@ import PhoneUseKit
 
 if PhoneUseConfiguration.inherited() == nil {
     // Must match AutomationApp's identity.
-    PhoneUseConfiguration.current = .application(identifier: "dev.devicehub.automation", displayName: "automation")
+    PhoneUseConfiguration.current = .application(identifier: "cn.andysheng.automation", displayName: "Automation")
 }
 
 var arguments = Array(CommandLine.arguments.dropFirst())

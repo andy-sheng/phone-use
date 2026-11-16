@@ -305,7 +305,7 @@ struct DeviceSettingsPanel: View {
     private func sourceDescription(_ source: DeviceSettings.Source) -> String {
         switch source {
         case .xcode: "通过 Xcode（devicectl）读写设置"
-        case .deviceServices: "通过设备服务调整，仅在 phone-use 连接此设备期间生效，断开后恢复。安装 Xcode 27 或更高版本后会直接修改设备设置，并可调整外观、VoiceOver、声音和录屏。"
+        case .deviceServices: "通过设备服务调整，仅在 PhoneUse 连接此设备期间生效，断开后恢复。安装 Xcode 27 或更高版本后会直接修改设备设置，并可调整外观、VoiceOver、声音和录屏。"
         case .simctl: "通过 simctl 读写设置。Xcode 27 或更高版本提供更多选项。"
         }
     }

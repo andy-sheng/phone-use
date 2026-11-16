@@ -8,14 +8,14 @@ final class ConfigurationTests: XCTestCase {
         let configuration = PhoneUseConfiguration.phoneUse
         XCTAssertEqual(configuration.supportDirectory.path, "\(home)/Library/Application Support/DeviceHub")
         XCTAssertEqual(configuration.logDirectory.path, "\(home)/Library/Logs/DeviceHub")
-        XCTAssertEqual(configuration.displayName, "phone-use")
+        XCTAssertEqual(configuration.displayName, "PhoneUse")
     }
 
     func testApplicationsGetSeparateDaemonState() {
-        let automation = PhoneUseConfiguration.application(identifier: "dev.devicehub.automation", displayName: "automation")
+        let automation = PhoneUseConfiguration.application(identifier: "cn.andysheng.automation", displayName: "Automation")
         XCTAssertNotEqual(automation.supportDirectory, PhoneUseConfiguration.phoneUse.supportDirectory)
-        XCTAssertTrue(automation.supportDirectory.path.hasSuffix("Application Support/dev.devicehub.automation"))
-        XCTAssertTrue(automation.logDirectory.path.hasSuffix("Logs/dev.devicehub.automation"))
+        XCTAssertTrue(automation.supportDirectory.path.hasSuffix("Application Support/cn.andysheng.automation"))
+        XCTAssertTrue(automation.logDirectory.path.hasSuffix("Logs/cn.andysheng.automation"))
     }
 
     func testHelpersInheritTheParentsIdentity() {

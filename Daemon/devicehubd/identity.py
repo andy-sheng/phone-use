@@ -26,7 +26,7 @@ def log_directory() -> Path:
 
 
 def display_name() -> str:
-    return os.environ.get("DEVICEHUB_DISPLAY_NAME") or "phone-use"
+    return os.environ.get("DEVICEHUB_DISPLAY_NAME") or "PhoneUse"
 
 
 def device_cache() -> Path:

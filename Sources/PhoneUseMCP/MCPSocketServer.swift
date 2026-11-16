@@ -23,7 +23,7 @@ public final class MCPSocketServer: @unchecked Sendable {
 
         public var description: String {
             switch self {
-            case .alreadyServing(let path): "Another phone-use instance already serves MCP on \(path)"
+            case .alreadyServing(let path): "Another PhoneUse instance already serves MCP on \(path)"
             case .failed(let reason): "Could not serve MCP: \(reason)"
             }
         }

@@ -26,7 +26,7 @@ private func pointProperty(_ description: String) -> [String: Any] {
 private let toolDefinitions: [[String: Any]] = [
     [
         "name": "list_devices",
-        "description": "List iOS and Android devices connected to this Mac, plus iOS simulators booted on it (connection 'simulator'). Only devices whose state is 'ready' can be controlled; the phone-use app guides the user through the other states.",
+        "description": "List iOS and Android devices connected to this Mac, plus iOS simulators booted on it (connection 'simulator'). Only devices whose state is 'ready' can be controlled; the PhoneUse app guides the user through the other states.",
         "inputSchema": ["type": "object", "properties": [String: Any]()],
     ],
     [
@@ -166,9 +166,9 @@ public enum MCPServer {
         case .deviceNotFound:
             return "\(error). Call list_devices to see what is connected. If the device is missing, ask the user to connect it by USB or put it on the same Wi-Fi as this Mac, then retry."
         case .deviceNotReady:
-            return "\(error). Ask the user to open phone-use and finish setting up this device there (trust this Mac, pairing, Developer Mode), then retry."
+            return "\(error). Ask the user to open PhoneUse and finish setting up this device there (trust this Mac, pairing, Developer Mode), then retry."
         case .daemonUnavailable(let detail):
-            return "phone-use could not reach its device service (\(detail)). Ask the user to open phone-use and check the message it shows, then retry."
+            return "PhoneUse could not reach its device service (\(detail)). Ask the user to open PhoneUse and check the message it shows, then retry."
         default:
             return "\(error)"
         }

@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Bundle prepared, pinned platform-tools (or an explicit DEVICEHUB_ADB override), offline.
-# Usage: embed-android-tools.sh <phone-use.app> [codesign identity]
+# Usage: embed-android-tools.sh <PhoneUse.app> [codesign identity]
 set -euo pipefail
 ROOT=${0:A:h:h}
 APP=${1:?usage: embed-android-tools.sh <app> [identity]}

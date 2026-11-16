@@ -11,7 +11,7 @@ final class MCPClientInstaller: ObservableObject {
         case toolMissing
         case notAdded
         case added
-        /// Configured under the same name, but for another copy of phone-use (or an old path).
+        /// Configured under the same name, but for another copy of PhoneUse (or an old path).
         case addedElsewhere
         case working
     }
@@ -95,7 +95,7 @@ struct MCPSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Text("让 Claude Code、Codex 等 AI 编程助手通过 MCP 查看和操作已连接的设备。助手第一次调用工具时，phone-use 会在后台自动启动；新设备需要先在主窗口完成配对等准备。")
+                Text("让 Claude Code、Codex 等 AI 编程助手通过 MCP 查看和操作已连接的设备。助手第一次调用工具时，PhoneUse 会在后台自动启动；新设备需要先在主窗口完成配对等准备。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -104,7 +104,7 @@ struct MCPSettingsView: View {
                         CopyableText(setup.serverPath)
                     }
                 } else {
-                    Label("找不到 phone-use-mcp，请重新安装 phone-use。", systemImage: "exclamationmark.triangle.fill")
+                    Label("找不到 phone-use-mcp，请重新安装 PhoneUse。", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                 }
             } header: {
@@ -192,7 +192,7 @@ private struct ClientRow: View {
             Label("已添加", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
         case .addedElsewhere:
-            Label("已添加，但指向其他位置的 phone-use", systemImage: "exclamationmark.circle.fill")
+            Label("已添加，但指向其他位置的 PhoneUse", systemImage: "exclamationmark.circle.fill")
                 .foregroundStyle(.orange)
         }
     }

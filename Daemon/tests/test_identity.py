@@ -21,7 +21,7 @@ class IdentityTests(unittest.TestCase):
             self.assertEqual(identity.default_socket(), support / "devicehubd.sock")
             self.assertEqual(identity.device_cache(), support / "devices.json")
             self.assertEqual(identity.log_directory(), Path.home() / "Library" / "Logs" / "DeviceHub")
-            self.assertEqual(identity.display_name(), "phone-use")
+            self.assertEqual(identity.display_name(), "PhoneUse")
 
     def test_launching_app_identity_moves_all_state(self):
         with environment(DEVICEHUB_HOME="/tmp/automation-home", DEVICEHUB_LOG_DIR="/tmp/automation-logs",

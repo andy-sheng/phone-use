@@ -138,7 +138,7 @@ def release(args):
     if not args.skip_build:
         # Keep build output in the existing log; do not hide build failures.
         subprocess.run([str(ROOT / "scripts/build-app.sh")], env=environment, check=True)
-    app = ROOT / "dist/phone-use.app"
+    app = ROOT / "dist/PhoneUse.app"
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
     if info["CFBundleShortVersionString"] != args.version or info["CFBundleVersion"] != str(args.build_number):
         raise ValueError("The built app's version/build does not match the requested release")
@@ -156,10 +156,10 @@ def release(args):
     run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", app, update])
     stage = work / "image"
     stage.mkdir()
-    run(["ditto", app, stage / "phone-use.app"])
+    run(["ditto", app, stage / "PhoneUse.app"])
     (stage / "Applications").symlink_to("/Applications", target_is_directory=True)
-    run(["hdiutil", "create", "-volname", "phone-use", "-srcfolder", stage, "-format", "UDZO", "-fs", "HFS+", image])
-    run(["codesign", "--force", "--sign", identity, "--timestamp", "--identifier", "dev.devicehub.app.dmg", image])
+    run(["hdiutil", "create", "-volname", "PhoneUse", "-srcfolder", stage, "-format", "UDZO", "-fs", "HFS+", image])
+    run(["codesign", "--force", "--sign", identity, "--timestamp", "--identifier", "cn.andysheng.phoneuse.dmg", image])
     dmg_submission = notarize(image, work, args.notary_profile)
     run(["xcrun", "stapler", "staple", image])
     run(["xcrun", "stapler", "validate", image])
@@ -167,7 +167,7 @@ def release(args):
     run(["spctl", "--assess", "--type", "open", "--context", "context:primary-signature", image])
     run(["syspolicy_check", "distribution", app])
     shutil.copy2(update, feed / update.name)
-    notes = args.release_notes.read_text() if args.release_notes else f"phone-use {args.version}"
+    notes = args.release_notes.read_text() if args.release_notes else f"PhoneUse {args.version}"
     (feed / f"{stem}.html").write_text("<p>" + html.escape(notes).replace("\n", "<br>\n") + "</p>\n")
     signing = (["--ed-key-file", args.sparkle_key] if args.sparkle_key else ["--account", "phone-use"])
     download = f"https://github.com/{args.repository}/releases/download/v{args.version}/"
@@ -181,9 +181,9 @@ def release(args):
     shutil.copy2(feed / f"{stem}.html", publish / f"{stem}.html")
     (publish / ".nojekyll").touch()
     (publish / "index.html").write_text(
-        '<!doctype html><meta charset="utf-8"><title>phone-use</title><h1>phone-use</h1>'
+        '<!doctype html><meta charset="utf-8"><title>PhoneUse</title><h1>PhoneUse</h1>'
         f'<p><a href="{download}{image.name}">下载 macOS Apple Silicon 版本 {args.version}</a></p>'
-        '<p>需要 macOS 15 或更新版本。打开 DMG 后将 phone-use 拖入 Applications。</p>'
+        '<p>需要 macOS 15 或更新版本。打开 DMG 后将 PhoneUse 拖入 Applications。</p>'
         '<p><a href="appcast.xml">自动更新清单</a></p>\n')
     hashes = {}
     for artifact in [update, image]:

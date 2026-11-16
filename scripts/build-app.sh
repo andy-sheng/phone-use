@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Builds dist/phone-use.app (default) or dist/automation.app from the Xcode project (generated
+# Builds dist/PhoneUse.app (default) or dist/Automation.app from the Xcode project (generated
 # from project.yml). phone-use carries its MCP server and CLI in Contents/Helpers and the embedded
 # daemon runtime; automation carries automation-bridge, the daemon runtime with MaaFramework, the
 # plugin runtime and OCR resources. Building needs Xcode; running the result does not.
@@ -16,12 +16,12 @@ cd "$(dirname "$0")/.."
 ROOT=$PWD
 PRODUCT=${1:-phone-use}
 case "$PRODUCT" in
-    phone-use) ENTITLEMENTS=$ROOT/Support/DeviceHub.entitlements ;;
-    automation) ENTITLEMENTS=$ROOT/Support/Automation.entitlements ;;
+    phone-use) APP_NAME=PhoneUse; ENTITLEMENTS=$ROOT/Support/DeviceHub.entitlements ;;
+    automation) APP_NAME=Automation; ENTITLEMENTS=$ROOT/Support/Automation.entitlements ;;
     *) echo "usage: scripts/build-app.sh [phone-use|automation]" >&2; exit 64 ;;
 esac
 DERIVED=${DERIVED_DATA:-$ROOT/.build/xcode}
-APP=$ROOT/dist/$PRODUCT.app
+APP=$ROOT/dist/$APP_NAME.app
 
 # Fail before compilation if Android assets have not been prepared. Release builds
 # never download them; setup-dev.sh owns dependency preparation.
@@ -54,7 +54,7 @@ if ! xcodebuild -project phone-use.xcodeproj -scheme "$PRODUCT" -configuration R
     grep -E "error:|BUILD FAILED" "$LOG" | tail -20 >&2
     exit 1
 fi
-BUILT=$DERIVED/Build/Products/Release/$PRODUCT.app
+BUILT=$DERIVED/Build/Products/Release/$APP_NAME.app
 
 rm -rf "$APP"
 mkdir -p "$ROOT/dist"
@@ -65,7 +65,7 @@ fi
 codesign --verify --deep --strict "$APP"
 
 if [[ -n "${NOTARY_PROFILE:-}" ]]; then
-    ZIP=$ROOT/dist/$PRODUCT.zip
+    ZIP=$ROOT/dist/$APP_NAME.zip
     ditto -c -k --keepParent "$APP" "$ZIP"
     NOTARY_AUTH=(--keychain-profile "$NOTARY_PROFILE")
     [[ -z "${NOTARY_KEYCHAIN:-}" ]] || NOTARY_AUTH+=(--keychain "$NOTARY_KEYCHAIN")

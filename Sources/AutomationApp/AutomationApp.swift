@@ -6,8 +6,8 @@ import SwiftUI
 extension PhoneUseConfiguration {
     /// automation keeps its own daemon, socket and device cache. automation-bridge falls back to
     /// the same identity when run without one.
-    static let automation = PhoneUseConfiguration.application(identifier: "dev.devicehub.automation",
-                                                              displayName: "automation")
+    static let automation = PhoneUseConfiguration.application(identifier: "cn.andysheng.automation",
+                                                              displayName: "Automation")
 }
 
 @MainActor
@@ -38,7 +38,7 @@ struct AutomationMacApp: App {
     }
 
     var body: some Scene {
-        Window("automation", id: "automation-main") {
+        Window("Automation", id: "automation-main") {
             AutomationWindow(automation: appDelegate.automation)
                 .environmentObject(appDelegate.model)
         }

@@ -3,7 +3,7 @@ import PhoneUseKit
 
 /// How `phone-use-mcp` asks the app to start without a window.
 public enum PhoneUseAppBundle {
-    public static let bundleIdentifier = "dev.devicehub.app"
+    public static let bundleIdentifier = "cn.andysheng.phoneuse"
     /// Launch argument: start without showing or activating a window, to serve MCP clients.
     public static let backgroundArgument = "--background"
 }
@@ -54,7 +54,7 @@ public actor MCPBridge {
         do {
             link = try await connect()
         } catch {
-            send(MCPServer.toolError(id: id, "The phone-use app is not available: \(error). Ask the user to install phone-use, or open it once, then retry."))
+            send(MCPServer.toolError(id: id, "The PhoneUse app is not available: \(error). Ask the user to install PhoneUse, or open it once, then retry."))
             return
         }
         link.pending.append(id)
@@ -111,7 +111,7 @@ public actor MCPBridge {
             if let stream = await open() { return stream }
             try await Task.sleep(for: .milliseconds(250))
         }
-        throw DeviceHubError.timeout("waiting for the phone-use app to serve MCP on \(socketPath)")
+        throw DeviceHubError.timeout("waiting for the PhoneUse app to serve MCP on \(socketPath)")
     }
 
     private func read(_ link: Link) async {
@@ -131,7 +131,7 @@ public actor MCPBridge {
         let abandoned = link.pending
         link.pending.removeAll()
         for id in abandoned {
-            send(MCPServer.toolError(id: id, "The phone-use app closed the connection (\(failure)). Retry the call to reconnect."))
+            send(MCPServer.toolError(id: id, "The PhoneUse app closed the connection (\(failure)). Retry the call to reconnect."))
         }
     }
 

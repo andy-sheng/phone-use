@@ -47,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 @main
 struct PhoneUseMacApp: App {
-    static let mainWindowTitle = "phone-use"
+    static let mainWindowTitle = "PhoneUse"
     static let mainWindowID = "device-main"
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate

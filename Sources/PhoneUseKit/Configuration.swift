@@ -25,7 +25,7 @@ public struct PhoneUseConfiguration: Sendable, Equatable {
     public static let phoneUse = PhoneUseConfiguration(
         supportDirectory: library("Application Support/DeviceHub"),
         logDirectory: library("Logs/DeviceHub"),
-        displayName: "phone-use"
+        displayName: "PhoneUse"
     )
 
     /// An app that keeps its daemon state under its own bundle identifier.

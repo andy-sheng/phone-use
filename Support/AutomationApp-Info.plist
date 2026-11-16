@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>dev.devicehub.automation</string>
+	<string>cn.andysheng.automation</string>
 	<key>CFBundleName</key>
-	<string>automation</string>
+	<string>Automation</string>
 	<key>CFBundleDisplayName</key>
-	<string>automation</string>
+	<string>Automation</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.1.0</string>
 	<key>NSCameraUsageDescription</key>
-	<string>automation shows USB-connected iPhone screens through the system screen capture device.</string>
+	<string>Automation shows USB-connected iPhone screens through the system screen capture device.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>automation discovers and pairs iPhone and iPad devices on your local network.</string>
+	<string>Automation discovers and pairs iPhone and iPad devices on your local network.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_remotepairing._tcp</string>
@@ -26,7 +26,7 @@
 			<key>UTTypeIdentifier</key>
 			<string>dev.devicehub.plugin</string>
 			<key>UTTypeDescription</key>
-			<string>automation Plugin</string>
+			<string>Automation Plugin</string>
 			<key>UTTypeConformsTo</key>
 			<array><string>public.zip-archive</string></array>
 			<key>UTTypeTagSpecification</key>

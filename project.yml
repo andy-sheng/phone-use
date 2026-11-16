@@ -3,7 +3,7 @@
 # project. Both apps build on the PhoneUseKit / PhoneUseUI package products and never on each other.
 name: phone-use
 options:
-  bundleIdPrefix: dev.devicehub
+  bundleIdPrefix: cn.andysheng
   deploymentTarget:
     macOS: "15.0"
   createIntermediateGroups: true
@@ -61,8 +61,8 @@ targets:
     info:
       path: Support/DeviceHub-Info.plist
       properties:
-        CFBundleName: phone-use
-        CFBundleDisplayName: phone-use
+        CFBundleName: PhoneUse
+        CFBundleDisplayName: PhoneUse
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.developer-tools
@@ -72,8 +72,8 @@ targets:
         SUVerifyUpdateBeforeExtraction: true
         SURequireSignedFeed: true
         SUAllowsAutomaticUpdates: false
-        NSCameraUsageDescription: phone-use mirrors USB-connected iPhone screens through the system screen capture device.
-        NSLocalNetworkUsageDescription: phone-use discovers and pairs iPhone and iPad devices on your local network.
+        NSCameraUsageDescription: PhoneUse mirrors USB-connected iPhone screens through the system screen capture device.
+        NSLocalNetworkUsageDescription: PhoneUse discovers and pairs iPhone and iPad devices on your local network.
         NSBonjourServices:
           - _remotepairing._tcp
           - _remotepairing-manual-pairing._tcp
@@ -84,9 +84,9 @@ targets:
         com.apple.security.device.camera: true
     settings:
       base:
-        PRODUCT_NAME: phone-use
+        PRODUCT_NAME: PhoneUse
         PRODUCT_MODULE_NAME: phone_use_app
-        PRODUCT_BUNDLE_IDENTIFIER: dev.devicehub.app
+        PRODUCT_BUNDLE_IDENTIFIER: cn.andysheng.phoneuse
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SPARKLE_FEED_URL: https://andy-sheng.github.io/phone-use-releases/appcast.xml
         SPARKLE_PUBLIC_KEY: c1KqCiZCOZcNqR5JoImkDmcXj1hkr4GAW2//VzWuots=
@@ -123,7 +123,7 @@ targets:
       base:
         PRODUCT_NAME: phone-use-mcp
 
-  # The app and CLI share a product name, but need distinct targets and Swift modules.
+  # The CLI keeps the lowercase `phone-use` command name; the app bundle is PhoneUse.app.
   phone-use-cli:
     type: tool
     platform: macOS
@@ -160,21 +160,21 @@ targets:
     info:
       path: Support/Automation-Info.plist
       properties:
-        CFBundleName: automation
-        CFBundleDisplayName: automation
+        CFBundleName: Automation
+        CFBundleDisplayName: Automation
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.utilities
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
-        NSCameraUsageDescription: automation shows USB-connected iPhone screens through the system screen capture device.
-        NSLocalNetworkUsageDescription: automation discovers and pairs iPhone and iPad devices on your local network.
+        NSCameraUsageDescription: Automation shows USB-connected iPhone screens through the system screen capture device.
+        NSLocalNetworkUsageDescription: Automation discovers and pairs iPhone and iPad devices on your local network.
         NSBonjourServices:
           - _remotepairing._tcp
           - _remotepairing-manual-pairing._tcp
           - _remotepairing-pairable-host._tcp
         UTExportedTypeDeclarations:
           - UTTypeIdentifier: dev.devicehub.plugin
-            UTTypeDescription: automation Plugin
+            UTTypeDescription: Automation Plugin
             UTTypeConformsTo:
               - public.zip-archive
             UTTypeTagSpecification:
@@ -187,9 +187,9 @@ targets:
         com.apple.security.device.camera: true
     settings:
       base:
-        PRODUCT_NAME: automation
+        PRODUCT_NAME: Automation
         PRODUCT_MODULE_NAME: automation_app
-        PRODUCT_BUNDLE_IDENTIFIER: dev.devicehub.automation
+        PRODUCT_BUNDLE_IDENTIFIER: cn.andysheng.automation
         ASSETCATALOG_COMPILER_APPICON_NAME: AutomationIcon
         MARKETING_VERSION: 0.1.0
         # The embed script writes the Python runtime into the bundle.

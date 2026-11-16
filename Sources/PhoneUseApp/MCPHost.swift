@@ -14,7 +14,7 @@ import os
 final class MCPHost {
     static let launchedInBackground = CommandLine.arguments.contains(PhoneUseAppBundle.backgroundArgument)
     /// Launched by LaunchServices the app has no stderr, so state goes to the unified log.
-    private static let log = Logger(subsystem: "dev.devicehub.app", category: "mcp")
+    private static let log = Logger(subsystem: "cn.andysheng.phoneuse", category: "mcp")
 
     private let idleGrace: Duration
     private var server: MCPSocketServer?

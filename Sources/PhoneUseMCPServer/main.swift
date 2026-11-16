@@ -3,7 +3,7 @@ import PhoneUseKit
 import PhoneUseMCP
 import Foundation
 
-// MCP server over stdio (newline-delimited JSON-RPC 2.0), as a bridge to the phone-use app.
+// MCP server over stdio (newline-delimited JSON-RPC 2.0), as a bridge to the PhoneUse app.
 // Tools run inside the app, which shares its device sessions with the preview. The bridge answers
 // initialize and tools/list itself and launches the app in the background on the first tool call.
 // stdout carries protocol messages only; diagnostics go to stderr.
@@ -24,7 +24,7 @@ enum AppLauncher {
 
         var description: String {
             switch self {
-            case .notFound: "phone-use.app could not be found. Install it or set DEVICEHUB_APP to its path."
+            case .notFound: "PhoneUse.app could not be found. Install it or set DEVICEHUB_APP to its path."
             case .spawnFailed(let code): "Starting phone-use-app failed (\(String(cString: strerror(code))))."
             }
         }
@@ -60,7 +60,7 @@ enum AppLauncher {
     private static func located() -> URL? {
         guard let executable = Bundle.main.executableURL?.resolvingSymlinksInPath() else { return nil }
         let directory = executable.deletingLastPathComponent()
-        // phone-use.app/Contents/Helpers/phone-use-mcp
+        // PhoneUse.app/Contents/Helpers/phone-use-mcp
         let bundle = directory.deletingLastPathComponent().deletingLastPathComponent()
         if bundle.pathExtension == "app" { return bundle }
         let sibling = directory.appendingPathComponent("phone-use-app")

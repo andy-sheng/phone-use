@@ -33,7 +33,7 @@ struct AutomationWindow: View {
     }
 
     var body: some View {
-        DeviceWorkspace(title: "automation", tabs: Tab.allCases.map(\.workspaceTab),
+        DeviceWorkspace(title: "Automation", tabs: Tab.allCases.map(\.workspaceTab),
                         selectedTab: $selectedTab, showsPanel: $showsPanel, allowsInput: allowsInput,
                         badgedTabs: automation.isRunning ? [Tab.automation.rawValue] : []) { tab, screen in
             panel(Tab(rawValue: tab.id) ?? .automation, screen: screen)

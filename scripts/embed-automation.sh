@@ -2,7 +2,7 @@
 # Embeds automation's runtime into its app bundle: the PhoneUseKit daemon runtime (with
 # MaaFramework installed into the same interpreter), the plugin runtime and the OCR resources.
 #
-#   embed-automation.sh <automation.app> [codesign identity]
+#   embed-automation.sh <Automation.app> [codesign identity]
 set -euo pipefail
 ROOT=${0:A:h:h}
 APP=${1:?usage: embed-automation.sh <app> [identity]}

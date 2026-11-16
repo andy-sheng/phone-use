@@ -20,7 +20,7 @@ struct PhoneUseWindow: View {
     }
 
     var body: some View {
-        DeviceWorkspace(title: "phone-use", tabs: Tab.allCases.map(\.workspaceTab),
+        DeviceWorkspace(title: "PhoneUse", tabs: Tab.allCases.map(\.workspaceTab),
                         selectedTab: $selectedTab, showsPanel: $showsPanel) { tab, screen in
             switch Tab(rawValue: tab.id) ?? .settings {
             case .settings:

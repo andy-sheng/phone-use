@@ -28,8 +28,8 @@ final class MCPClientSetupTests: XCTestCase {
     }
 
     func testShellQuotingKeepsPlainPathsReadable() {
-        XCTAssertEqual(MCPClientSetup.shellQuoted("/Applications/phone-use.app/Contents/Helpers/phone-use-mcp"),
-                       "/Applications/phone-use.app/Contents/Helpers/phone-use-mcp")
+        XCTAssertEqual(MCPClientSetup.shellQuoted("/Applications/PhoneUse.app/Contents/Helpers/phone-use-mcp"),
+                       "/Applications/PhoneUse.app/Contents/Helpers/phone-use-mcp")
         XCTAssertEqual(MCPClientSetup.shellQuoted("it's here"), #"'it'\''s here'"#)
         XCTAssertEqual(MCPClientSetup.shellQuoted(""), "''")
     }
@@ -43,16 +43,16 @@ final class MCPClientSetupTests: XCTestCase {
     }
 
     func testServerIsFoundInTheBundleOrNextToASwiftPMBuild() throws {
-        let app = directory.appendingPathComponent("phone-use.app")
+        let app = directory.appendingPathComponent("PhoneUse.app")
         let helper = app.appendingPathComponent("Contents/Helpers/phone-use-mcp")
         try makeExecutable(helper, "#!/bin/sh\n")
-        XCTAssertEqual(MCPClientSetup.serverURL(bundleURL: app, executableURL: app.appendingPathComponent("Contents/MacOS/phone-use")), helper)
+        XCTAssertEqual(MCPClientSetup.serverURL(bundleURL: app, executableURL: app.appendingPathComponent("Contents/MacOS/PhoneUse")), helper)
 
         let build = directory.appendingPathComponent("debug")
-        XCTAssertNil(MCPClientSetup.serverURL(bundleURL: build, executableURL: build.appendingPathComponent("phone-use-app")))
+        XCTAssertNil(MCPClientSetup.serverURL(bundleURL: build, executableURL: build.appendingPathComponent("PhoneUse.app")))
         let sibling = build.appendingPathComponent("phone-use-mcp")
         try makeExecutable(sibling, "#!/bin/sh\n")
-        XCTAssertEqual(MCPClientSetup.serverURL(bundleURL: build, executableURL: build.appendingPathComponent("phone-use-app")), sibling)
+        XCTAssertEqual(MCPClientSetup.serverURL(bundleURL: build, executableURL: build.appendingPathComponent("PhoneUse.app")), sibling)
     }
 
     func testLoginShellPathIgnoresWhatShellStartupPrints() {

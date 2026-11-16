@@ -216,12 +216,12 @@ final class MCPBridgeTests: XCTestCase {
     func testDeviceErrorsTellTheAgentWhatToAskTheUser() {
         let notReady = MCPServer.guidance(for: DeviceHubError.deviceNotReady("Andy's iPhone is not ready (pairing)"))
         XCTAssertTrue(notReady.hasPrefix("Andy's iPhone is not ready (pairing)."))
-        XCTAssertTrue(notReady.contains("Ask the user to open phone-use"))
+        XCTAssertTrue(notReady.contains("Ask the user to open PhoneUse"))
         let missing = MCPServer.guidance(for: DeviceHubError.deviceNotFound("Pixel"))
         XCTAssertTrue(missing.contains("list_devices"))
         let daemon = MCPServer.guidance(for: DeviceHubError.daemonUnavailable("connection refused"))
         XCTAssertTrue(daemon.contains("(connection refused)"))
-        XCTAssertFalse(daemon.contains("Open phone-use.app first"), "the app-side message must not repeat the CLI advice")
+        XCTAssertFalse(daemon.contains("Open PhoneUse.app first"), "the app-side message must not repeat the CLI advice")
         XCTAssertEqual(MCPServer.guidance(for: DeviceHubError.connectionClosed), DeviceHubError.connectionClosed.description)
     }
 }

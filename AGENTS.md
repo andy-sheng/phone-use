@@ -42,8 +42,9 @@
 - UI 屏幕模型不直接操作 ADB、CoreMediaIO 或视频 socket；平台准备与恢复由对应 provider 负责。
 - 仓库及应用不附带具体插件的实现、资源、示例或说明；任务行为由外部插件提供。通用宿主不按插件 ID 分支。扫描及安装插件时只读取元数据，不执行插件代码。
 - MCP 等协议使用的 stdout 不得混入诊断文本；诊断信息走日志或 stderr。
-- phone-use 保留 `dev.devicehub.app`、`DEVICEHUB_*`、`~/Library/Application Support/DeviceHub` 的兼容性；
-  automation 使用 `dev.devicehub.automation` 及同名数据目录。Python 模块名 `devicehubd`、`devicehub_runtime`、
+- 应用名为 PhoneUse / Automation，应用标识为 `cn.andysheng.phoneuse` / `cn.andysheng.automation`；CLI、MCP 服务名仍为 `phone-use`。
+  phone-use 保留 `DEVICEHUB_*`、`~/Library/Application Support/DeviceHub` 的兼容性；
+  automation 使用 `cn.andysheng.automation` 同名数据目录。Python 模块名 `devicehubd`、`devicehub_runtime`、
   插件格式 `devicehub.plugin.v1` 及现有插件与任务库目录保持兼容。Swift framework 名为 `PhoneUseKit`。
 
 ## 开发与构建
@@ -59,7 +60,7 @@ scripts/setup-automation.sh
 swift run phone-use-app
 swift build && swift run automation-app
 
-# 生成 Xcode 工程并打包至 dist/phone-use.app 或 dist/automation.app。
+# 生成 Xcode 工程并打包至 dist/PhoneUse.app 或 dist/Automation.app。
 scripts/build-app.sh
 scripts/build-app.sh automation
 ```

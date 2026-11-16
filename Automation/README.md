@@ -2,7 +2,7 @@
 
 automation 是 iPhone 与 Android 设备自动化宿主：负责 MaaFramework、OCR、任务进程、取消、日志和原生界面；设备连接、预览和输入来自 PhoneUseKit framework。任务行为通过用户独立安装的 Python 插件提供，界面按插件描述渲染。应用不附带任何插件。
 
-automation 与 phone-use 是两个独立应用（`dev.devicehub.automation` / `dev.devicehub.app`），只共享 PhoneUseKit，不互相依赖。automation 启动自己的守护进程，状态放在 `~/Library/Application Support/dev.devicehub.automation`。
+Automation 与 PhoneUse 是两个独立应用（`cn.andysheng.automation` / `cn.andysheng.phoneuse`），只共享 PhoneUseKit，不互相依赖。Automation 启动自己的守护进程，状态放在 `~/Library/Application Support/cn.andysheng.automation`。
 
 ## Android 设备
 
@@ -45,7 +45,7 @@ PYTHONPATH=Automation .venv-maa/bin/python -m devicehub_runtime install \
   --package /path/to/plugin.dhplugin
 PYTHONPATH=Automation .venv-maa/bin/python -m unittest discover -s Automation/tests -v
 swift build && swift run automation-app   # 任务使用 .build/debug/automation-bridge
-./scripts/build-app.sh automation          # dist/automation.app
+./scripts/build-app.sh automation          # dist/Automation.app
 ```
 
 设备层测试：

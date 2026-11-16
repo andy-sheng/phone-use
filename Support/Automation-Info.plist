@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>automation</string>
+	<string>Automation</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>automation</string>
+	<string>Automation</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -31,9 +31,9 @@
 		<string>_remotepairing-pairable-host._tcp</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>automation shows USB-connected iPhone screens through the system screen capture device.</string>
+	<string>Automation shows USB-connected iPhone screens through the system screen capture device.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>automation discovers and pairs iPhone and iPad devices on your local network.</string>
+	<string>Automation discovers and pairs iPhone and iPad devices on your local network.</string>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>
@@ -42,7 +42,7 @@
 				<string>public.zip-archive</string>
 			</array>
 			<key>UTTypeDescription</key>
-			<string>automation Plugin</string>
+			<string>Automation Plugin</string>
 			<key>UTTypeIdentifier</key>
 			<string>dev.devicehub.plugin</string>
 			<key>UTTypeTagSpecification</key>

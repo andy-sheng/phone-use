@@ -96,11 +96,11 @@ xcrun simctl boot "iPhone 17 Pro"
 ## 构建应用
 
 ```sh
-scripts/build-app.sh             # dist/phone-use.app
-scripts/build-app.sh automation  # dist/automation.app
+scripts/build-app.sh             # dist/PhoneUse.app
+scripts/build-app.sh automation  # dist/Automation.app
 ```
 
-`dist/phone-use.app` 包含 Python 运行时、CLI、MCP 服务和独立 ADB；使用者无需安装 Android Studio 或自行下载 ADB。`dist/automation.app` 包含同样的守护进程运行时（额外安装 MaaFramework）、`automation-bridge`、插件运行时和 OCR 资源。Xcode 工程由 `project.yml` 生成，名称为 `phone-use.xcodeproj`，scheme 为 `phone-use` 和 `automation`。
+`dist/PhoneUse.app` 包含 Python 运行时、CLI、MCP 服务和独立 ADB；使用者无需安装 Android Studio 或自行下载 ADB。`dist/Automation.app` 包含同样的守护进程运行时（额外安装 MaaFramework）、`automation-bridge`、插件运行时和 OCR 资源。Xcode 工程由 `project.yml` 生成，名称为 `phone-use.xcodeproj`，scheme 为 `phone-use` 和 `automation`。
 
 打包前先完成上述依赖准备。Release 构建会在编译前检查 Android 资源，打包阶段只校验、复制已准备的固定版本并签名，不自动联网下载 Android 资源。ADB、所需动态库及上游许可证位于 `Contents/Resources/android/platform-tools/`。如需打包自定义版本，可显式设置 `DEVICEHUB_ADB`；此时使用指定工具及其相邻的 `lib64/`、`NOTICE.txt`、`source.properties`，不应用固定版本校验。
 
@@ -116,10 +116,10 @@ MCP 使用标准输入输出传输，启动命令为应用包中 MCP 服务的�
 
 ```sh
 # Claude Code（对所有项目生效）
-claude mcp add -s user phone-use -- /Applications/phone-use.app/Contents/Helpers/phone-use-mcp
+claude mcp add -s user phone-use -- /Applications/PhoneUse.app/Contents/Helpers/phone-use-mcp
 
 # Codex（写入 ~/.codex/config.toml）
-codex mcp add phone-use -- /Applications/phone-use.app/Contents/Helpers/phone-use-mcp
+codex mcp add phone-use -- /Applications/PhoneUse.app/Contents/Helpers/phone-use-mcp
 ```
 
 Claude Desktop、Cursor 等使用 JSON 配置的客户端，在 MCP 配置中加入：
@@ -127,12 +127,12 @@ Claude Desktop、Cursor 等使用 JSON 配置的客户端，在 MCP 配置中加
 ```json
 {
   "mcpServers": {
-    "phone-use": { "command": "/Applications/phone-use.app/Contents/Helpers/phone-use-mcp" }
+    "phone-use": { "command": "/Applications/PhoneUse.app/Contents/Helpers/phone-use-mcp" }
   }
 }
 ```
 
-已有配置如引用 `DeviceHub.app` 或 `devicehub-mcp`，需要更新为上述路径；设置页会将其显示为「指向其他位置」，点击「更新」即可。设备未就绪时，工具错误会提示助手请用户在 phone-use 中完成配对等准备。
+已有配置如引用 `DeviceHub.app` 或 `devicehub-mcp`，需要更新为上述路径；设置页会将其显示为「指向其他位置」，点击「更新」即可。设备未就绪时，工具错误会提示助手请用户在 PhoneUse 中完成配对等准备。
 
 `phone-use-mcp` 只是转发层：`initialize`、`tools/list` 由它直接应答，工具调用通过 `~/Library/Application Support/DeviceHub/mcp.sock`（可用 `DEVICEHUB_MCP_SOCKET` 覆盖）转交应用，在应用进程内执行，与预览共用守护进程和设备会话。首次调用工具时若应用未运行，会以 `--background` 在后台启动应用，不显示窗口、不抢占焦点；点击 Dock 图标或「窗口」菜单可打开主窗口。没有窗口且没有 MCP 客户端连接时，应用在约一分钟后自动退出；有客户端连接时关闭主窗口不会退出应用。应用退出时尚未返回的调用会以工具错误结束，下一次调用会重新连接并按需再次启动应用。
 
@@ -144,8 +144,8 @@ Claude Desktop、Cursor 等使用 JSON 配置的客户端，在 MCP 配置中加
 
 ## 改名兼容
 
-项目与对外产物由 DeviceHub 改名为 phone-use。为延续现有安装的权限和设备记录，应用标识 `dev.devicehub.app`、`~/Library/Application Support/DeviceHub`、日志目录和 `DEVICEHUB_*` 环境变量保持兼容。Swift framework 改名为 `PhoneUseKit`；Python 模块沿用原名。
+项目由 DeviceHub 改名为 phone-use，应用名为 PhoneUse，应用标识为 `cn.andysheng.phoneuse`（原 `dev.devicehub.app`，改标识后需重新授予摄像头等系统权限）。为延续现有设备记录，`~/Library/Application Support/DeviceHub`、日志目录和 `DEVICEHUB_*` 环境变量保持兼容。Swift framework 改名为 `PhoneUseKit`；Python 模块沿用原名。
 
-插件与任务功能已移至 automation 应用（`dev.devicehub.automation`）。它继续读取原有的插件目录 `~/Library/Application Support/DeviceHub/Plugins` 和任务库，插件格式不变；守护进程状态放在 `~/Library/Application Support/dev.devicehub.automation`。
+插件与任务功能已移至 Automation 应用（`cn.andysheng.automation`）。它继续读取原有的插件目录 `~/Library/Application Support/DeviceHub/Plugins` 和任务库，插件格式不变；守护进程状态放在 `~/Library/Application Support/cn.andysheng.automation`。
 
 详见[插件自动化](Automation/README.md)和[平台隔离与视频流](Documentation/DevicePlatforms.md)。

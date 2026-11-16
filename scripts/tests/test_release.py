@@ -65,12 +65,12 @@ class ReleaseTests(unittest.TestCase):
 
     def test_only_the_pinned_scrcpy_unpack_warning_is_tolerated(self):
         scrcpy = json.loads((release.ROOT / "scripts/android-assets.json").read_text())["scrcpy"]["filename"]
-        tolerated = {"severity": "warning", "path": f"notary-app.zip/phone-use.app/Contents/Resources/android/{scrcpy}",
+        tolerated = {"severity": "warning", "path": f"notary-app.zip/PhoneUse.app/Contents/Resources/android/{scrcpy}",
                      "message": f"The archive at .../{scrcpy} could not be unpacked. Any executables contained "
                                 "in the archive will not be notarized."}
         self.assertEqual(self.notarize_with_log({"issues": [tolerated]}), "submission-id")
         for issue in [{**tolerated, "severity": "error"},
-                      {**tolerated, "path": "notary-app.zip/phone-use.app/Contents/Resources/other.jar"},
+                      {**tolerated, "path": "notary-app.zip/PhoneUse.app/Contents/Resources/other.jar"},
                       {**tolerated, "message": "The binary is not signed."}]:
             with self.subTest(issue=issue), self.assertRaisesRegex(RuntimeError, "notarization issues"):
                 self.notarize_with_log({"issues": [tolerated, issue]})
