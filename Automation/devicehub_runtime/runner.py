@@ -58,7 +58,43 @@ def preflight(args, packages):
     return package, task_id, document, config
 
 
-def execute(args, packages, emit, stop, bridge_factory=None):
+def open_device(args, emit, bridge_factory=None, android_factory=None, android_input_checker=None):
+    """Connects the task's controller; returns (controller, device info, bridge or None).
+
+    The bridge resolves the device first. Android devices are then driven by MaaFramework's own
+    AdbController on the daemon's adb, so the bridge is closed again; iOS devices use the bridge.
+    """
+    from .controller import Bridge, DeviceController, check_android_input, make_android_controller
+
+    bridge = (bridge_factory or Bridge)(args.bridge, args.device)
+    try:
+        device = bridge.request("describe")
+        if device.get("platform") == "android":
+            bridge.close()
+            bridge = None
+            if args.command != "probe":
+                (android_input_checker or check_android_input)(device["adb"], device["serial"])
+            controller = (android_factory or make_android_controller)(device["adb"], device["serial"])
+            if not controller.post_connection().wait().succeeded:
+                raise RuntimeError("Android 设备连接失败（需要 MaaTouch 或 minitouch）")
+            return controller, {"udid": device["udid"], "name": device.get("name"), "platform": "android"}, None
+        controller = DeviceController(bridge, emit)
+        if not controller.post_connection().wait().succeeded:
+            raise RuntimeError(controller.last_error or "设备连接失败")
+        return controller, controller.info, bridge
+    except BaseException:
+        if bridge is not None:
+            bridge.close()
+        raise
+
+
+def native_size(controller, info):
+    if "width" in info and "height" in info:
+        return [info["width"], info["height"]]
+    return list(controller.resolution)
+
+
+def execute(args, packages, emit, stop, bridge_factory=None, android_factory=None, android_input_checker=None):
     from maa.context import ContextEventSink
     from maa.define import LoggingLevelEnum
     from maa.event_sink import NotificationType
@@ -67,7 +103,6 @@ def execute(args, packages, emit, stop, bridge_factory=None):
     from maa.resource import Resource
     from maa.tasker import Tasker
 
-    from .controller import Bridge, DeviceController
     from .images import save_png
 
     package, task_id, document, config = preflight(args, packages)
@@ -75,7 +110,7 @@ def execute(args, packages, emit, stop, bridge_factory=None):
         if not (args.assets / "model/ocr" / name).is_file():
             raise FileNotFoundError("共享 OCR 资源未准备，请重新安装应用或运行 scripts/setup-automation.sh")
     if bridge_factory is None and not args.bridge.is_file():
-        raise FileNotFoundError("找不到 phone-use 设备桥接程序")
+        raise FileNotFoundError("找不到 automation-bridge 设备桥接程序")
     Tasker.set_stdout_level(LoggingLevelEnum.Off)
     Tasker.set_log_dir(args.output)
     Tasker.set_save_on_error(True)
@@ -100,12 +135,9 @@ def execute(args, packages, emit, stop, bridge_factory=None):
         if stop.is_set():
             raise InterruptedError("任务已停止")
         emit("progress", message="正在连接设备", framework=Library.version(), phase="connecting")
-        bridge = (bridge_factory or Bridge)(args.bridge, args.device)
-        controller = DeviceController(bridge, emit)
-        if not controller.post_connection().wait().succeeded:
-            raise RuntimeError(controller.last_error or "设备连接失败")
-        lease = DeviceLease(controller.info["udid"])
-        emit("progress", message=f"{controller.info.get('name', '设备')} 已连接", phase="connecting", phase_status="completed")
+        controller, info, bridge = open_device(args, emit, bridge_factory, android_factory, android_input_checker)
+        lease = DeviceLease(info["udid"])
+        emit("progress", message=f"{info.get('name') or '设备'} 已连接", phase="connecting", phase_status="completed")
         controller.set_screenshot_target_short_side(720)
         tasker = Tasker()
         if not tasker.bind(resource, controller) or not tasker.inited:
@@ -113,7 +145,7 @@ def execute(args, packages, emit, stop, bridge_factory=None):
         if args.command == "probe":
             image = controller.post_screencap().wait().get()
             if image is None:
-                raise RuntimeError(controller.last_error or "截图失败")
+                raise RuntimeError(getattr(controller, "last_error", None) or "截图失败")
             path = (args.output / "screen.png").resolve()
             save_png(path, image)
             task = tasker.post_recognition("OCR", JOCR(roi=[0, 0, 0, 0]), image).wait().get()
@@ -125,7 +157,7 @@ def execute(args, packages, emit, stop, bridge_factory=None):
             if stop.is_set():
                 raise InterruptedError("任务已停止")
             emit("result", status="probe_complete", message="已读取设备画面并完成 OCR，未发送触摸操作",
-                 native_size=[controller.info["width"], controller.info["height"]],
+                 native_size=native_size(controller, info),
                  recognition_size=[image.shape[1], image.shape[0]], words=len(words), screenshot=str(path))
             return 0
 

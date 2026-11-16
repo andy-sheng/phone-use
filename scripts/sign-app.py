@@ -30,7 +30,7 @@ def run(*args):
     return result.stdout + result.stderr
 
 
-def sign(app, identity):
+def sign(app, identity, entitlements=ROOT / "Support/DeviceHub.entitlements"):
     if not identity.startswith("Developer ID Application:"):
         raise ValueError("Release signing requires a Developer ID Application identity")
     base = ["codesign", "--force", "--sign", identity, "--options", "runtime", "--timestamp"]
@@ -52,7 +52,7 @@ def sign(app, identity):
                      key=lambda p: len(p.parts), reverse=True)
     for bundle in bundles:
         run(*base, "--preserve-metadata=identifier", str(bundle))
-    run(*base, "--entitlements", str(ROOT / "Support/DeviceHub.entitlements"), str(app))
+    run(*base, "--entitlements", str(entitlements), str(app))
     run("codesign", "--verify", "--deep", "--strict", str(app))
     for path in [*native, app]:
         details = run("codesign", "--display", "--verbose=4", str(path))
@@ -69,5 +69,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path)
     parser.add_argument("identity")
+    parser.add_argument("--entitlements", type=Path, default=ROOT / "Support/DeviceHub.entitlements",
+                        help="entitlements for the app itself (phone-use's by default)")
     args = parser.parse_args()
-    sign(args.app.resolve(), args.identity)
+    sign(args.app.resolve(), args.identity, args.entitlements.resolve())

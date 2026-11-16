@@ -1,6 +1,16 @@
 # phone-use
 
-在 macOS 上连接、预览和操作 iPhone 与 Android 真机以及本机的 iOS 模拟器，提供原生应用、命令行、MCP 服务及插件自动化。iOS 与 Android 的连接、输入和视频流分别实现，共用设备列表与任务界面。
+在 macOS 上连接、预览和操作 iPhone 与 Android 真机以及本机的 iOS 模拟器，提供原生应用、命令行和 MCP 服务。iOS 与 Android 的连接、输入和视频流分别实现，共用设备列表与预览界面。
+
+本仓库目前同时包含三部分，稳定后会拆分为独立仓库：
+
+| 部分 | 内容 | 面向 |
+| --- | --- | --- |
+| PhoneUseKit | 设备 framework：`PhoneUseKit`、`PhoneUseUI` 与 Python 守护进程 `devicehubd` | 两个应用 |
+| phone-use | 应用、CLI、MCP 服务 | 开发者与 AI 代理 |
+| automation | 基于 MaaFramework 的插件运行底座，见[插件自动化](Automation/README.md) | 游戏代打用户 |
+
+两个应用都只依赖 PhoneUseKit，各自带一份守护进程，状态目录也彼此独立。
 
 ## 获取仓库资源
 
@@ -20,8 +30,11 @@ git lfs pull
 
 ```sh
 scripts/setup-dev.sh
-scripts/setup-automation.sh
 swift run phone-use-app
+
+# automation 另需插件运行环境；任务通过 .build/debug/automation-bridge 连接设备。
+scripts/setup-automation.sh
+swift build && swift run automation-app
 ```
 
 应用运行后，可以使用 CLI 操作已连接设备：
@@ -83,10 +96,11 @@ xcrun simctl boot "iPhone 17 Pro"
 ## 构建应用
 
 ```sh
-scripts/build-app.sh
+scripts/build-app.sh             # dist/phone-use.app
+scripts/build-app.sh automation  # dist/automation.app
 ```
 
-输出为 `dist/phone-use.app`，包含 Python 运行时、CLI、MCP 服务和独立 ADB；使用者无需安装 Android Studio 或自行下载 ADB。Xcode 工程由 `project.yml` 生成，名称为 `phone-use.xcodeproj`，scheme 为 `phone-use`。
+`dist/phone-use.app` 包含 Python 运行时、CLI、MCP 服务和独立 ADB；使用者无需安装 Android Studio 或自行下载 ADB。`dist/automation.app` 包含同样的守护进程运行时（额外安装 MaaFramework）、`automation-bridge`、插件运行时和 OCR 资源。Xcode 工程由 `project.yml` 生成，名称为 `phone-use.xcodeproj`，scheme 为 `phone-use` 和 `automation`。
 
 打包前先完成上述依赖准备。Release 构建会在编译前检查 Android 资源，打包阶段只校验、复制已准备的固定版本并签名，不自动联网下载 Android 资源。ADB、所需动态库及上游许可证位于 `Contents/Resources/android/platform-tools/`。如需打包自定义版本，可显式设置 `DEVICEHUB_ADB`；此时使用指定工具及其相邻的 `lib64/`、`NOTICE.txt`、`source.properties`，不应用固定版本校验。
 
@@ -130,8 +144,8 @@ Claude Desktop、Cursor 等使用 JSON 配置的客户端，在 MCP 配置中加
 
 ## 改名兼容
 
-项目与对外产物由 DeviceHub 改名为 phone-use。为延续现有安装的权限、任务和设备记录，应用标识 `dev.devicehub.app`、`~/Library/Application Support/DeviceHub`、日志目录、`DEVICEHUB_*` 环境变量及插件数据格式保持兼容。内部 Swift 模块 `DeviceHubKit` 和 Python 模块也沿用原名。
+项目与对外产物由 DeviceHub 改名为 phone-use。为延续现有安装的权限和设备记录，应用标识 `dev.devicehub.app`、`~/Library/Application Support/DeviceHub`、日志目录和 `DEVICEHUB_*` 环境变量保持兼容。Swift framework 改名为 `PhoneUseKit`；Python 模块沿用原名。
 
-应用不附带插件；按需通过插件文件或下载 URL 安装。
+插件与任务功能已移至 automation 应用（`dev.devicehub.automation`）。它继续读取原有的插件目录 `~/Library/Application Support/DeviceHub/Plugins` 和任务库，插件格式不变；守护进程状态放在 `~/Library/Application Support/dev.devicehub.automation`。
 
 详见[插件自动化](Automation/README.md)和[平台隔离与视频流](Documentation/DevicePlatforms.md)。

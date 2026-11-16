@@ -10,7 +10,7 @@ from .tasks import import_task, refresh_library, write_manifest
 
 def parser():
     root = Path(__file__).resolve().parents[2]
-    result = argparse.ArgumentParser(description="phone-use plugin runtime")
+    result = argparse.ArgumentParser(description="automation plugin runtime")
     commands = result.add_subparsers(dest="command", required=True)
     for name in ("catalog", "import", "refresh-library", "run", "probe", "install", "pack"):
         command = commands.add_parser(name)
@@ -32,7 +32,7 @@ def parser():
                 task.add_argument("--task-file", type=Path)
                 command.add_argument("--config", default="{}")
             command.add_argument("--device")
-            command.add_argument("--bridge", type=Path, default=root / ".build/debug/phone-use")
+            command.add_argument("--bridge", type=Path, default=root / ".build/debug/automation-bridge")
             command.add_argument("--assets", type=Path, default=root / ".build/maa-core")
             command.add_argument("--output", type=Path, default=root / ".build/automation/run")
             command.add_argument("--watch-stdin", action="store_true")

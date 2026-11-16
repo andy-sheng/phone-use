@@ -1,20 +1,22 @@
-# phone-use 插件自动化
+# automation 插件自动化
 
-phone-use 是 iPhone 与 Android 设备自动化宿主：负责设备连接、预览、输入、MaaFramework、OCR、任务进程、取消、日志和原生界面。任务行为通过用户独立安装的 Python 插件提供，界面按插件描述渲染。应用不附带任何插件。
+automation 是 iPhone 与 Android 设备自动化宿主：负责 MaaFramework、OCR、任务进程、取消、日志和原生界面；设备连接、预览和输入来自 PhoneUseKit framework。任务行为通过用户独立安装的 Python 插件提供，界面按插件描述渲染。应用不附带任何插件。
+
+automation 与 phone-use 是两个独立应用（`dev.devicehub.automation` / `dev.devicehub.app`），只共享 PhoneUseKit，不互相依赖。automation 启动自己的守护进程，状态放在 `~/Library/Application Support/dev.devicehub.automation`。
 
 ## Android 设备
 
 设备列表保留原来的 Available / Unavailable 分组，每台设备显示 iPhone、iPad 或 Android 标识。Android USB、已连接的 ADB Wi-Fi 设备及模拟器使用 `android:<adb serial>` 标识；未授权和离线设备有独立提示。首次连接请开启开发者选项与 USB 调试，在手机上允许此电脑。Wi-Fi 设备须先通过 Android platform-tools 完成配对与 `adb connect`，应用不自动配对。
 
-开发环境先安装 Android SDK platform-tools，再运行 `scripts/setup-dev.sh` 安装含 MaaFramework 的 daemon 依赖，并准备固定版本的 scrcpy 服务端。ADB 自动从 PATH、`ANDROID_HOME`、`ANDROID_SDK_ROOT`、macOS 默认 Android SDK 目录及 Homebrew 查找；也可用 `DEVICEHUB_ADB=/absolute/path/to/adb` 指定。Release 构建会把本机 ADB 及其 NOTICE 打包进应用；找不到 ADB 时构建会明确失败，避免发布没有安卓控制工具的安装包。运行时优先使用用户已安装的 ADB，内置 ADB 仅作兜底，避免与 Android Studio 等工具的 ADB server 版本冲突、互相重启。用户无需另装 Python、ADB 或 scrcpy。
+开发环境先安装 Android SDK platform-tools，再运行 `scripts/setup-dev.sh` 安装设备守护进程依赖（不含 MaaFramework）并准备固定版本的 scrcpy 服务端，运行 `scripts/setup-automation.sh` 安装 MaaFramework 运行时。ADB 自动从 PATH、`ANDROID_HOME`、`ANDROID_SDK_ROOT`、macOS 默认 Android SDK 目录及 Homebrew 查找；也可用 `DEVICEHUB_ADB=/absolute/path/to/adb` 指定。Release 构建会把本机 ADB 及其 NOTICE 打包进应用；找不到 ADB 时构建会明确失败，避免发布没有安卓控制工具的安装包。运行时优先使用用户已安装的 ADB，内置 ADB 仅作兜底，避免与 Android Studio 等工具的 ADB server 版本冲突、互相重启。用户无需另装 Python、ADB 或 scrcpy。
 
 视频资产使用 [Genymobile/scrcpy 官方 v3.3.4 发布](https://github.com/Genymobile/scrcpy/releases/tag/v3.3.4)，不依赖全局 scrcpy 或 Homebrew 安装。也可单独运行 `python3 scripts/prepare-android-video.py --download`，将服务端缓存到 `.build/android/scrcpy-server-v3.3.4`；已有文件通过 SHA256 校验后直接复用。版本、下载地址、官方校验文件来源及固定哈希记录在 [资产清单](../scripts/android-assets.json)。`DEVICEHUB_SCRCPY_SERVER=/absolute/path/to/scrcpy-server-v3.3.4` 可指定本地副本，但必须匹配同一版本及哈希。Release 打包只校验并复制已准备的资产，不会临时下载；缺失或校验失败会中止构建。服务端及其 Apache-2.0 `LICENSE`、来源 `NOTICE` 随应用放在 `Contents/Resources/android/`。
 
 Android 复用现有屏幕面板、任务区和日志界面，支持原生尺寸无损截图、单指点击/拖动/滑动、长按、Home/返回/最近任务/音量/锁屏及按包名启动应用。预览使用 scrcpy H.264 视频流，长边上限 1920 像素、帧率上限 60 fps，不传输音频；实际帧率取决于设备编码器和传输条件。视频资产不可用或视频启动失败时，界面提示原因并降级为截图预览；已运行的视频发生错误时显示重新连接入口。任务截图与识别仍使用原生尺寸截图，不依赖视频分辨率。平台边界、视频连接生命周期和恢复策略见 [平台设计说明](../Documentation/DevicePlatforms.md)。
 
-输入与视频预览的权限独立。输入使用 MaaTouch/minitouch，设备若不支持会报告连接失败；部分厂商还需开启「USB 调试（安全设置）」以允许模拟输入，权限不足时会明确报错，截图和启动应用仍可使用。横竖屏切换、折叠屏展开等导致截图尺寸改变时停止坐标输入，并显示重新连接入口；运行任务期间须先停止任务才能重连。尺寸不变的 180° 旋转无法通过此检查发现，固定坐标任务应锁定屏幕方向。
+输入与视频预览的权限独立。预览中的手动操作使用 PhoneUseKit 的 scrcpy 控制通道；任务运行时由 MaaFramework 的 AdbController（MaaTouch/minitouch）直接操作设备，设备若不支持会报告连接失败；部分厂商还需开启「USB 调试（安全设置）」以允许模拟输入，权限不足时会明确报错，截图和启动应用仍可使用。横竖屏切换、折叠屏展开等导致截图尺寸改变时停止坐标输入，并显示重新连接入口；运行任务期间须先停止任务才能重连。尺寸不变的 180° 旋转无法通过此检查发现，固定坐标任务应锁定屏幕方向。
 
-自动任务继续使用同一个 Swift bridge 和设备会话，Maa 识别坐标会转换回原生像素，原有任务与插件无须改用新的控制器。插件的设备布局、模板和安全区须由插件作者验证；设备控制能力不代表任意自动化任务均可直接运行。
+自动任务先通过 `automation-bridge`（基于 PhoneUseKit 的私有 stdio 连接，经环境变量继承应用的守护进程身份）解析设备。Android 设备随后改由 MaaFramework 原生的 AdbController 控制，使用守护进程报告的同一个 adb，运行前检查输入权限，并原生支持按键、文本输入和停止应用；iOS 设备继续通过 bridge 截图和触控，Maa 识别坐标会转换回原生像素。原有任务与插件无须修改。插件的设备布局、模板和安全区须由插件作者验证；设备控制能力不代表任意自动化任务均可直接运行。
 
 ## 界面与任务
 
@@ -42,15 +44,13 @@ PYTHONPATH=Automation .venv-maa/bin/python -m devicehub_runtime catalog
 PYTHONPATH=Automation .venv-maa/bin/python -m devicehub_runtime install \
   --package /path/to/plugin.dhplugin
 PYTHONPATH=Automation .venv-maa/bin/python -m unittest discover -s Automation/tests -v
-./scripts/build-app.sh
+swift build && swift run automation-app   # 任务使用 .build/debug/automation-bridge
+./scripts/build-app.sh automation          # dist/automation.app
 ```
 
-安卓示例（先启动应用）：
+设备层测试：
 
 ```sh
-.build/debug/phone-use list
-.build/debug/phone-use --device android:SERIAL screenshot .build/android.png
-.build/debug/phone-use --device android:SERIAL press back
 PYTHONPATH=Daemon .venv-daemon/bin/python -m unittest discover -s Daemon/tests -v
 swift test
 ```

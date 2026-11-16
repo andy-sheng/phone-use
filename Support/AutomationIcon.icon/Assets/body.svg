@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="porcelain" x1="0.2" y1="0" x2="0.85" y2="1">
+      <stop stop-color="#FFFFFF"/><stop offset="0.48" stop-color="#F3FBFD"/><stop offset="1" stop-color="#AFCBD9"/>
+    </linearGradient>
+    <linearGradient id="arm" x1="0" y1="0" x2="1" y2="0.8">
+      <stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#9CBCCA"/>
+    </linearGradient>
+  </defs>
+  <!-- Floating pear-shaped body and detached flippers. -->
+  <path fill="url(#porcelain)" d="M367 554C396 527 604 527 643 559C675 585 664 689 620 759C589 809 546 838 508 838C463 838 421 806 392 752C353 679 340 581 367 554Z"/>
+  <path fill="#FFFFFF" opacity="0.55" d="M383 582C377 637 395 718 432 769C406 699 404 631 417 574Z"/>
+  <path fill="url(#arm)" d="M319 562C332 552 343 566 341 591C337 645 319 706 288 742C278 753 265 748 264 732C260 689 277 602 319 562Z"/>
+  <path fill="url(#arm)" d="M705 572C687 553 703 526 727 499C755 466 776 425 781 398C784 381 798 378 806 393C824 428 814 483 792 524C771 564 730 595 705 572Z"/>
+  <!-- Oversized head tilted toward the raised hand. -->
+  <g transform="rotate(-7 510 390)">
+    <path fill="url(#porcelain)" d="M235 395C235 273 350 196 510 196C670 196 785 273 785 395C785 510 682 563 510 563C338 563 235 510 235 395Z"/>
+    <path fill="#FFFFFF" opacity="0.7" d="M269 328C314 252 407 221 512 221C617 221 709 252 754 328C699 268 614 243 512 243C410 243 325 268 269 328Z"/>
+  </g>
+</svg>

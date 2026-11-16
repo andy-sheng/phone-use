@@ -77,7 +77,7 @@ jobs:
           swift test --cache-path .build/swift-cache --config-path .build/swift-config --security-path .build/swift-security
           PYTHONPATH=Daemon .venv-daemon/bin/python -m unittest discover -s Daemon/tests -v
           PYTHONPATH=Automation .venv-maa/bin/python -m unittest discover -s Automation/tests -v
-          swiftc Sources/DeviceHubApp/AutomationSelection.swift Tests/AutomationSelectionTests.swift -o .build/test-selection
+          swiftc Sources/AutomationApp/AutomationSelection.swift Tests/AutomationSelectionTests.swift -o .build/test-selection
           .build/test-selection
           python3 -m unittest discover -s scripts/tests -v
       - name: Prepare temporary signing keychain
@@ -115,7 +115,7 @@ jobs:
           name: release-diagnostics
           retention-days: 7
           path: |
-            .build/xcode/build.log
+            .build/xcode/build-*.log
             .build/releases/*/*.submission.json
             .build/releases/*/*.result.json
             .build/releases/*/*.notary-log.json

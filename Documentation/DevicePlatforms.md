@@ -1,6 +1,7 @@
 # Device platform boundaries
 
-The app, CLI, MCP server and automation bridge share `DeviceSession`. Platform selection
+phone-use (app, CLI, MCP server) and automation (app, `automation-bridge`) both use
+`DeviceSession` from PhoneUseKit. Each app runs its own daemon, chosen by `PhoneUseConfiguration`. Platform selection
 occurs when the session opens; each session owns one `DeviceConnection` implementation.
 
 | Layer | Shared contract | iOS implementation | Android implementation |
@@ -8,7 +9,7 @@ occurs when the session opens; each session owns one `DeviceConnection` implemen
 | Control | `DeviceConnection` | `Platforms/iOS/IOSDeviceConnection.swift`: RemoteXPC services and HID | `Platforms/Android/AndroidDeviceConnection.swift`: Android daemon RPC |
 | Preview | `ScreenStream` | `ScreenStreams/iOS`: HEVC Mirror and CoreMediaIO USB capture | `ScreenStreams/Android`: scrcpy framing, H.264 decoding and video lifetime |
 | Fallback | Screenshot surface | Provider permits video retries | Provider reports the video failure and offers an explicit reconnect |
-| Daemon worker | Supervisor routing and worker lifecycle | Apple device worker | Maa input worker plus a separate scrcpy video manager |
+| Daemon worker | Supervisor routing and worker lifecycle | Apple device worker | scrcpy control-only input channel plus a separate scrcpy video manager |
 
 `DeviceSession` does not construct Apple HID or service messages. The Android adapter
 never calls Apple services. The screen model does not choose a codec or operate ADB,
@@ -31,7 +32,7 @@ Preview cancellation stops its stream without closing shared daemon workers
 used by automation, CLI or MCP. Their explicit session-opening behavior stays
 independent of the preview's Connect button.
 
-`DeviceHubAppTests` exercises selection without transport side effects, explicit
+`PhoneUseUITests` exercises selection without transport side effects, explicit
 retry, cancellation and late completion; it is included in `swift test`.
 
 ## iOS nearby pairing
@@ -79,11 +80,31 @@ pairing, local network permission attribution, or Wi-Fi video/input acceptance.
 
 ## Android input ownership
 
-The preview and an automation run open separate sessions on the same Android worker and
-its single Maa controller. Every touch request carries its session's `owner`. A held touch
-can only be moved or lifted by the session that pressed it, so closing the preview, or a
-rejected preview gesture, never lifts a finger held by automation. Rotation and worker
-shutdown still release input unconditionally.
+PhoneUseKit does not use MaaFramework. Each Android worker starts a private scrcpy 3.3.4
+server with `video=false` and `control=true` (`android_control.py`) when the device opens,
+and keeps that one control socket for the worker's life. Without video, scrcpy injects
+positional events at raw display coordinates of display 0, so the worker sends native
+screenshot pixels. Touches use scrcpy's generic-finger pointer; taps hold for 50 ms and swipes
+are interpolated down/move/up sequences. Keys send down and up keycode events. Injection is
+not acknowledged, so the worker still verifies input permission (`input keyevent 0`) before
+the first input and checks display geometry before every coordinate-bearing event. A channel
+that ends is restarted on the next input; a failed lift still frees the held touch. The
+control server is announced and cleaned up exactly like the video server: its own forward,
+temporary jar and PID, killed only while it carries the worker's private marker.
+
+Screenshots use `adb exec-out screencap` (raw RGBA/BGRA, 12- or 16-byte header) encoded as
+PNG on the Mac; app launches use `monkey` for packages and `am start -n` for activities, so
+neither needs input permission.
+
+Sessions of the same app share the worker. Every touch request carries its session's `owner`.
+A held touch can only be moved or lifted by the session that pressed it, so closing the
+preview, or a rejected preview gesture, never lifts a finger held by another session. Rotation
+and worker shutdown still release input unconditionally.
+
+automation's Android tasks do not go through this worker: MaaFramework's own `AdbController`
+(MaaTouch/minitouch) drives the device, on the adb executable the daemon reports through the
+`androidTools` RPC so the two never restart each other's adb server. While a task runs on a
+device, automation's preview is view-only and its input view lifts any held touch.
 
 Coordinate-bearing input checks the live default-display viewport from `dumpsys input`
 instead of taking a screenshot before each touch sample. Some phones take over a second
@@ -162,9 +183,9 @@ Android Studio and PATH changes are not required.
 The pinned scrcpy server captures H.264 on the device. ADB forwards its socket to a
 daemon-owned relay on `127.0.0.1`. The Swift Android stream consumes framed packets and
 feeds an `AVSampleBufferDisplayLayer`; screenshots are not used to simulate video.
-The video server has audio and control disabled. Maa remains the input owner, and
-automation continues to request native-resolution screenshots through the control
-adapter for recognition. Video scaling does not change automation coordinates.
+The video server has audio and control disabled; input belongs to the worker's separate
+control channel. Screenshots for recognition remain native-resolution captures, so video
+scaling does not change automation coordinates.
 
 `startAndroidVideo` returns `{port, token}`. The consumer writes the token followed by
 a newline before receiving scrcpy metadata and packets. `stopAndroidVideo` includes
@@ -176,7 +197,7 @@ The Swift stream succeeds only after VideoToolbox has decoded its first keyframe
 an image buffer. This also works before the UI attaches the display layer to a window.
 Startup failure reports the cause and falls back to screenshot polling. Failure after
 startup is reported through the shared stream error callback; the UI offers reconnect.
-Stopping video does not close the shared Maa controller or release an automation
+Stopping video does not close the input channel or release another session's
 gesture. Closing the device worker closes both its control and video resources.
 
 Packet sizes, startup waits and transport backpressure are bounded. Malformed data

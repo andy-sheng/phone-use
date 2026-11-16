@@ -37,7 +37,7 @@ from pymobiledevice3.remote.tunnel_service import (
 from pymobiledevice3.remote.userspace_tunnel import UserspaceRsdTunnel
 from pymobiledevice3.usbmux import list_devices
 
-from devicehubd import system_bonjour
+from devicehubd import identity, system_bonjour
 from devicehubd.protocol import RpcError
 
 logger = logging.getLogger("devicehubd")
@@ -279,7 +279,7 @@ async def _remote_pairing_service(udid: Optional[str]) -> Any:
     alt_irk = wireless_identities().get(udid or "")
     if alt_irk is None:
         raise ConnectionError(f"{udid} is not listed by macOS over Wi-Fi right now and is not paired for "
-                              "Wi-Fi with phone-use; wake the device, or connect it with USB once to pair")
+                              f"Wi-Fi with {identity.display_name()}; wake the device, or connect it with USB once to pair")
     tried: set[tuple[str, int]] = set()
 
     async def attempt(host: str, port: int) -> Any:

@@ -4,8 +4,13 @@
 
 ## 项目与环境
 
-phone-use 是 macOS 上连接、预览和操作 iPhone / Android 真机的工具，包含 SwiftUI
-应用、CLI、stdio MCP 服务、Python 守护进程及插件自动化。
+本仓库目前包含三层，后续将拆分为独立仓库，现阶段用 target 隔离依赖：
+
+- **PhoneUseKit framework**：设备发现、连接、输入、屏幕流、Python 守护进程和共享设备界面，不依赖任何应用。
+- **phone-use**：面向开发者 / AI 代理的应用、CLI 和 stdio MCP 服务。
+- **automation**：面向游戏代打用户、基于 MaaFramework 的插件运行底座。
+
+两个应用都只依赖 framework，彼此不依赖；各自启动并管理自己的守护进程。
 
 - 开发环境：Apple silicon Mac、macOS 15+、Xcode、Python 3.13；生成 Xcode 工程需要 XcodeGen。
 - Swift 工具版本为 6.0，代码语言模式为 Swift 5，以 `Package.swift` 和 `project.yml` 为准。
@@ -14,23 +19,32 @@ phone-use 是 macOS 上连接、预览和操作 iPhone / Android 真机的工具
 
 ## 目录与边界
 
-| 路径 | 职责 |
-| --- | --- |
-| `Sources/DeviceHubKit/` | 共享设备会话、平台连接适配器、控制协议和屏幕流 |
-| `Sources/DeviceHubApp/` | SwiftUI 应用与自动化界面 |
-| `Sources/devicehub/` | `phone-use` CLI |
-| `Sources/devicehub-mcp/` | `phone-use-mcp` 服务 |
-| `Daemon/devicehubd/` | Python 设备发现、连接、worker 与 Android 视频生命周期 |
-| `Automation/devicehub_runtime/` | 通用自动化运行时和插件 SDK |
-| `Tests/`、`Daemon/tests/`、`Automation/tests/` | Swift / Python 回归测试与必要的测试素材 |
-| `scripts/`、`Support/` | 环境准备、构建打包、应用权限与元数据 |
+| 路径 | 层 | 职责 |
+| --- | --- | --- |
+| `Sources/PhoneUseKit/` | framework | 设备会话、平台连接适配器、屏幕流、守护进程客户端、`PhoneUseConfiguration` |
+| `Sources/PhoneUseUI/` | framework | 共享设备界面：设备列表、预览、输入、配对、`DeviceWorkspace`、守护进程启动 |
+| `Daemon/devicehubd/` | framework | Python 设备发现、连接、worker 与 Android 视频生命周期 |
+| `Sources/PhoneUseApp/` | phone-use | 应用、设备设置面板、MCP 宿主与自动更新 |
+| `Sources/PhoneUseCLI/` | phone-use | `phone-use` CLI |
+| `Sources/PhoneUseMCP/`、`Sources/PhoneUseMCPServer/` | phone-use | MCP 工具与 `phone-use-mcp` 服务 |
+| `Sources/AutomationApp/` | automation | 应用与插件、任务、运行界面 |
+| `Sources/AutomationBridge/` | automation | `automation-bridge`：Maa 运行时的私有设备连接 |
+| `Automation/devicehub_runtime/` | automation | 通用自动化运行时和插件 SDK |
+| `Tests/`、`Daemon/tests/`、`Automation/tests/` | 各层 | Swift / Python 回归测试与必要的测试素材 |
+| `scripts/`、`Support/` | 各层 | 环境准备、构建打包、应用权限与元数据 |
+
+- 依赖方向只能是应用 → framework。framework 不引用 MCP、插件或 MaaFramework 相关代码；phone-use 与 automation 互不引用。
+  新增代码先判断所属层；两个应用都需要的设备能力放进 framework。
+- 应用在启动时设置 `PhoneUseConfiguration.current`，守护进程和辅助进程通过 `DEVICEHUB_HOME`、
+  `DEVICEHUB_LOG_DIR`、`DEVICEHUB_DISPLAY_NAME` 继承同一身份。framework 内不写死应用名称或数据目录。
 
 - App、CLI、MCP 和自动化通过共享设备会话工作；iOS / Android 的连接、输入和视频实现保持分离。
 - UI 屏幕模型不直接操作 ADB、CoreMediaIO 或视频 socket；平台准备与恢复由对应 provider 负责。
 - 仓库及应用不附带具体插件的实现、资源、示例或说明；任务行为由外部插件提供。通用宿主不按插件 ID 分支。扫描及安装插件时只读取元数据，不执行插件代码。
 - MCP 等协议使用的 stdout 不得混入诊断文本；诊断信息走日志或 stderr。
-- 对外名称为 phone-use；保留 `dev.devicehub.app`、`DeviceHubKit`、现有 Python 模块名、
-  `DEVICEHUB_*`、`~/Library/Application Support/DeviceHub` 及插件格式的兼容性。
+- phone-use 保留 `dev.devicehub.app`、`DEVICEHUB_*`、`~/Library/Application Support/DeviceHub` 的兼容性；
+  automation 使用 `dev.devicehub.automation` 及同名数据目录。Python 模块名 `devicehubd`、`devicehub_runtime`、
+  插件格式 `devicehub.plugin.v1` 及现有插件与任务库目录保持兼容。Swift framework 名为 `PhoneUseKit`。
 
 ## 开发与构建
 
@@ -41,15 +55,20 @@ phone-use 是 macOS 上连接、预览和操作 iPhone / Android 真机的工具
 PYTHON=python3.13 scripts/setup-dev.sh
 scripts/setup-automation.sh
 
-# 运行原生应用。
+# 运行原生应用；automation 运行任务时使用 .build/debug/automation-bridge，先完整构建一次。
 swift run phone-use-app
+swift build && swift run automation-app
 
-# 生成 Xcode 工程并打包至 dist/phone-use.app。
+# 生成 Xcode 工程并打包至 dist/phone-use.app 或 dist/automation.app。
 scripts/build-app.sh
+scripts/build-app.sh automation
 ```
 
 - `project.yml` 是 Xcode 配置来源；不要手改生成的 `phone-use.xcodeproj` 或历史 `DeviceHub.xcodeproj`。
-- SwiftPM 产品名为 `phone-use`、`phone-use-mcp`、`phone-use-app`；内部 target 名可能不同。
+- SwiftPM 产品：framework 为 `PhoneUseKit`、`PhoneUseUI`；phone-use 为 `phone-use`、`phone-use-mcp`、
+  `phone-use-app`；automation 为 `automation-app`、`automation-bridge`。
+- phone-use 打包只嵌入守护进程运行时（`scripts/embed-daemon.sh`）；automation 额外嵌入插件运行时与 OCR 资源
+  （`scripts/embed-automation.sh`）。
 - 构建、下载和测试输出放在 `.build/`，发布产物放在 `dist/`。
 - `Automation/assets.json` 和 `scripts/android-assets.json` 固定上游资源与哈希。
   更新资源时同步更新清单及来源/许可证，不绕过校验；Android Release 打包缺少已准备的 scrcpy 资产时应失败。
@@ -72,7 +91,7 @@ PYTHONPATH=Automation .venv-maa/bin/python -m unittest discover -s Automation/te
 
 # 独立的界面选择逻辑测试，不包含在 swift test 中。
 mkdir -p .build
-swiftc Sources/DeviceHubApp/AutomationSelection.swift Tests/AutomationSelectionTests.swift -o .build/test-selection
+swiftc Sources/AutomationApp/AutomationSelection.swift Tests/AutomationSelectionTests.swift -o .build/test-selection
 .build/test-selection
 ```
 

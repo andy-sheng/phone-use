@@ -1,7 +1,10 @@
 #!/bin/zsh
-# Builds dist/phone-use.app from the Xcode project (generated from project.yml): the app, its
-# MCP server and CLI in Contents/Helpers, and the embedded Python daemon runtime.
-# Building needs Xcode; running the result does not.
+# Builds dist/phone-use.app (default) or dist/automation.app from the Xcode project (generated
+# from project.yml). phone-use carries its MCP server and CLI in Contents/Helpers and the embedded
+# daemon runtime; automation carries automation-bridge, the daemon runtime with MaaFramework, the
+# plugin runtime and OCR resources. Building needs Xcode; running the result does not.
+#
+#   scripts/build-app.sh [phone-use|automation]
 #
 #   SIGN_IDENTITY   e.g. "Developer ID Application: Example (TEAMID)"; ad-hoc by default
 #   TEAM_ID         development team for SIGN_IDENTITY
@@ -11,8 +14,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
+PRODUCT=${1:-phone-use}
+case "$PRODUCT" in
+    phone-use) ENTITLEMENTS=$ROOT/Support/DeviceHub.entitlements ;;
+    automation) ENTITLEMENTS=$ROOT/Support/Automation.entitlements ;;
+    *) echo "usage: scripts/build-app.sh [phone-use|automation]" >&2; exit 64 ;;
+esac
 DERIVED=${DERIVED_DATA:-$ROOT/.build/xcode}
-APP=$ROOT/dist/phone-use.app
+APP=$ROOT/dist/$PRODUCT.app
 
 # Fail before compilation if Android assets have not been prepared. Release builds
 # never download them; setup-dev.sh owns dependency preparation.
@@ -35,9 +44,9 @@ SIGNING=(CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual)
 [[ -z "${BUILD_NUMBER:-}" ]] || SIGNING+=(CURRENT_PROJECT_VERSION="$BUILD_NUMBER")
 
 mkdir -p "$DERIVED"
-LOG=$DERIVED/build.log
-echo "==> xcodebuild (log: $LOG)"
-if ! xcodebuild -project phone-use.xcodeproj -scheme phone-use -configuration Release \
+LOG=$DERIVED/build-$PRODUCT.log
+echo "==> xcodebuild $PRODUCT (log: $LOG)"
+if ! xcodebuild -project phone-use.xcodeproj -scheme "$PRODUCT" -configuration Release \
     -derivedDataPath "$DERIVED" -destination 'platform=macOS,arch=arm64' \
     -packageCachePath "$ROOT/.build/package-cache" \
     -clonedSourcePackagesDirPath "$ROOT/.build/SourcePackages" \
@@ -45,18 +54,18 @@ if ! xcodebuild -project phone-use.xcodeproj -scheme phone-use -configuration Re
     grep -E "error:|BUILD FAILED" "$LOG" | tail -20 >&2
     exit 1
 fi
-BUILT=$DERIVED/Build/Products/Release/phone-use.app
+BUILT=$DERIVED/Build/Products/Release/$PRODUCT.app
 
 rm -rf "$APP"
 mkdir -p "$ROOT/dist"
 ditto "$BUILT" "$APP"
 if [[ -n "${SIGN_IDENTITY:-}" ]]; then
-    "$ASSET_PYTHON" "$ROOT/scripts/sign-app.py" "$APP" "$SIGN_IDENTITY"
+    "$ASSET_PYTHON" "$ROOT/scripts/sign-app.py" "$APP" "$SIGN_IDENTITY" --entitlements "$ENTITLEMENTS"
 fi
 codesign --verify --deep --strict "$APP"
 
 if [[ -n "${NOTARY_PROFILE:-}" ]]; then
-    ZIP=$ROOT/dist/phone-use.zip
+    ZIP=$ROOT/dist/$PRODUCT.zip
     ditto -c -k --keepParent "$APP" "$ZIP"
     NOTARY_AUTH=(--keychain-profile "$NOTARY_PROFILE")
     [[ -z "${NOTARY_KEYCHAIN:-}" ]] || NOTARY_AUTH+=(--keychain "$NOTARY_KEYCHAIN")

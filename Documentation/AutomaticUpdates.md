@@ -57,7 +57,7 @@ git push origin v0.3.1
 
 流水线依次执行：
 
-1. 准备已校验的 ADB、scrcpy、Python/Maa 和 Sparkle 工具；运行 Swift、Python 和界面选择检查。
+1. 准备已校验的 ADB、scrcpy、Python（automation 另需 Maa）和 Sparkle 工具；运行 Swift、Python 和界面选择检查。
 2. 构建 Release App，逐层签名 Python、动态库、Sparkle helper/XPC/framework 和主应用。
 3. 公证 App 并附加票据，生成用于自动更新的 ZIP 和首次安装的 DMG；DMG 另行签名、公证和附加票据。
 4. 验证签名、Gatekeeper、公证日志和校验和；用 Sparkle 工具生成并签名更新清单。

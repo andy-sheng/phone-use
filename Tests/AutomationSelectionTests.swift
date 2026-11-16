@@ -1,7 +1,7 @@
 import Foundation
 
 /// Run with:
-/// swiftc Sources/DeviceHubApp/AutomationSelection.swift Tests/AutomationSelectionTests.swift -o .build/test-selection
+/// swiftc Sources/AutomationApp/AutomationSelection.swift Tests/AutomationSelectionTests.swift -o .build/test-selection
 /// .build/test-selection
 @main
 struct AutomationSelectionTests {

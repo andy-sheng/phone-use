@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>dev.devicehub.automation</string>
+	<key>CFBundleName</key>
+	<string>automation</string>
+	<key>CFBundleDisplayName</key>
+	<string>automation</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>NSCameraUsageDescription</key>
+	<string>automation shows USB-connected iPhone screens through the system screen capture device.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>automation discovers and pairs iPhone and iPad devices on your local network.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_remotepairing._tcp</string>
+		<string>_remotepairing-manual-pairing._tcp</string>
+		<string>_remotepairing-pairable-host._tcp</string>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>dev.devicehub.plugin</string>
+			<key>UTTypeDescription</key>
+			<string>automation Plugin</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.zip-archive</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>dhplugin</string></array>
+				<key>public.mime-type</key>
+				<string>application/vnd.devicehub.plugin+zip</string>
+			</dict>
+		</dict>
+	</array>
+</dict>
+</plist>

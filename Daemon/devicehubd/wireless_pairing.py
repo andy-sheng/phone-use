@@ -26,7 +26,7 @@ from pymobiledevice3.remote.tunnel_service import (
     RemotePairingManualPairingService,
 )
 
-from devicehubd import system_bonjour
+from devicehubd import identity, system_bonjour
 from devicehubd.protocol import RpcError
 from devicehubd.transports import BROWSE_PAUSE, BROWSE_WINDOW, NETWORK_TTL
 
@@ -53,7 +53,7 @@ class IOSManualPairingService(RemotePairingManualPairingService):
 class WirelessPairing:
     def __init__(self, on_paired: Callable[[PairedDevice], Awaitable[None]]) -> None:
         self.session_id = str(uuid.uuid4())
-        self.host_info = PairableHostInfo(name=f"{platform.node()} · phone-use")
+        self.host_info = PairableHostInfo(name=f"{platform.node()} · {identity.display_name()}")
         self.on_paired = on_paired
         self.state = "waiting"
         self.pin: Optional[str] = None
@@ -134,7 +134,7 @@ class WirelessPairing:
                         self._nearby[identifier] = (answer, time.monotonic())
                 self.discovery_error = None
             except Exception:
-                self.discovery_error = "Nearby discovery failed. Check local network access for phone-use."
+                self.discovery_error = f"Nearby discovery failed. Check local network access for {identity.display_name()}."
             # Expire stale entries rather than keeping every device ever seen.
             now = time.monotonic()
             self._nearby = {key: value for key, value in self._nearby.items() if now - value[1] < NETWORK_TTL}

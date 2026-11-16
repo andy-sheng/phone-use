@@ -1,15 +1,21 @@
 #!/bin/zsh
-# Copies a self-contained Python runtime with the daemon into an app bundle.
+# Copies a self-contained Python runtime with the PhoneUseKit daemon and Android tools into an
+# app bundle. Every app built on PhoneUseKit embeds its own copy.
 #
-#   embed-daemon.sh <phone-use.app> [codesign identity]
+#   embed-daemon.sh <app> [codesign identity] [extra requirements.txt ...]
 #
-# The runtime (python-build-standalone + Daemon/requirements.txt) is staged and signed once per
-# Python build, requirements and identity in $DEVICEHUB_BUILD_CACHE, so repeated builds only
-# sync files. PYTHON_URL overrides the default latest Python 3.13 build.
+# The runtime (python-build-standalone + Daemon/requirements.txt + any extra requirement files an
+# app needs in the same interpreter) is staged and signed once per Python build, requirements and
+# identity in $DEVICEHUB_BUILD_CACHE, so repeated builds only sync files. PYTHON_URL overrides the
+# default latest Python 3.13 build.
 set -euo pipefail
 ROOT=${0:A:h:h}
-APP=${1:?usage: embed-daemon.sh <app> [identity]}
+APP=${1:?usage: embed-daemon.sh <app> [identity] [extra requirements.txt ...]}
 IDENTITY=${2:-}
+EXTRA_REQUIREMENTS=("${@:3}")
+REQUIREMENTS=("$ROOT/Daemon/requirements.txt" "${EXTRA_REQUIREMENTS[@]}")
+PIP_REQUIREMENTS=()
+for requirement in "${REQUIREMENTS[@]}"; do PIP_REQUIREMENTS+=(-r "$requirement"); done
 RESOURCES=$APP/Contents/Resources
 CACHE=${DEVICEHUB_BUILD_CACHE:-$ROOT/.build/runtime-cache}
 mkdir -p "$CACHE" "$RESOURCES"
@@ -45,7 +51,7 @@ if [[ -n "$EXPECTED_SHA" ]] && [[ "$(shasum -a 256 "$TARBALL" | cut -d' ' -f1)" 
     exit 1
 fi
 
-KEY=$(print -r -- "${TARBALL:t} $(shasum -a 256 "$ROOT/Daemon/requirements.txt" "$ROOT/Automation/requirements.txt") $IDENTITY" | shasum -a 256 | cut -c1-16)
+KEY=$(print -r -- "${TARBALL:t} $(shasum -a 256 "${REQUIREMENTS[@]}") $IDENTITY" | shasum -a 256 | cut -c1-16)
 STAGE=$CACHE/runtime-$KEY
 if [[ ! -x "$STAGE/python/bin/python3" ]]; then
     echo "Staging Python runtime ($KEY)"
@@ -53,7 +59,7 @@ if [[ ! -x "$STAGE/python/bin/python3" ]]; then
     mkdir -p "$STAGE.tmp"
     tar -xzf "$TARBALL" -C "$STAGE.tmp"
     "$STAGE.tmp/python/bin/python3" -m pip install --quiet --no-compile --no-cache-dir \
-        --disable-pip-version-check -r "$ROOT/Daemon/requirements.txt" -r "$ROOT/Automation/requirements.txt"
+        --disable-pip-version-check "${PIP_REQUIREMENTS[@]}"
     find "$STAGE.tmp" -name __pycache__ -type d -prune -exec rm -rf {} +
     find "$STAGE.tmp/python/lib" -path "*/site-packages/*" -type d -name tests -prune -exec rm -rf {} +
     if [[ -n "$IDENTITY" ]]; then
@@ -73,15 +79,5 @@ fi
 rsync -a --delete "$STAGE/python/" "$RESOURCES/python/"
 mkdir -p "$RESOURCES/daemon"
 rsync -a --delete --exclude __pycache__ "$ROOT/Daemon/devicehubd/" "$RESOURCES/daemon/devicehubd/"
-mkdir -p "$RESOURCES/automation"
-rsync -a --delete --delete-excluded --exclude __pycache__ \
-    --include /devicehub_runtime/ --include '/devicehub_runtime/***' --exclude '*' \
-    "$ROOT/Automation/" "$RESOURCES/automation/"
-ASSETS_KEY=$(shasum -a 256 "$ROOT/Automation/assets.json" "$ROOT/Automation/prepare_assets.py" \
-    "$ROOT/Automation/devicehub_runtime/images.py" | shasum -a 256 | cut -c1-16)
-ASSETS="$CACHE/maa-core-$ASSETS_KEY"
-"$STAGE/python/bin/python3" "$ROOT/Automation/prepare_assets.py" --output "$ASSETS" --cache "$ROOT/.build/maa-assets"
-mkdir -p "$RESOURCES/maa-assets"
-rsync -a --delete "$ASSETS/" "$RESOURCES/maa-assets/"
 /bin/zsh "$ROOT/scripts/embed-android-tools.sh" "$APP" "${IDENTITY:--}"
 echo "Embedded daemon runtime into ${APP:t}"

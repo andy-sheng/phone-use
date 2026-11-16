@@ -13,14 +13,18 @@ from .images import decode_png
 
 
 class Bridge:
-    """One persistent Swift connection per run; failed requests are never replayed."""
+    """One persistent automation-bridge process per run; failed requests are never replayed.
+
+    The bridge inherits the app's PhoneUseKit identity (``DEVICEHUB_HOME`` and friends) from this
+    process's environment, so it reaches the same daemon the app started.
+    """
 
     def __init__(self, executable: Path, device: str | None = None):
         args = [str(executable)]
         if device:
             args += ["--device", device]
         self.process = subprocess.Popen(
-            args + ["bridge"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             text=True, encoding="utf-8", bufsize=1,
         )
         self._responses = queue.Queue()
@@ -36,12 +40,12 @@ class Bridge:
         except Exception as error:
             self._responses.put(error)
         finally:
-            self._responses.put(EOFError("phone-use bridge disconnected"))
+            self._responses.put(EOFError("automation-bridge disconnected"))
 
     def request(self, method: str, **params):
         with self._lock:
             if self._closed or self.process.poll() is not None:
-                raise ConnectionError("phone-use bridge is closed")
+                raise ConnectionError("automation-bridge is closed")
             self._serial += 1
             self.process.stdin.write(json.dumps({"id": self._serial, "method": method, "params": params}) + "\n")
             self.process.stdin.flush()
@@ -50,11 +54,11 @@ class Bridge:
             except queue.Empty as error:
                 self.process.stdin.close()
                 self._closed = True
-                raise TimeoutError(f"phone-use {method} timed out; run stopped") from error
+                raise TimeoutError(f"automation-bridge {method} timed out; run stopped") from error
             if isinstance(reply, Exception):
                 raise reply
             if reply.get("id") != self._serial:
-                raise ConnectionError("phone-use response ID mismatch")
+                raise ConnectionError("automation-bridge response ID mismatch")
             if "error" in reply:
                 raise RuntimeError(reply["error"])
             return reply["result"]
@@ -167,6 +171,44 @@ class DeviceController(CustomController):
         return False
 
 
-# Compatibility for existing plugins and replay tests. Both platforms use the same
-# bridge; DeviceSession selects the iOS or Android backend for the chosen device.
+ANDROID_INPUT_DENIED = (
+    "Android 拒绝注入触摸或按键。请在开发者选项中开启“USB 调试（安全设置）”"
+    "（小米/红米等设备需单独开启），完成手机上的确认后重试；如系统要求，请重启手机。"
+)
+
+
+def make_android_controller(adb_path: str, serial: str):
+    """MaaFramework's own Android controller, on the adb executable the device daemon uses."""
+    from maa.controller import AdbController
+    from maa.define import MaaAdbInputMethodEnum, MaaAdbScreencapMethodEnum
+
+    return AdbController(
+        adb_path, serial,
+        screencap_methods=MaaAdbScreencapMethodEnum.Default,
+        # Both support real down/move/up. Do not silently select AdbShell, whose
+        # click/swipe-only behavior cannot implement drag gestures.
+        input_methods=MaaAdbInputMethodEnum.Maatouch | MaaAdbInputMethodEnum.MinitouchAndAdbKey,
+    )
+
+
+def check_android_input(adb_path: str, serial: str) -> None:
+    """MaaTouch may report success even when Android rejects input injection.
+
+    KEYCODE_UNKNOWN has no visible action; the check runs before a task sends any input.
+    """
+    try:
+        result = subprocess.run([adb_path, "-s", serial, "shell", "input", "keyevent", "0"],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                timeout=5, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(f"无法确认 Android 输入权限：{error}") from error
+    detail = (result.stdout + "\n" + result.stderr).strip()
+    if "INJECT_EVENTS" in detail or "SecurityException" in detail:
+        raise RuntimeError(ANDROID_INPUT_DENIED)
+    if result.returncode:
+        raise RuntimeError(f"无法确认 Android 输入权限：{detail[:2000] or 'ADB 命令失败'}")
+
+
+# Compatibility for existing plugins and replay tests. iOS devices use this bridge controller;
+# Android devices use make_android_controller.
 IPhoneController = DeviceController

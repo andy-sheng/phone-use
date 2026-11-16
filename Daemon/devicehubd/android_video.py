@@ -1,4 +1,4 @@
-"""Private scrcpy 3.3.4 H.264 relay, independent of Maa's input controller.
+"""Private scrcpy 3.3.4 H.264 relay, independent of the input channel.
 
 The local wire format is a token line followed by scrcpy's 12-byte codec header
 and unchanged (12-byte frame header, Annex-B payload) packets. A stream belongs

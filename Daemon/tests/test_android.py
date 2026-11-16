@@ -9,7 +9,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import numpy as np
 from PIL import Image
 
 from devicehubd.android import AndroidAttachment, AndroidDiscovery, find_adb, parse_devices
@@ -123,87 +122,90 @@ class DiscoveryAsyncTests(unittest.IsolatedAsyncioTestCase):
         process.wait.assert_awaited_once()
 
 
-class Job:
-    def __init__(self, succeeded=True, image=None):
-        self.done, self.succeeded, self.image = True, succeeded, image
+class FakeDriver:
+    """Records what the worker sends. ``up`` omits coordinates: only the lift matters."""
 
-    def get(self):
-        return self.image
+    NAMES = {0: "down", 1: "up", 2: "move"}
 
-
-class FakeController:
     def __init__(self):
-        self.image = np.zeros((2400, 1080, 3), dtype=np.uint8)
-        self.image[0, 0] = [13, 23, 33]
+        self.image = Image.new("RGB", (1080, 2400))
+        self.image.putpixel((0, 0), (33, 23, 13))
         self.calls = []
         self.fail = None
-        self.raw = None
-        self.native = None
+        self.inputs_started = 0
+        self.closed = False
 
-    @property
-    def resolution(self):
-        return self.native or (self.image.shape[1], self.image.shape[0])
+    def _maybe_fail(self, name):
+        if self.fail == name:
+            raise RpcError("androidCommandFailed", f"{name} failed")
+        if self.fail == f"{name}-timeout":
+            raise RpcError("timeout", f"{name} timed out")
 
-    def set_screenshot_use_raw_size(self, enabled):
-        self.raw = enabled
-        return True
-
-    def post_connection(self):
-        return Job()
-
-    def post_screencap(self):
+    def capture(self):
         self.calls.append(("capture",))
-        return Job(self.fail != "capture", self.image)
+        self._maybe_fail("capture")
+        return self.image
 
-    def _job(self, name, *args):
-        self.calls.append((name, *args))
-        return Job(self.fail != name)
+    def start_input(self):
+        self.inputs_started += 1
+        self._maybe_fail("input")
 
-    def post_touch_down(self, *args): return self._job("down", *args)
-    def post_touch_move(self, *args): return self._job("move", *args)
-    def post_touch_up(self): return self._job("up")
-    def post_click(self, *args): return self._job("tap", *args)
-    def post_swipe(self, *args): return self._job("swipe", *args)
-    def post_click_key(self, *args): return self._job("key", *args)
-    def post_key_down(self, *args): return self._job("key_down", *args)
-    def post_key_up(self, *args): return self._job("key_up", *args)
-    def post_start_app(self, *args): return self._job("launch", *args)
+    def touch(self, action, x, y, width, height):
+        name = self.NAMES[action]
+        self.calls.append((name,) if name == "up" else (name, x, y))
+        self._maybe_fail(name)
+
+    def key(self, action, keycode):
+        self.calls.append(("key_down" if action == 0 else "key_up", keycode))
+        self._maybe_fail("key")
+
+    def launch(self, component):
+        self.calls.append(("launch", component))
+        self._maybe_fail("launch")
+
+    def close(self):
+        self.closed = True
 
 
 class DeviceTests(unittest.TestCase):
     def setUp(self):
-        self.controller = FakeController()
+        self.driver = FakeDriver()
         self.permission_checker = MagicMock()
         self.geometry_reader = MagicMock(return_value=DisplayGeometry(1080, 2400, 0))
-        self.device = AndroidDevice("/adb", "serial", controller_factory=lambda *_: self.controller,
-                                    permission_checker=self.permission_checker, geometry_reader=self.geometry_reader)
+        self.device = AndroidDevice("/adb", "serial", driver_factory=lambda *_: self.driver,
+                                    permission_checker=self.permission_checker, geometry_reader=self.geometry_reader,
+                                    tap_hold=0, swipe_step=0.01)
         self.info = self.device.start()
-        self.controller.calls.clear()
+        self.device._input_starting.join()
+        self.driver.calls.clear()
         self.geometry_reader.reset_mock()
 
     def tearDown(self):
         self.device.close()
 
     def test_native_resolution_and_png_color(self):
-        self.assertTrue(self.controller.raw)
         self.assertEqual(self.info["display"], {"pixelWidth": 1080, "pixelHeight": 2400, "pointScale": 1})
         result = self.device.command({"action": "screenshot"})
         image = Image.open(io.BytesIO(base64.b64decode(result["png"])))
         self.assertEqual(image.size, (1080, 2400))
         self.assertEqual(image.getpixel((0, 0)), (33, 23, 13))
 
+    def test_input_channel_starts_with_the_session(self):
+        self.assertGreaterEqual(self.driver.inputs_started, 1)
+
     def test_normalized_coordinates_preserve_native_pixels_and_edges(self):
         self.device.command({"action": "tap", "x": "0.5", "y": "1"})
-        self.assertEqual(self.controller.calls, [("tap", 540, 2399)])
+        self.assertEqual(self.driver.calls, [("down", 540, 2399), ("up",)])
         self.device.command({"action": "tap", "x": str(137 / 1080), "y": str(263 / 2400)})
-        self.assertEqual(self.controller.calls[-1], ("tap", 137, 263))
+        self.assertEqual(self.driver.calls[-2], ("down", 137, 263))
 
     def test_continuous_gesture_and_release_on_close(self):
         self.device.command({"action": "touch", "phase": "began", "x": "0", "y": "0"})
         self.device.command({"action": "touch", "phase": "moved", "x": "1", "y": "0.5"})
-        self.assertEqual(self.controller.calls, [("down", 0, 0), ("move", 1079, 1200)])
+        self.assertEqual(self.driver.calls, [("down", 0, 0), ("move", 1079, 1200)])
         self.device.close()
-        self.assertEqual(self.controller.calls[-1], ("up",))
+        self.assertEqual(self.driver.calls[-1], ("up",))
+        self.assertTrue(self.driver.closed)
 
     def test_one_session_cannot_move_or_lift_another_sessions_touch(self):
         self.device.command({"action": "touch", "phase": "began", "x": "0.5", "y": "0.5", "owner": "automation"})
@@ -213,27 +215,34 @@ class DeviceTests(unittest.TestCase):
             self.device.command({"action": "touch", "phase": "moved", "x": "0.2", "y": "0.2", "owner": "preview"})
         with self.assertRaisesRegex(RpcError, "already held"):
             self.device.command({"action": "tap", "x": "0.2", "y": "0.2", "owner": "preview"})
-        self.assertNotIn(("up",), self.controller.calls)
+        self.assertNotIn(("up",), self.driver.calls)
         self.device.command({"action": "touch", "phase": "moved", "x": "0.6", "y": "0.6", "owner": "automation"})
         self.device.command({"action": "touch", "phase": "ended", "owner": "automation"})
-        self.assertEqual(self.controller.calls[-2:], [("move", 648, 1440), ("up",)])
+        self.assertEqual(self.driver.calls[-2:], [("move", 648, 1440), ("up",)])
         self.assertFalse(self.device.held)
 
     def test_closing_the_worker_lifts_any_sessions_touch(self):
         self.device.command({"action": "touch", "phase": "began", "x": "0.5", "y": "0.5", "owner": "automation"})
         self.device.close()
-        self.assertEqual(self.controller.calls[-1], ("up",))
+        self.assertEqual(self.driver.calls[-1], ("up",))
+
+    def test_swipe_interpolates_moves_between_press_and_lift(self):
+        self.device.command({"action": "swipe", "fromX": "0", "fromY": "0.5", "toX": "1", "toY": "0.5", "durationMs": "50"})
+        self.assertEqual(self.driver.calls[0], ("down", 0, 1200))
+        self.assertEqual(self.driver.calls[-2:], [("move", 1079, 1200), ("up",)])
+        moves = [call for call in self.driver.calls if call[0] == "move"]
+        self.assertEqual(len(moves), 5)
+        self.assertEqual([x for _, x, _ in moves], sorted(x for _, x, _ in moves))
 
     def test_same_point_swipe_is_long_press(self):
-        self.device.command({"action": "swipe", "fromX": "0.5", "fromY": "0.5", "toX": "0.5", "toY": "0.5", "durationMs": "800"})
-        self.assertEqual(self.controller.calls[-1], ("swipe", 540, 1200, 540, 1200, 800))
+        self.device.command({"action": "swipe", "fromX": "0.5", "fromY": "0.5", "toX": "0.5", "toY": "0.5", "durationMs": "30"})
+        self.assertEqual(self.driver.calls, [("down", 540, 1200), ("up",)])
 
     def test_rotation_is_checked_before_input_and_remains_rejected(self):
         self.geometry_reader.return_value = DisplayGeometry(2400, 1080, 1)
         with self.assertRaisesRegex(RpcError, "orientation changed"):
             self.device.command({"action": "tap", "x": "0.5", "y": "0.5"})
-        self.assertFalse(any(call[0] == "tap" for call in self.controller.calls))
-        self.controller.image = np.zeros((2400, 1080, 3), dtype=np.uint8)
+        self.assertFalse(any(call[0] == "down" for call in self.driver.calls))
         with self.assertRaisesRegex(RpcError, "orientation changed"):
             self.device.command({"action": "screenshot"})
 
@@ -242,34 +251,46 @@ class DeviceTests(unittest.TestCase):
         self.geometry_reader.return_value = DisplayGeometry(2400, 1080, 1)
         with self.assertRaises(RpcError):
             self.device.command({"action": "touch", "phase": "moved", "x": "0.2", "y": "0.2"})
-        self.assertEqual(self.controller.calls[-1], ("up",))
-        self.assertFalse(any(call[0] == "move" for call in self.controller.calls))
+        self.assertEqual(self.driver.calls[-1], ("up",))
+        self.assertFalse(any(call[0] == "move" for call in self.driver.calls))
 
-    def test_scaled_screenshot_is_rejected(self):
-        self.controller.image = np.zeros((1280, 576, 3), dtype=np.uint8)
-        self.controller.native = (1080, 2400)
-        with self.assertRaisesRegex(RpcError, "native display"):
-            self.device.command({"action": "screenshot"})
+    def test_screenshot_must_match_the_input_display_when_opening(self):
+        driver = FakeDriver()
+        device = AndroidDevice("/adb", "serial", driver_factory=lambda *_: driver, permission_checker=MagicMock(),
+                               geometry_reader=MagicMock(return_value=DisplayGeometry(720, 1600, 0)))
+        with self.assertRaisesRegex(RpcError, "orientation changed"):
+            device.start()
+        device.close()
 
     def test_failed_gesture_is_not_replayed_and_releases(self):
-        self.controller.fail = "down"
+        self.driver.fail = "down"
         with self.assertRaises(RpcError):
             self.device.command({"action": "touch", "phase": "began", "x": "0.2", "y": "0.3"})
-        self.assertEqual([c[0] for c in self.controller.calls], ["down", "up"])
+        self.assertEqual([c[0] for c in self.driver.calls], ["down", "up"])
         self.assertFalse(self.device.held)
+
+    def test_failed_lift_still_frees_the_touch_for_a_new_channel(self):
+        self.device.command({"action": "touch", "phase": "began", "x": "0.2", "y": "0.3"})
+        self.driver.fail = "up"
+        with self.assertRaises(RpcError):
+            self.device.command({"action": "touch", "phase": "ended"})
+        self.assertFalse(self.device.held)
+        self.driver.fail = None
+        self.device.command({"action": "tap", "x": "0", "y": "0"})
+        self.assertEqual(self.driver.calls[-2:], [("down", 0, 0), ("up",)])
 
     def test_invalid_coordinates_and_types_do_not_send_input(self):
         for value in ("nan", "inf", "-0.1", "1.01", "bad", 0.5):
             with self.subTest(value=value), self.assertRaises(RpcError):
                 self.device.command({"action": "tap", "x": value, "y": "0.5"})
-        self.assertEqual(self.controller.calls, [])
+        self.assertEqual(self.driver.calls, [])
 
     def test_buttons_launch_and_command_injection_rejected(self):
         for button, key in [("home", 3), ("back", 4), ("app_switch", 187), ("lock", 26)]:
             self.device.command({"action": "press", "button": button})
-            self.assertEqual(self.controller.calls[-1], ("key", key))
+            self.assertEqual(self.driver.calls[-2:], [("key_down", key), ("key_up", key)])
         self.device.command({"action": "launch", "bundleID": "com.example.app/.MainActivity"})
-        self.assertEqual(self.controller.calls[-1], ("launch", "com.example.app/.MainActivity"))
+        self.assertEqual(self.driver.calls[-1], ("launch", "com.example.app/.MainActivity"))
         with self.assertRaises(RpcError):
             self.device.command({"action": "press", "button": "siri"})
         with self.assertRaises(RpcError):
@@ -277,14 +298,21 @@ class DeviceTests(unittest.TestCase):
         with self.assertRaises(RpcError):
             self.device.command({"action": "launch", "bundleID": "com.app/$HOME"})
 
+    def test_held_key_is_released_after_its_duration(self):
+        self.device.command({"action": "press", "button": "volume_up", "durationMs": "20"})
+        self.assertEqual(self.driver.calls, [("key_down", 24), ("key_up", 24)])
+        self.assertEqual(self.device.held_keys, set())
+
     def test_release_is_allowed_after_timeout(self):
-        self.device.held = True
-        with self.assertRaises(RpcError):
-            self.device._wait(SimpleNamespace(done=False), "test", timeout=0)
+        self.device.command({"action": "touch", "phase": "began", "x": "0", "y": "0"})
+        self.driver.fail = "capture-timeout"
+        with self.assertRaisesRegex(RpcError, "timed out"):
+            self.device.command({"action": "screenshot"})
+        self.driver.fail = None
         with self.assertRaisesRegex(RpcError, "timed out"):
             self.device.command({"action": "tap", "x": "0", "y": "0"})
         self.device.command({"action": "release"})
-        self.assertEqual(self.controller.calls, [("up",)])
+        self.assertEqual(self.driver.calls[-1], ("up",))
 
     def test_readonly_connection_screenshot_and_launch_do_not_check_input(self):
         self.device.command({"action": "screenshot"})
@@ -296,42 +324,54 @@ class DeviceTests(unittest.TestCase):
     def test_input_never_waits_for_a_screenshot(self):
         # This phone's screencap takes 1.2 seconds. A failing/slow screencap
         # must not be on the path of clicks or individual drag samples.
-        self.controller.post_screencap = MagicMock(side_effect=AssertionError("input requested a screenshot"))
+        self.driver.capture = MagicMock(side_effect=AssertionError("input requested a screenshot"))
         self.device.command({"action": "tap", "x": "0.5", "y": "0.5"})
-        self.device.command({"action": "swipe", "fromX": "0.5", "fromY": "0.8", "toX": "0.5", "toY": "0.2"})
+        self.device.command({"action": "swipe", "fromX": "0.5", "fromY": "0.8", "toX": "0.5", "toY": "0.2",
+                             "durationMs": "20"})
         self.device.command({"action": "touch", "phase": "began", "x": "0.5", "y": "0.8"})
         for index in range(10):
             self.device.command({"action": "touch", "phase": "moved", "x": "0.5", "y": str(0.7 - index * 0.05)})
         self.device.command({"action": "touch", "phase": "ended"})
-        self.assertEqual([call[0] for call in self.controller.calls], ["tap", "swipe", "down"] + ["move"] * 10 + ["up"])
+        self.assertEqual([call[0] for call in self.driver.calls],
+                         ["down", "up", "down", "move", "move", "up", "down"] + ["move"] * 10 + ["up"])
 
     def test_half_turn_during_drag_is_rejected_even_when_dimensions_match(self):
         self.device.command({"action": "touch", "phase": "began", "x": "0.5", "y": "0.5"})
         self.geometry_reader.return_value = DisplayGeometry(1080, 2400, 2)
         with self.assertRaisesRegex(RpcError, "orientation changed"):
             self.device.command({"action": "touch", "phase": "moved", "x": "0.5", "y": "0.2"})
-        self.assertEqual(self.controller.calls, [("down", 540, 1200), ("up",)])
+        self.assertEqual(self.driver.calls, [("down", 540, 1200), ("up",)])
 
     def test_half_turn_after_open_is_rejected_before_the_first_touch(self):
         self.geometry_reader.return_value = DisplayGeometry(1080, 2400, 2)
         with self.assertRaisesRegex(RpcError, "orientation changed"):
             self.device.command({"action": "tap", "x": "0.5", "y": "0.5"})
-        self.assertEqual(self.controller.calls, [])
+        self.assertEqual(self.driver.calls, [])
 
     def test_failed_geometry_probe_releases_the_drag_without_sending_movement(self):
         self.device.command({"action": "touch", "phase": "began", "x": "0.5", "y": "0.5"})
         self.geometry_reader.side_effect = RpcError("displayCheckFailed", "offline")
         with self.assertRaisesRegex(RpcError, "offline"):
             self.device.command({"action": "touch", "phase": "moved", "x": "0.5", "y": "0.2"})
-        self.assertEqual(self.controller.calls, [("down", 540, 1200), ("up",)])
+        self.assertEqual(self.driver.calls, [("down", 540, 1200), ("up",)])
 
     def test_first_input_checks_permission_once_per_worker(self):
         self.device.command({"action": "tap", "x": "0.5", "y": "0.5"})
         self.device.command({"action": "press", "button": "home"})
-        self.device.command({"action": "swipe", "fromX": "0", "fromY": "0", "toX": "1", "toY": "1"})
+        self.device.command({"action": "swipe", "fromX": "0", "fromY": "0", "toX": "1", "toY": "1", "durationMs": "10"})
         self.device.command({"action": "touch", "phase": "began", "x": "0.5", "y": "0.5"})
         self.device.command({"action": "touch", "phase": "ended"})
         self.permission_checker.assert_called_once_with("/adb", "serial")
+
+    def test_input_channel_failure_reports_and_retries_on_the_next_input(self):
+        self.driver.fail = "input"
+        with self.assertRaises(RpcError) as caught:
+            self.device.command({"action": "tap", "x": "0", "y": "0"})
+        self.assertEqual(caught.exception.code, "androidCommandFailed")
+        self.assertFalse(any(call[0] == "down" for call in self.driver.calls))
+        self.driver.fail = None
+        self.device.command({"action": "tap", "x": "0", "y": "0"})
+        self.assertEqual(self.driver.calls[-2:], [("down", 0, 0), ("up",)])
 
     def test_permission_denied_prevents_every_initial_input_kind_and_allows_retry(self):
         actions = [
@@ -346,17 +386,17 @@ class DeviceTests(unittest.TestCase):
                 self.device.command(action)
             self.assertEqual(caught.exception.code, "inputNotAllowed")
         self.assertEqual(self.permission_checker.call_count, 4)
-        self.assertEqual(self.controller.calls, [])
+        self.assertEqual(self.driver.calls, [])
         self.permission_checker.side_effect = None
         self.device.command({"action": "tap", "x": "0", "y": "0"})
         self.assertEqual(self.permission_checker.call_count, 5)
-        self.assertEqual(self.controller.calls[-1], ("tap", 0, 0))
+        self.assertEqual(self.driver.calls[-2:], [("down", 0, 0), ("up",)])
 
     def test_close_during_permission_probe_prevents_late_input(self):
         self.permission_checker.side_effect = lambda *_: self.device.stopped.set()
         with self.assertRaisesRegex(RpcError, "closing"):
             self.device.command({"action": "tap", "x": "0", "y": "0"})
-        self.assertEqual(self.controller.calls, [])
+        self.assertEqual(self.driver.calls, [])
 
 
 class InputPermissionTests(unittest.TestCase):

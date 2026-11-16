@@ -1,4 +1,4 @@
-"""One serialized Maa ADB controller per device, with native-pixel screenshot geometry."""
+"""One serialized Android device per worker: scrcpy input plus native-pixel screenshots."""
 
 import argparse
 import asyncio
@@ -13,11 +13,10 @@ import signal
 import subprocess
 import sys
 import threading
-import time
-from pathlib import Path
 from typing import Any
 
 from devicehubd import protocol
+from devicehubd.android_control import ACTION_DOWN, ACTION_MOVE, ACTION_UP, KEY_DOWN, KEY_UP, AdbDriver
 from devicehubd.android_display import read_display_geometry
 from devicehubd.android_video import AndroidVideoManager
 from devicehubd.lifetime import WORKER_EXIT_DEADLINE, exit_after
@@ -25,10 +24,13 @@ from devicehubd.protocol import RpcError
 
 logger = logging.getLogger("devicehubd.android")
 KEYS = {"home": 3, "back": 4, "volume_up": 24, "volume_down": 25, "lock": 26, "app_switch": 187}
+TAP_HOLD = 0.05
+SWIPE_STEP = 0.01
+INPUT_START_WAIT = 20
 
 
 def check_input_permission(adb_path: str, serial: str) -> None:
-    """MaaTouch may report success even when the OS rejects input injection.
+    """Injection is unacknowledged, so a denied INJECT_EVENTS permission would fail silently.
 
     KEYCODE_UNKNOWN has no visible action. Run this only when the caller first
     requests input, so connecting, screenshots and app launches stay independent
@@ -53,82 +55,66 @@ def check_input_permission(adb_path: str, serial: str) -> None:
         raise RpcError("inputCheckFailed", f"Cannot verify Android input permission: {detail[:2000] or 'ADB command failed'}")
 
 
-def make_controller(adb_path: str, serial: str):
-    # Lazy imports keep iOS discovery independent of the Android native runtime.
-    from maa.controller import AdbController
-    from maa.define import LoggingLevelEnum, MaaAdbInputMethodEnum, MaaAdbScreencapMethodEnum
-    from maa.tasker import Tasker
-
-    Tasker.set_stdout_level(LoggingLevelEnum.Off)
-    log_dir = Path(os.environ.get("DEVICEHUB_LOG_DIR", str(Path.home() / "Library/Logs/DeviceHub")))
-    log_dir.mkdir(parents=True, exist_ok=True)
-    Tasker.set_log_dir(log_dir)
-    return AdbController(
-        adb_path, serial,
-        screencap_methods=MaaAdbScreencapMethodEnum.Default,
-        # Both support real down/move/up. Do not silently select AdbShell, whose
-        # click/swipe-only behavior cannot implement the interactive drag contract.
-        input_methods=MaaAdbInputMethodEnum.Maatouch | MaaAdbInputMethodEnum.MinitouchAndAdbKey,
-    )
-
-
 class AndroidDevice:
-    """The GUI preview and automation share this controller through separate sessions.
+    """The GUI preview and other sessions share this device through separate owners.
 
     Each request carries the sending session's ``owner``. A touch held by one owner can
     only be moved or lifted by that owner; internal cleanup (rotation, close) lifts it
     regardless. Keys are held only within a single command, so they have no owner.
     """
 
-    def __init__(self, adb_path: str, serial: str, *, controller_factory=make_controller,
+    def __init__(self, adb_path: str, serial: str, *, driver_factory=AdbDriver,
                  permission_checker=check_input_permission,
                  geometry_reader=read_display_geometry,
-                 stopped: threading.Event | None = None) -> None:
+                 stopped: threading.Event | None = None,
+                 tap_hold: float = TAP_HOLD, swipe_step: float = SWIPE_STEP) -> None:
         self.adb_path, self.serial = adb_path, serial
-        self._factory = controller_factory
+        self._factory = driver_factory
         self._permission_checker = permission_checker
         self._geometry_reader = geometry_reader
+        self._tap_hold, self._swipe_step = tap_hold, swipe_step
         self._rotation: int | None = None
         self._input_checked = False
+        self._input_starting: threading.Thread | None = None
         self.stopped = stopped or threading.Event()
-        self.controller = None
+        self.driver = None
         self.width = self.height = 0
         self.held = False
         self.touch_owner: str | None = None
+        self.touch_point: tuple[int, int] = (0, 0)
         self.held_keys: set[int] = set()
         self.geometry_changed = False
         self.failed = False
 
-    def _wait(self, job, operation: str, *, timeout: float = 30, cleanup: bool = False):
-        deadline = time.monotonic() + timeout
-        while not job.done:
-            if not cleanup and self.stopped.is_set():
-                raise RpcError("disconnected", "The Android session is closing")
-            if time.monotonic() >= deadline:
-                self.failed = True
-                raise RpcError("timeout", f"Android {operation} timed out; reopen the device before retrying")
-            time.sleep(0.01)
-        if not job.succeeded:
-            raise RpcError("androidCommandFailed", f"Android {operation} failed; the action was not replayed")
-        return job
-
     def start(self) -> dict[str, Any]:
-        self.controller = self._factory(self.adb_path, self.serial)
-        if not self.controller.set_screenshot_use_raw_size(True):
-            raise RpcError("androidConfigurationFailed", "Maa could not enable native-resolution screenshots")
-        self._wait(self.controller.post_connection(), "connection (MaaTouch/minitouch required)", timeout=70)
+        self.driver = self._factory(self.adb_path, self.serial)
         self._capture(initial=True)
         self._check_geometry()
+        # Start the input channel now so the first touch does not wait for it. Its failure only
+        # surfaces when input is requested; screenshots and launches never need it.
+        self._input_starting = threading.Thread(target=self._start_input_quietly, name="android-input-start",
+                                                daemon=True)
+        self._input_starting.start()
         return {"services": [], "display": {"pixelWidth": self.width, "pixelHeight": self.height, "pointScale": 1}}
 
+    def _start_input_quietly(self) -> None:
+        try:
+            self.driver.start_input()
+        except Exception as error:
+            logger.info("Android input channel will retry on first input: %s", error)
+
+    def _call(self, operation, *args):
+        try:
+            return operation(*args)
+        except RpcError as error:
+            if error.code == "timeout":
+                self.failed = True
+            raise
+
     def _capture(self, *, initial: bool = False):
-        job = self._wait(self.controller.post_screencap(), "screenshot")
-        image = job.get()
-        if image is None or len(image.shape) != 3 or image.shape[2] != 3:
-            raise RpcError("invalidScreenshot", "Maa did not return a BGR screenshot")
-        height, width = image.shape[:2]
-        native = tuple(self.controller.resolution)
-        if width <= 0 or height <= 0 or native != (width, height):
+        image = self._call(self.driver.capture)
+        width, height = image.size
+        if width <= 0 or height <= 0:
             raise RpcError("invalidScreenshot", "Screenshot dimensions do not match the native display")
         if initial:
             self.width, self.height = width, height
@@ -171,10 +157,16 @@ class AndroidDevice:
             self._input_checked = True
         if self.stopped.is_set():
             raise RpcError("disconnected", "The Android session is closing")
+        starting, self._input_starting = self._input_starting, None
+        if starting is not None:
+            starting.join(INPUT_START_WAIT)
+        # Restarts a channel that failed to start or ended since.
+        self.driver.start_input()
+        if self.stopped.is_set():
+            raise RpcError("disconnected", "The Android session is closing")
 
     def _check_geometry(self) -> None:
-        # Maa's cached resolution only changes after a screenshot. A screenshot
-        # on some phones takes over a second, stretching each drag into a long
+        # A screenshot on some phones takes over a second, stretching each drag into a long
         # press. Read live input-display metadata instead, including rotation.
         geometry = self._geometry_reader(self.adb_path, self.serial)
         if (self.geometry_changed or (geometry.width, geometry.height) != (self.width, self.height)
@@ -187,16 +179,25 @@ class AndroidDevice:
         self._check_geometry()
         self._check_input()
 
+    def _send_touch(self, action: int, point: tuple[int, int]) -> None:
+        self.touch_point = point
+        self.driver.touch(action, *point, self.width, self.height)
+
     def release(self, owner: str | None = None) -> None:
         """Without an owner (internal cleanup), lifts any held touch."""
-        if self.controller is None:
+        if self.driver is None:
             return
         if self.held and (owner is None or self.touch_owner in (None, owner)):
-            self._wait(self.controller.post_touch_up(), "touch release", timeout=2, cleanup=True)
-            self.held, self.touch_owner = False, None
+            try:
+                self.driver.touch(ACTION_UP, *self.touch_point, self.width, self.height)
+            finally:
+                # A failed lift means the channel is gone; the next input starts a new one.
+                self.held, self.touch_owner = False, None
         for key in list(self.held_keys):
-            self._wait(self.controller.post_key_up(key), "key release", timeout=2, cleanup=True)
-            self.held_keys.remove(key)
+            try:
+                self.driver.key(KEY_UP, key)
+            finally:
+                self.held_keys.discard(key)
 
     def command(self, params: dict[str, str]) -> dict[str, Any]:
         if not isinstance(params, dict) or any(not isinstance(v, str) for v in params.values()):
@@ -206,7 +207,7 @@ class AndroidDevice:
         if action == "release":
             self.release(owner)
             return {}
-        if self.controller is None or self.stopped.is_set():
+        if self.driver is None or self.stopped.is_set():
             raise RpcError("disconnected", "The Android session is closed")
         if self.failed:
             raise RpcError("invalidState", "An Android operation timed out; close and reopen the device")
@@ -225,11 +226,9 @@ class AndroidDevice:
             raise
 
     def _screenshot(self, params: dict[str, str], owner: str) -> dict[str, Any]:
-        from PIL import Image
-
         image = self._capture()
         buffer = io.BytesIO()
-        Image.fromarray(image[:, :, ::-1]).save(buffer, format="PNG")
+        image.save(buffer, format="PNG", compress_level=1)
         return {"png": base64.b64encode(buffer.getvalue()).decode("ascii"),
                 "width": self.width, "height": self.height}
 
@@ -250,30 +249,45 @@ class AndroidDevice:
         self._prepare_input()
         if phase == "began":
             self.held, self.touch_owner = True, owner  # Also released when the operation reports failure.
-            self._wait(self.controller.post_touch_down(*point), "touch began")
+            self._send_touch(ACTION_DOWN, point)
         else:
-            self._wait(self.controller.post_touch_move(*point), "touch moved")
+            self._send_touch(ACTION_MOVE, point)
 
     @contextlib.contextmanager
-    def _momentary_touch(self, owner: str):
-        """Holds the contact for one controller job; on failure it stays held for command() to release."""
+    def _momentary_touch(self, owner: str, start: tuple[int, int]):
+        """Presses at ``start`` for one gesture; on failure it stays held for command() to release."""
         self._idle_touch()
         self._prepare_input()
         self.held, self.touch_owner = True, owner
+        self._send_touch(ACTION_DOWN, start)
         yield
+        self._send_touch(ACTION_UP, self.touch_point)
         self.held, self.touch_owner = False, None
+
+    def _pause(self, seconds: float) -> None:
+        if self.stopped.wait(seconds):
+            raise RpcError("disconnected", "The Android session is closing")
 
     def _tap(self, params: dict[str, str], owner: str) -> None:
         point = self._point(params)
-        with self._momentary_touch(owner):
-            self._wait(self.controller.post_click(*point), "tap")
+        with self._momentary_touch(owner, point):
+            self._pause(self._tap_hold)
 
     def _swipe(self, params: dict[str, str], owner: str) -> None:
         start = self._point(params, "fromX", "fromY")
         end = self._point(params, "toX", "toY")
-        duration = round(self._number(params, "durationMs", 1, 30_000, "300"))
-        with self._momentary_touch(owner):
-            self._wait(self.controller.post_swipe(*start, *end, duration), "swipe", timeout=duration / 1000 + 30)
+        duration = round(self._number(params, "durationMs", 1, 30_000, "300")) / 1000
+        with self._momentary_touch(owner, start):
+            if start == end:
+                self._pause(duration)  # A swipe that does not move is a long press.
+                return
+            steps = max(1, round(duration / self._swipe_step))
+            for index in range(1, steps + 1):
+                self._pause(duration / steps)
+                fraction = index / steps
+                point = (round(start[0] + (end[0] - start[0]) * fraction),
+                         round(start[1] + (end[1] - start[1]) * fraction))
+                self._send_touch(ACTION_MOVE, point)
 
     def _press(self, params: dict[str, str], owner: str) -> None:
         key = KEYS.get(params.get("button", ""))
@@ -281,26 +295,26 @@ class AndroidDevice:
             raise RpcError("unsupported", "Unsupported Android hardware button")
         duration = self._number(params, "durationMs", 1, 30_000) if "durationMs" in params else None
         self._check_input()
-        if duration is None:
-            self._wait(self.controller.post_click_key(key), "key press")
-            return
         self.held_keys.add(key)
-        self._wait(self.controller.post_key_down(key), "key down")
-        if self.stopped.wait(duration / 1000):
-            raise RpcError("disconnected", "The Android session is closing")
-        self._wait(self.controller.post_key_up(key), "key up")
-        self.held_keys.remove(key)
+        self.driver.key(KEY_DOWN, key)
+        if duration is not None:
+            self._pause(duration / 1000)
+        self.driver.key(KEY_UP, key)
+        self.held_keys.discard(key)
 
     def _launch(self, params: dict[str, str], owner: str) -> None:
         bundle = params.get("bundleID", "")
         if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.]*(?:/[A-Za-z0-9_.]+)?", bundle):
             raise RpcError("invalidParams", "bundleID must be an Android package name or package/activity")
-        self._wait(self.controller.post_start_app(bundle), "launch")
+        self._call(self.driver.launch, bundle)
 
     def close(self) -> None:
         with contextlib.suppress(Exception):
             self.release()
-        self.controller = None
+        driver, self.driver = self.driver, None
+        if driver is not None:
+            with contextlib.suppress(Exception):
+                driver.close()
 
 
 async def run(adb_path: str, serial: str, out: Any) -> int:
@@ -321,8 +335,8 @@ async def run(adb_path: str, serial: str, out: Any) -> int:
         if video_operation is not None:
             video_operation.cancel()
         if video_closing is None:
-            # Start video teardown immediately, even if a Maa/ADB input call is
-            # still returning in its thread. Video owns no Maa controller state.
+            # Start video teardown immediately, even if an ADB input call is
+            # still returning in its thread. Video owns no input state.
             video_closing = asyncio.create_task(video.close())
 
     async def read() -> None:
@@ -395,11 +409,11 @@ def main() -> None:
     parser.add_argument("--serial", required=True)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="[android worker] %(levelname)s %(message)s")
-    # Native libraries may write directly to fd 1; preserve a private protocol fd
-    # before loading Maa and redirect every other stdout write to stderr.
+    # Child processes and libraries may write directly to fd 1; preserve a private
+    # protocol fd and redirect every other stdout write to stderr.
     out = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
-    # Skip asyncio.run teardown: it would wait for a Maa call still blocked in an executor thread.
+    # Skip asyncio.run teardown: it would wait for an ADB call still blocked in an executor thread.
     code = asyncio.Runner().run(run(args.adb, args.serial, out))
     os._exit(code)
 

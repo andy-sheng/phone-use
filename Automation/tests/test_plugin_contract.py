@@ -157,7 +157,7 @@ class PluginContractTests(unittest.TestCase):
         with patch("devicehub_runtime.plugins.importlib.metadata.version", side_effect=PackageNotFoundError("maafw")):
             packages, errors = discover([self.root / "plugins"])
         self.assertEqual(set(packages), {"independent"})
-        self.assertEqual(errors, ["maa：自动化运行环境缺少 MaaFramework，请完成运行环境准备或重新安装 phone-use。"])
+        self.assertEqual(errors, ["maa：自动化运行环境缺少 MaaFramework，请完成运行环境准备或重新安装 automation。"])
 
     def test_maafw_version_is_checked_without_importing_plugins(self):
         root = self.package(requires={"maafw": ">=5.6.0,<6.0.0"})

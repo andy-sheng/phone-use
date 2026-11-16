@@ -1,5 +1,6 @@
-# Xcode project for phone-use. Generate it with `xcodegen generate` (scripts/build-app.sh does).
-# phone-use.xcodeproj is derived from this file; edit this, not the project.
+# Xcode project for phone-use and automation. Generate it with `xcodegen generate`
+# (scripts/build-app.sh does). phone-use.xcodeproj is derived from this file; edit this, not the
+# project. Both apps build on the PhoneUseKit / PhoneUseUI package products and never on each other.
 name: phone-use
 options:
   bundleIdPrefix: dev.devicehub
@@ -31,14 +32,18 @@ targets:
     type: application
     platform: macOS
     sources:
-      - path: Sources/DeviceHubApp
+      - path: Sources/PhoneUseApp
       # Icon Composer document; Xcode compiles it into Assets.car plus an .icns for macOS 15.
       - path: Support/AppIcon.icon
         type: file
         buildPhase: resources
     dependencies:
       - package: PhoneUsePackage
-        product: DeviceHubKit
+        product: PhoneUseKit
+      - package: PhoneUsePackage
+        product: PhoneUseUI
+      - package: PhoneUsePackage
+        product: PhoneUseMCP
       - package: Sparkle
         product: Sparkle
       - target: phone-use-mcp
@@ -73,15 +78,6 @@ targets:
           - _remotepairing._tcp
           - _remotepairing-manual-pairing._tcp
           - _remotepairing-pairable-host._tcp
-        UTExportedTypeDeclarations:
-          - UTTypeIdentifier: dev.devicehub.plugin
-            UTTypeDescription: phone-use Plugin
-            UTTypeConformsTo:
-              - public.zip-archive
-            UTTypeTagSpecification:
-              public.filename-extension:
-                - dhplugin
-              public.mime-type: application/vnd.devicehub.plugin+zip
     entitlements:
       path: Support/DeviceHub.entitlements
       properties:
@@ -107,9 +103,7 @@ targets:
       - name: Embed Daemon Runtime
         basedOnDependencyAnalysis: false
         outputFiles:
-          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/automation"
           - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/daemon"
-          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/maa-assets"
           - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/python"
         script: |
           [[ "${DEVICEHUB_EMBED_DAEMON}" == "YES" ]] || exit 0
@@ -119,10 +113,12 @@ targets:
     type: tool
     platform: macOS
     sources:
-      - path: Sources/devicehub-mcp
+      - path: Sources/PhoneUseMCPServer
     dependencies:
       - package: PhoneUsePackage
-        product: DeviceHubKit
+        product: PhoneUseKit
+      - package: PhoneUsePackage
+        product: PhoneUseMCP
     settings:
       base:
         PRODUCT_NAME: phone-use-mcp
@@ -132,20 +128,115 @@ targets:
     type: tool
     platform: macOS
     sources:
-      - path: Sources/devicehub
+      - path: Sources/PhoneUseCLI
     dependencies:
       - package: PhoneUsePackage
-        product: DeviceHubKit
+        product: PhoneUseKit
     settings:
       base:
         PRODUCT_NAME: phone-use
         PRODUCT_MODULE_NAME: phone_use_cli
+
+  automation-app:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/AutomationApp
+      # Icon Composer document; Xcode compiles it into Assets.car plus an .icns for macOS 15.
+      - path: Support/AutomationIcon.icon
+        type: file
+        buildPhase: resources
+    dependencies:
+      - package: PhoneUsePackage
+        product: PhoneUseKit
+      - package: PhoneUsePackage
+        product: PhoneUseUI
+      - target: automation-bridge
+        embed: true
+        codeSign: true
+        copy:
+          destination: wrapper
+          subpath: Contents/Helpers
+    info:
+      path: Support/Automation-Info.plist
+      properties:
+        CFBundleName: automation
+        CFBundleDisplayName: automation
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.utilities
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSCameraUsageDescription: automation shows USB-connected iPhone screens through the system screen capture device.
+        NSLocalNetworkUsageDescription: automation discovers and pairs iPhone and iPad devices on your local network.
+        NSBonjourServices:
+          - _remotepairing._tcp
+          - _remotepairing-manual-pairing._tcp
+          - _remotepairing-pairable-host._tcp
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: dev.devicehub.plugin
+            UTTypeDescription: automation Plugin
+            UTTypeConformsTo:
+              - public.zip-archive
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - dhplugin
+              public.mime-type: application/vnd.devicehub.plugin+zip
+    entitlements:
+      path: Support/Automation.entitlements
+      properties:
+        com.apple.security.device.camera: true
+    settings:
+      base:
+        PRODUCT_NAME: automation
+        PRODUCT_MODULE_NAME: automation_app
+        PRODUCT_BUNDLE_IDENTIFIER: dev.devicehub.automation
+        ASSETCATALOG_COMPILER_APPICON_NAME: AutomationIcon
+        MARKETING_VERSION: 0.1.0
+        # The embed script writes the Python runtime into the bundle.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+      configs:
+        # Debug runs the daemon from .venv-daemon and the plugin runtime from .venv-maa.
+        Debug:
+          DEVICEHUB_EMBED_DAEMON: NO
+        Release:
+          DEVICEHUB_EMBED_DAEMON: YES
+    postCompileScripts:
+      - name: Embed Automation Runtime
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/automation"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/daemon"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/maa-assets"
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/python"
+        script: |
+          [[ "${DEVICEHUB_EMBED_DAEMON}" == "YES" ]] || exit 0
+          exec /bin/zsh "${SRCROOT}/scripts/embed-automation.sh" "${TARGET_BUILD_DIR}/${WRAPPER_NAME}" "${EXPANDED_CODE_SIGN_IDENTITY:--}"
+
+  automation-bridge:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Sources/AutomationBridge
+    dependencies:
+      - package: PhoneUsePackage
+        product: PhoneUseKit
+    settings:
+      base:
+        PRODUCT_NAME: automation-bridge
 
 schemes:
   phone-use:
     build:
       targets:
         phone-use-app: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  automation:
+    build:
+      targets:
+        automation-app: all
     run:
       config: Debug
     archive:

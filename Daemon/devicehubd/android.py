@@ -1,4 +1,4 @@
-"""ADB discovery only; importing this module never loads Maa or changes a device."""
+"""ADB discovery only; importing this module never starts device-side code or changes a device."""
 
 import asyncio
 import os

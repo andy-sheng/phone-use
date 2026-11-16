@@ -151,7 +151,7 @@ def read_manifest(root):
         try:
             versions["maafw"] = importlib.metadata.version("maafw")
         except importlib.metadata.PackageNotFoundError as error:
-            raise ValueError("自动化运行环境缺少 MaaFramework，请完成运行环境准备或重新安装 phone-use。") from error
+            raise ValueError("自动化运行环境缺少 MaaFramework，请完成运行环境准备或重新安装 automation。") from error
     for name, actual in versions.items():
         if name in requirements and not matches_version(actual, requirements[name]):
             raise ValueError(f"插件要求 {name} {requirements[name]}，当前为 {actual}")
@@ -327,7 +327,7 @@ def extract_package(source, destination):
     if source.stat().st_size > MAX_PACKAGE_BYTES:
         raise ValueError("插件包过大")
     if not zipfile.is_zipfile(source):
-        raise ValueError("不是有效的 phone-use 插件包，请选择 .dhplugin 或 ZIP 文件")
+        raise ValueError("不是有效的 automation 插件包，请选择 .dhplugin 或 ZIP 文件")
     with zipfile.ZipFile(source) as archive:
         entries = archive.infolist()
         if len(entries) > MAX_PACKAGE_FILES or sum(item.file_size for item in entries) > MAX_PACKAGE_BYTES:
@@ -419,7 +419,7 @@ def download_package(url, target):
     deadline = time.monotonic() + DOWNLOAD_TIMEOUT
     opener = urllib.request.build_opener(PackageRedirectHandler(deadline))
     request = urllib.request.Request(url, headers={
-        "User-Agent": f"phone-use/{VERSION}",
+        "User-Agent": f"automation/{VERSION}",
         "Accept": "application/vnd.devicehub.plugin+zip, application/zip, application/octet-stream",
         "Accept-Encoding": "identity",
     })

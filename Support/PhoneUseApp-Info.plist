@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>dev.devicehub.app</string>
+	<key>CFBundleName</key>
+	<string>phone-use</string>
+	<key>CFBundleDisplayName</key>
+	<string>phone-use</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>NSCameraUsageDescription</key>
+	<string>phone-use mirrors USB-connected iPhone screens through the system screen capture device.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>phone-use discovers and pairs iPhone and iPad devices on your local network.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_remotepairing._tcp</string>
+		<string>_remotepairing-manual-pairing._tcp</string>
+		<string>_remotepairing-pairable-host._tcp</string>
+	</array>
+</dict>
+</plist>

@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 
+from devicehubd import identity
 from devicehubd.lifetime import exit_after, on_stdin_closed
 from devicehubd.supervisor import Supervisor
 
@@ -75,7 +76,7 @@ async def serve(socket_path: Path, watch_stdin: bool) -> None:
 
 
 def default_socket() -> Path:
-    return Path.home() / "Library" / "Application Support" / "DeviceHub" / "devicehubd.sock"
+    return identity.default_socket()
 
 
 def main() -> None:

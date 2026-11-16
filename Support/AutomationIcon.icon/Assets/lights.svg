@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="eyes" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#BCFAFF"/><stop offset="0.45" stop-color="#62E9FF"/><stop offset="1" stop-color="#24BDEB"/>
+    </linearGradient>
+  </defs>
+  <g transform="rotate(-7 510 390)">
+    <!-- Broad eyes remain legible at small Dock sizes. -->
+    <path fill="#20A1C7" opacity="0.22" d="M354 403C354 360 377 337 407 337C437 337 460 360 460 403C460 433 440 447 407 447C374 447 354 433 354 403ZM560 403C560 360 583 337 613 337C643 337 666 360 666 403C666 433 646 447 613 447C580 447 560 433 560 403Z"/>
+    <path fill="url(#eyes)" d="M363 401C363 365 382 346 407 346C432 346 451 365 451 401C451 424 436 437 407 437C378 437 363 424 363 401ZM569 401C569 365 588 346 613 346C638 346 657 365 657 401C657 424 642 437 613 437C584 437 569 424 569 401Z"/>
+    <ellipse cx="393" cy="367" rx="11" ry="7" fill="#EDFFFF" opacity="0.85"/>
+    <ellipse cx="599" cy="367" rx="11" ry="7" fill="#EDFFFF" opacity="0.85"/>
+  </g>
+  <circle cx="509" cy="646" r="13" fill="#3DBEAB"/>
+  <circle cx="505" cy="642" r="4" fill="#B5FFEA"/>
+</svg>

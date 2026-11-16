@@ -1,6 +1,6 @@
 """Process lifetime guards shared by the daemon and its device workers.
 
-Graceful shutdown awaits library code (tunnels, Bonjour, Maa controllers) that can hang, and
+Graceful shutdown awaits library code (tunnels, Bonjour, ADB calls) that can hang, and
 `asyncio.run` teardown additionally waits for cancelled tasks and executor threads. These guards
 run on plain threads, so they still act when the event loop itself is stuck.
 """

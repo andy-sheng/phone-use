@@ -37,7 +37,7 @@ from pymobiledevice3.services.mobile_image_mounter import (
     image_type_for_device,
 )
 
-from devicehubd import VERSION, protocol
+from devicehubd import VERSION, identity, protocol
 from devicehubd.android import AndroidAttachment, AndroidDiscovery
 from devicehubd.protocol import RpcError
 from devicehubd.simulator import SIMULATOR, SimulatorAttachment, SimulatorDiscovery
@@ -76,7 +76,6 @@ WORKER_SETTINGS_METHODS = {"accessibilitySettings", "setAccessibilitySetting", "
 WORKER_READ_LIMIT = 64 * 1024 * 1024
 TUNNEL_MOUNTS_VERSION = Version("27.0")
 # What USB probes learned, so devices that show up only on the network still have a name.
-DEVICE_CACHE = Path.home() / "Library" / "Application Support" / "DeviceHub" / "devices.json"
 CACHED_FIELDS = ("name", "product_type", "product_version", "build_version", "developer_mode")
 
 
@@ -149,7 +148,7 @@ class DeviceRecord:
 
 def _load_cache() -> dict[str, dict[str, Any]]:
     try:
-        cache = json.loads(DEVICE_CACHE.read_text())
+        cache = json.loads(identity.device_cache().read_text())
     except (OSError, ValueError):
         return {}
     return cache if isinstance(cache, dict) else {}
@@ -157,8 +156,9 @@ def _load_cache() -> dict[str, dict[str, Any]]:
 
 def _save_cache(cache: dict[str, dict[str, Any]]) -> None:
     try:
-        DEVICE_CACHE.parent.mkdir(parents=True, exist_ok=True)
-        DEVICE_CACHE.write_text(json.dumps(cache, indent=2, ensure_ascii=False))
+        path = identity.device_cache()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cache, indent=2, ensure_ascii=False))
     except OSError as e:
         logger.warning("saving the device cache failed: %r", e)
 
@@ -514,7 +514,7 @@ class Supervisor:
             try:
                 await pairing.start()
             except Exception as e:
-                raise RpcError("discoveryFailed", "Cannot start nearby pairing. Check local network access for phone-use.") from e
+                raise RpcError("discoveryFailed", f"Cannot start nearby pairing. Check local network access for {identity.display_name()}.") from e
             return pairing.snapshot()
 
     def wireless_pairing(self, params: dict[str, Any], writer: asyncio.StreamWriter) -> WirelessPairing:
@@ -724,7 +724,7 @@ class Supervisor:
             if worker is not None:
                 # Keep the worker registered and the device lock held until exit.
                 # A simultaneous open must not overlap a late touch release from
-                # the old Maa controller with input from a replacement controller.
+                # the old input channel with input from a replacement channel.
                 await worker.wait_closed()
                 if self.workers.get(udid) is worker:
                     del self.workers[udid]
@@ -783,6 +783,12 @@ class Supervisor:
         if method == "subscribe":
             self.subscribers.add(writer)
             return {"devices": self.device_list()}
+        if method == "androidTools":
+            # Clients that drive Android themselves must use this same adb: a second adb
+            # version would restart the shared server and drop every device connection.
+            if not self.android.adb_path:
+                raise RpcError("adbUnavailable", "ADB not found; install Android platform-tools or set DEVICEHUB_ADB")
+            return {"adb": self.android.adb_path}
         if method == "startWirelessPairing":
             return await self.start_wireless_pairing(writer)
         if method == "wirelessPairingStatus":

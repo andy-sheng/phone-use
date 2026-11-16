@@ -1,0 +1,52 @@
+{
+  "fill": {
+    "linear-gradient": [
+      "display-p3:0.12,0.32,0.38,1",
+      "display-p3:0.025,0.12,0.19,1"
+    ],
+    "orientation": {
+      "start": {
+        "x": 0.5,
+        "y": 0
+      },
+      "stop": {
+        "x": 0.5,
+        "y": 1
+      }
+    }
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "glass": false,
+          "image-name": "lights.svg",
+          "name": "Expression"
+        },
+        {
+          "glass": false,
+          "image-name": "joints.svg",
+          "name": "Face display"
+        },
+        {
+          "glass": false,
+          "image-name": "body.svg",
+          "name": "Porcelain shell"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.3
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}
