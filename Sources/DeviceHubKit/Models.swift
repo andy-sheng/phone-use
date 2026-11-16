@@ -21,7 +21,8 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
     public var id: String { udid }
     public let udid: String
     public let platform: Platform
-    /// How the Mac reaches the device: `usb` or `network` (Wi-Fi).
+    /// How the Mac reaches the device: `usb`, `network` (Wi-Fi), `emulator` (Android) or
+    /// `simulator` (an iOS simulator booted on this Mac).
     public let connection: String
     public let name: String
     public let productType: String?
@@ -73,10 +74,13 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
 
     public var isReady: Bool { state == .ready }
     public var isWired: Bool { connection == "usb" }
+    /// An iOS simulator, controlled in-process through CoreSimulator rather than a device link.
+    public var isSimulator: Bool { platform == .ios && connection == "simulator" }
     public var connectionDescription: String {
         switch connection {
         case "usb": "USB"
         case "network": "Wi-Fi"
+        case "simulator": "Simulator"
         default: connection.capitalized
         }
     }
@@ -89,7 +93,9 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
     public var platformName: String { isAndroid ? "Android" : isPad ? "iPad" : "iPhone" }
     public var deviceIcon: String { isAndroid ? "candybarphone" : isPad ? "ipad" : "iphone" }
     public var deviceIdentifier: String {
-        isAndroid && udid.hasPrefix("android:") ? String(udid.dropFirst("android:".count)) : udid
+        if isAndroid && udid.hasPrefix("android:") { return String(udid.dropFirst("android:".count)) }
+        if isSimulator && udid.hasPrefix("simulator:") { return String(udid.dropFirst("simulator:".count)) }
+        return udid
     }
 
     /// Marketing name for recent models, the hardware identifier otherwise.

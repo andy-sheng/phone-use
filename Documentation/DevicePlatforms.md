@@ -93,6 +93,59 @@ including 180-degree turns. A failed check rejects input and releases that owner
 contact; it never guesses an orientation or replays the gesture. Screenshots remain
 native-resolution operations for preview fallback and automation recognition.
 
+## iOS Simulator
+
+Booted iOS and iPadOS simulators join the shared device list with `platform: ios`,
+`connection: simulator` and a `simulator:<UDID>` identifier, so plugins and automation see
+an iOS device. `simulator.py` lists them with `xcrun simctl list devices booted -j`, at most
+every three seconds; a few consecutive `simctl` failures are tolerated before simulators are
+detached. They are always `ready`: no pairing, Developer Mode or disk image applies. The
+daemon starts no worker for them, acknowledges `openDevice` without one, and rejects Apple
+device services, mirroring and Android RPC for simulator identifiers.
+
+`DeviceSession` drives a simulator in its own process through
+`Platforms/Simulator`. `CoreSimulatorBridge` loads Xcode's CoreSimulator and SimulatorKit at
+runtime (from `DEVELOPER_DIR`, `xcode-select -p`, or `/Applications/Xcode.app`) and is the
+only code that touches their private interfaces. Touches and buttons go through
+`SimDeviceLegacyHIDClient` with the Indigo messages Simulator.app builds: single-finger mouse
+events on the touchscreen target, Home and side-button event sources, and consumer-page usages
+for volume and Siri. Back and app switch remain Android-only. Apps launch with
+`simctl launch --terminate-running-process`.
+
+The preview layer shows the main display's framebuffer IOSurface and refreshes on each damage
+report. CoreSimulator returns remote proxies that marshal callback arguments from the block's
+type encoding, so the damage block takes an object. A headless simulator may not update the
+surface while nobody observes it; screenshots read the surface only after the session's own
+registration has seen a redraw, and otherwise capture with `simctl io screenshot`.
+Coordinates are normalized to the portrait framebuffer, as on physical iOS devices.
+
+Release builds keep library validation; both frameworks are signed by Apple (`anchor apple`).
+Offline tests cover discovery parsing, supervisor routing and input mapping;
+`DEVICEHUB_SIMULATOR_UDID` enables a read-only display and screenshot check against a booted
+simulator. Touch delivery and the live preview were checked by hand on an iOS 27 simulator.
+
+## Apple device settings
+
+The app's settings panel and screen recording use `DeviceSettings`, which picks one route per
+iPhone, iPad or simulator; Android has none yet.
+
+- **Xcode (`devicectl`)**, when `devicectl help device settings appearance` lists the
+  accessibility options (Xcode 27). It covers interface style, Liquid Glass, color filters, text
+  size, Increase Contrast, Reduce Motion, Reduce Transparency, Show Borders, VoiceOver, audio
+  routing and volume, location scenarios and screen recording, and changes persist on the device.
+  A physical device is used only if `devicectl device info appearance` answers for it, since
+  CoreDevice may not know a device that only the daemon paired.
+- **Device services**, for physical devices otherwise. The worker holds one
+  `com.apple.accessibility.axAuditDaemon` channel (Increase Contrast, Reduce Motion, Reduce
+  Transparency, Button Shapes shown as Show Borders, Grayscale, text size on a 0–1 slider over
+  all twelve sizes) and one DVT `LocationSimulation` channel per fixed coordinate. The device
+  keeps both only while their channel is open, so changes revert when the worker closes.
+- **`simctl`**, for simulators on an older Xcode: `ui` appearance, Increase Contrast and content
+  size, `location`, and `io recordVideo`.
+
+Device rotation and foldable display postures have no command-line interface: `devicectl device
+orientation set` reports success on an iOS 27 simulator but leaves the orientation unchanged.
+
 ## ADB selection
 
 `DEVICEHUB_ADB` wins when set. Otherwise the daemon prefers a user-installed adb (PATH,

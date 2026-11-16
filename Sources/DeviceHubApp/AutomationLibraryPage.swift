@@ -33,7 +33,6 @@ struct AutomationLibraryPage: View {
             libraryContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
         .onChange(of: automation.selectedPluginID) { _, _ in search = "" }
     }
 

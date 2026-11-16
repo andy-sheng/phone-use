@@ -5,6 +5,7 @@ public enum ScreenStreamKind: String, Sendable {
     case mirror = "Mirror"
     case usb = "USB video"
     case scrcpy = "Android video"
+    case simulator = "Simulator display"
     case screenshots = "Screenshots"
 }
 
@@ -35,6 +36,8 @@ public extension ScreenStream {
 public func prepareScreenSession(for device: DeviceSummary) async {
     if device.isAndroid {
         await AndroidScreenStreamProvider.prepare(device)
+    } else if device.isSimulator {
+        // No USB capture to settle; an existing in-process session can be reused.
     } else {
         await IOSScreenStreamProvider.prepare(device)
     }
@@ -43,11 +46,13 @@ public func prepareScreenSession(for device: DeviceSummary) async {
 @MainActor
 public func makeScreenStream(for session: DeviceSession) async -> any ScreenStream {
     if session.device.isAndroid { return await AndroidScreenStreamProvider.makeStream(session) }
+    if session.device.isSimulator { return await SimulatorScreenStreamProvider.makeStream(session) }
     return await IOSScreenStreamProvider.makeStream(session)
 }
 
 @MainActor
 public func makeVideoScreenStream(for session: DeviceSession) async -> (any ScreenStream)? {
     if session.device.isAndroid { return await AndroidScreenStreamProvider.makeVideo(session) }
+    if session.device.isSimulator { return await SimulatorScreenStreamProvider.makeVideo(session) }
     return await IOSScreenStreamProvider.makeVideo(session)
 }

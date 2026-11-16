@@ -30,6 +30,17 @@ extension View {
         }
     }
 
+    /// Keeps the toolbar fully transparent over content scrolled beneath it, as on macOS 26 the
+    /// scroll edge effect would otherwise blur the device under the title bar.
+    @ViewBuilder
+    func hiddenScrollEdgeEffect() -> some View {
+        if #available(macOS 26, *) {
+            scrollEdgeEffectHidden(true, for: .all)
+        } else {
+            self
+        }
+    }
+
     @ViewBuilder
     func glassButton(prominent: Bool = false) -> some View {
         if #available(macOS 26, *) {

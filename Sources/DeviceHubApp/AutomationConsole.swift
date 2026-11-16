@@ -65,10 +65,10 @@ struct AutomationConsole: View {
                     if autoScroll { scroll.scrollTo("console-end", anchor: .bottomLeading) }
                 }
             }
-            .background(Color(nsColor: .textBackgroundColor))
+            // A slightly recessed well, so the log reads as its own area on the glass panel.
+            .background(.black.opacity(0.12))
             .contextMenu { consoleMenu }
         }
-        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     @ViewBuilder
@@ -108,6 +108,5 @@ struct AutomationConsoleHeader: View {
         .font(.system(size: 11))
         .padding(.horizontal, 10)
         .frame(height: 30)
-        .background(Color(nsColor: .controlBackgroundColor))
     }
 }

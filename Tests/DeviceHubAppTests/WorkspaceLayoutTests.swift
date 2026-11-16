@@ -38,7 +38,8 @@ final class WorkspaceLayoutTests: XCTestCase {
 
                     let splits = splitViews(in: host)
                     let context = "window=\(size), sidebar=\(sidebarWidth), panel=\(showsPanel), dividers=\(splits.map(\.dividerThickness))"
-                    XCTAssertEqual(splits.count, 2, context)
+                    // Only the sidebar is a split; the panel floats over the stage.
+                    XCTAssertEqual(splits.count, 1, context)
                     for split in splits {
                         assertContained(split.convert(split.bounds, to: host), in: host.bounds, context)
                     }

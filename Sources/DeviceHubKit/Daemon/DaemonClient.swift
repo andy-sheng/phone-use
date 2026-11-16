@@ -138,6 +138,37 @@ public actor DaemonClient {
         try await callIgnoringResult("stopMirror", ["udid": udid])
     }
 
+    /// The device's accessibility audit settings, such as `REDUCE_MOTION` or `DYNAMIC_TYPE`.
+    func accessibilitySettings(_ udid: String) async throws -> [String: Any] {
+        try Self.settings(in: await rawCall("accessibilitySettings", ["udid": udid]))
+    }
+
+    /// Updates one accessibility audit setting and returns all of them as the device now reports.
+    func setAccessibilitySetting(_ udid: String, name: String, value: Any) async throws -> [String: Any] {
+        let encoded = try JSONSerialization.data(withJSONObject: value, options: .fragmentsAllowed)
+        return try Self.settings(in: await rawCall("setAccessibilitySetting", [
+            "udid": udid, "name": name, "value": String(decoding: encoded, as: UTF8.self),
+        ]))
+    }
+
+    /// Simulates the device's location until cleared or the device closes.
+    func simulateLocation(_ udid: String, latitude: Double, longitude: Double) async throws {
+        try await callIgnoringResult("simulateLocation", ["udid": udid, "latitude": String(latitude),
+                                                          "longitude": String(longitude)])
+    }
+
+    func clearLocation(_ udid: String) async throws {
+        try await callIgnoringResult("clearLocation", ["udid": udid])
+    }
+
+    private static func settings(in data: Data) throws -> [String: Any] {
+        guard let result = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let settings = result["settings"] as? [String: Any] else {
+            throw DeviceHubError.serviceFailed("The daemon returned no accessibility settings")
+        }
+        return settings
+    }
+
     /// The daemon issues `secrets.token_urlsafe` tokens; the consumer writes one back as a line.
     private static let videoTokenBytes = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".utf8)
 

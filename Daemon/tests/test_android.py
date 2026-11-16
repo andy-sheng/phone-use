@@ -393,6 +393,7 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.supervisor.broadcast = AsyncMock()
         self.supervisor._schedule_probe = MagicMock()
         self.supervisor.android.adb_path = "/adb"
+        self.supervisor.simulators.attached = AsyncMock(return_value=[])
 
     async def test_mixed_discovery_authorization_change_and_disconnect(self):
         ios = SimpleNamespace(connection="usb", attached=AsyncMock(return_value=[SimpleNamespace(udid="same", connection="usb")]))

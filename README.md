@@ -1,6 +1,6 @@
 # phone-use
 
-在 macOS 上连接、预览和操作 iPhone 与 Android 真机，提供原生应用、命令行、MCP 服务及插件自动化。iOS 与 Android 的连接、输入和视频流分别实现，共用设备列表与任务界面。
+在 macOS 上连接、预览和操作 iPhone 与 Android 真机以及本机的 iOS 模拟器，提供原生应用、命令行、MCP 服务及插件自动化。iOS 与 Android 的连接、输入和视频流分别实现，共用设备列表与任务界面。
 
 ## 获取仓库资源
 
@@ -66,6 +66,20 @@ python3.13 scripts/prepare-android-tools.py --archive /path/to/platform-tools_r3
 系统已信任并通过 Wi-Fi 暴露给 usbmuxd 的设备（包括 Xcode 已连接的设备）会直接出现在列表中，无需重新配对；应用复用系统连接，不导入 Xcode 的配对密钥。
 旧版系统或未显示开发者模式时，先通过 USB 连接、信任并完成设置；后台会尝试建立无线配对，之后可拔线重连。USB 与 Wi-Fi 同时可用时优先使用 USB。
 
+## iOS 模拟器
+
+本机已启动（Booted）的 iOS / iPadOS 模拟器会自动出现在设备列表中，连接方式显示为「Simulator」，ID 形如 `simulator:<UDID>`。
+需要安装 Xcode，并通过 `xcode-select` 或 `DEVELOPER_DIR` 选中它；无需配对、开发者模式或 USB。
+可以在 Simulator / Xcode 中启动模拟器，也可以运行 `xcrun simctl boot <UDID>`；关机后设备在列表中显示为未连接。
+
+预览直接显示模拟器的帧缓冲，触控、Home、锁屏和音量键通过 Simulator 的 HID 通道发送，启动应用使用 `simctl launch`。
+截图在预览或自动化会话收到画面刷新后直接读取帧缓冲，否则通过 `xcrun simctl io` 截取。返回、多任务键仅适用于 Android。
+
+```sh
+xcrun simctl boot "iPhone 17 Pro"
+.build/debug/phone-use --device simulator:<UDID> screenshot .build/simulator.png
+```
+
 ## 构建应用
 
 ```sh
@@ -82,7 +96,33 @@ scripts/build-app.sh
 | 命令行 | `phone-use` | `Contents/Helpers/phone-use` |
 | MCP 服务 | `phone-use-mcp` | `Contents/Helpers/phone-use-mcp` |
 
-MCP 使用标准输入输出传输。将客户端的启动命令设为应用包中 MCP 服务的绝对路径，并先启动应用。已有配置如引用 `DeviceHub.app` 或 `devicehub-mcp`，需要更新为上述路径。
+### 连接 AI 助手（MCP）
+
+MCP 使用标准输入输出传输，启动命令为应用包中 MCP 服务的绝对路径，无需先启动应用。最简单的方式是在应用中打开「设置 › AI 助手」（⌘, 或 phone-use 菜单 ›「连接 AI 助手…」）：页面列出本机 MCP 服务的实际路径，检测到 `claude` / `codex` 命令时可一键添加或更新，也可以复制终端命令或 JSON 配置。手动配置时，以安装在 `/Applications` 为例：
+
+```sh
+# Claude Code（对所有项目生效）
+claude mcp add -s user phone-use -- /Applications/phone-use.app/Contents/Helpers/phone-use-mcp
+
+# Codex（写入 ~/.codex/config.toml）
+codex mcp add phone-use -- /Applications/phone-use.app/Contents/Helpers/phone-use-mcp
+```
+
+Claude Desktop、Cursor 等使用 JSON 配置的客户端，在 MCP 配置中加入：
+
+```json
+{
+  "mcpServers": {
+    "phone-use": { "command": "/Applications/phone-use.app/Contents/Helpers/phone-use-mcp" }
+  }
+}
+```
+
+已有配置如引用 `DeviceHub.app` 或 `devicehub-mcp`，需要更新为上述路径；设置页会将其显示为「指向其他位置」，点击「更新」即可。设备未就绪时，工具错误会提示助手请用户在 phone-use 中完成配对等准备。
+
+`phone-use-mcp` 只是转发层：`initialize`、`tools/list` 由它直接应答，工具调用通过 `~/Library/Application Support/DeviceHub/mcp.sock`（可用 `DEVICEHUB_MCP_SOCKET` 覆盖）转交应用，在应用进程内执行，与预览共用守护进程和设备会话。首次调用工具时若应用未运行，会以 `--background` 在后台启动应用，不显示窗口、不抢占焦点；点击 Dock 图标或「窗口」菜单可打开主窗口。没有窗口且没有 MCP 客户端连接时，应用在约一分钟后自动退出；有客户端连接时关闭主窗口不会退出应用。应用退出时尚未返回的调用会以工具错误结束，下一次调用会重新连接并按需再次启动应用。
+
+`DEVICEHUB_APP` 可指定要启动的 `.app` 或 `phone-use-app` 可执行文件；SwiftPM 构建中默认使用同目录的 `phone-use-app`。命令行 `phone-use` 仍直接连接守护进程，需要应用已在运行。
 
 ## 自动更新与发布
 

@@ -3,8 +3,8 @@ import Foundation
 
 /// Runs the Python daemon as a child process for as long as the app lives.
 ///
-/// The daemon watches its stdin and exits when the app does, so it never outlives us. The MCP
-/// server and CLI only connect to it; they never start one.
+/// The daemon watches its stdin and exits when the app does, so it never outlives us. MCP tools
+/// run inside the app (see `MCPHost`); the CLI only connects to the daemon and never starts one.
 @MainActor
 final class DaemonLauncher {
     struct Runtime {

@@ -11,6 +11,11 @@ final class ByteStream: @unchecked Sendable {
         connection = NWConnection(to: endpoint, using: .tcp)
     }
 
+    /// Wraps a connection a listener accepted; `open()` starts it.
+    init(accepted connection: NWConnection) {
+        self.connection = connection
+    }
+
     convenience init(host: String = "127.0.0.1", port: UInt16) {
         self.init(endpoint: .hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!))
     }

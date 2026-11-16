@@ -8,6 +8,7 @@ in `protocol`; closing stdin shuts the worker down.
 import argparse
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import socket
@@ -17,6 +18,9 @@ from typing import Any, Optional
 from packaging.version import Version
 from pymobiledevice3.exceptions import AlreadyMountedError
 from pymobiledevice3.remote.remote_service_discovery import RemoteServiceDiscoveryService
+from pymobiledevice3.services.accessibilityaudit import AccessibilityAudit
+from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider
+from pymobiledevice3.services.dvt.instruments.location_simulation import LocationSimulation
 from pymobiledevice3.services.mobile_image_mounter import auto_mount
 
 from devicehubd import protocol
@@ -30,6 +34,45 @@ MIRROR_MIN_VERSION = Version("27.0")
 # Served by dtuhidd from the Developer Disk Image; its absence means the image is not mounted.
 DDI_MARKER_SERVICE = "com.apple.coredevice.hid.universalhidservice"
 MIRROR_START_TIMEOUT = 40.0
+LOCATION_START_TIMEOUT = 20.0
+# Settings the accessibility audit service accepts, with the value type each one takes.
+ACCESSIBILITY_SETTINGS = {
+    "INCREASE_CONTRAST": bool,
+    "REDUCE_MOTION": bool,
+    "REDUCE_TRANSPARENCY": bool,
+    "BUTTON_SHAPES": bool,
+    "GRAYSCALE": bool,
+    "INVERT_COLORS": bool,
+    "ON_OFF_LABELS": bool,
+    "DIFFERENTIATE_WITHOUT_COLOR": bool,
+    "DYNAMIC_TYPE": float,
+}
+
+
+def accessibility_value(name: Any, raw: Any) -> tuple[str, Any]:
+    """Validates a setting update from a client, whose value arrives JSON-encoded."""
+    kind = ACCESSIBILITY_SETTINGS.get(name)
+    if kind is None:
+        raise RpcError("invalidParams", f"Unknown accessibility setting {name}")
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        raise RpcError("invalidParams", f"Invalid value for {name}") from None
+    if kind is bool and isinstance(value, bool):
+        return name, value
+    if kind is float and isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1:
+        return name, float(value)
+    raise RpcError("invalidParams", f"Invalid value for {name}")
+
+
+def coordinate(params: dict[str, Any]) -> tuple[float, float]:
+    try:
+        latitude, longitude = float(params["latitude"]), float(params["longitude"])
+    except (KeyError, TypeError, ValueError):
+        raise RpcError("invalidParams", "latitude and longitude are required") from None
+    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        raise RpcError("invalidParams", "Coordinates are out of range")
+    return latitude, longitude
 
 
 class Worker:
@@ -44,6 +87,10 @@ class Worker:
         self._mirror_task: Optional[asyncio.Task[None]] = None
         self._mirror_port: Optional[int] = None
         self._mirror_lock = asyncio.Lock()
+        self._location_task: Optional[asyncio.Task[None]] = None
+        self._location_lock = asyncio.Lock()
+        self._audit: Optional[AccessibilityAudit] = None
+        self._audit_lock = asyncio.Lock()
 
     async def emit(self, message: dict[str, Any]) -> None:
         async with self._out_lock:
@@ -148,6 +195,83 @@ class Worker:
             with contextlib.suppress(BaseException):
                 await task
 
+    async def accessibility_settings(self) -> dict[str, Any]:
+        async with self._audit_lock:
+            return await self._with_audit(lambda audit: self._read_settings(audit))
+
+    async def set_accessibility_setting(self, name: str, value: Any) -> dict[str, Any]:
+        async def update(audit: AccessibilityAudit) -> dict[str, Any]:
+            await audit.set_setting(name, value)
+            # The update has no reply; this read makes sure the channel delivered it, but may
+            # still report the previous value.
+            return await self._read_settings(audit)
+
+        async with self._audit_lock:
+            return await self._with_audit(update)
+
+    @staticmethod
+    async def _read_settings(audit: AccessibilityAudit) -> dict[str, Any]:
+        return {setting.key: setting.value for setting in await audit.settings()}
+
+    async def _with_audit(self, operation: Any) -> Any:
+        """The device keeps settings changed over the audit channel only while it stays open,
+        so one channel is held for the worker's lifetime; closing it restores the device's own."""
+        if self._audit is None:
+            audit = AccessibilityAudit(self.rsd)
+            await audit.__aenter__()
+            self._audit = audit
+        try:
+            return await operation(self._audit)
+        except Exception:
+            await self._close_audit()
+            raise
+
+    async def _close_audit(self) -> None:
+        audit, self._audit = self._audit, None
+        if audit is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(audit.__aexit__(None, None, None), timeout=3)
+
+    async def simulate_location(self, latitude: float, longitude: float) -> None:
+        """The device keeps a simulated location only while its DVT channel stays open."""
+        async with self._location_lock:
+            await self._stop_location()
+            ready: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+            task = asyncio.create_task(self._hold_location(latitude, longitude, ready))
+            self._location_task = task
+            try:
+                await asyncio.wait_for(asyncio.shield(ready), LOCATION_START_TIMEOUT)
+            except BaseException:
+                await self._stop_location()
+                raise
+
+    async def _hold_location(self, latitude: float, longitude: float, ready: "asyncio.Future[None]") -> None:
+        try:
+            async with DvtProvider(self.rsd) as dvt, LocationSimulation(dvt) as simulation:
+                await simulation.set(latitude, longitude)
+                ready.set_result(None)
+                await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            if not ready.done():
+                ready.set_exception(RpcError("locationFailed", str(e)))
+            else:
+                logger.warning("location simulation for %s ended: %s", self.udid, e)
+
+    async def clear_location(self) -> None:
+        async with self._location_lock:
+            await self._stop_location()
+            async with DvtProvider(self.rsd) as dvt, LocationSimulation(dvt) as simulation:
+                await simulation.clear()
+
+    async def _stop_location(self) -> None:
+        task, self._location_task = self._location_task, None
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(BaseException):
+                await task
+
     async def handle(self, message: dict[str, Any]) -> None:
         request_id = message.get("id")
         method = message.get("method")
@@ -159,6 +283,17 @@ class Worker:
                 result = {"port": await self.start_mirror(), "path": "/stream.bin"}
             elif method == "stopMirror":
                 await self.stop_mirror()
+                result = {}
+            elif method == "accessibilitySettings":
+                result = {"settings": await self.accessibility_settings()}
+            elif method == "setAccessibilitySetting":
+                name, value = accessibility_value(params.get("name"), params.get("value"))
+                result = {"settings": await self.set_accessibility_setting(name, value)}
+            elif method == "simulateLocation":
+                await self.simulate_location(*coordinate(params))
+                result = {}
+            elif method == "clearLocation":
+                await self.clear_location()
                 result = {}
             else:
                 raise RpcError("unknownMethod", f"Unknown worker method {method}")
@@ -175,6 +310,8 @@ class Worker:
 
     async def close(self) -> None:
         await self.stop_mirror()
+        await self._stop_location()
+        await self._close_audit()
         for server in self._forwards.values():
             server.close()
         with contextlib.suppress(Exception):

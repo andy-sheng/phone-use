@@ -24,6 +24,12 @@ public final class DeviceSession: @unchecked Sendable {
     }
 
     static func open(_ initialDevice: DeviceSummary, daemon: DaemonClient) async throws -> DeviceSession {
+        if initialDevice.isSimulator {
+            // The daemon only lists simulators; control and display stay in this process.
+            let (connection, display) = try await SimulatorDeviceConnection.open(initialDevice)
+            return DeviceSession(device: initialDevice, display: display, services: [],
+                                 daemon: daemon, connection: connection)
+        }
         let opened = try await daemon.openDevice(initialDevice.udid)
         let device = initialDevice.withProductVersion(opened.productVersion)
         let connection: any DeviceConnection
@@ -114,9 +120,15 @@ public final class DeviceSession: @unchecked Sendable {
         try await connection.launchApp(bundleID: bundleID)
     }
 
+    /// The simulator's framebuffer, shared by its preview stream and screenshots.
+    var simulatorDisplay: SimulatorDisplay? {
+        (connection as? SimulatorDeviceConnection)?.display
+    }
+
     /// Mirror stream URL (iOS 27+). On those systems the stream is also what authenticates touches.
     public func mirrorURL() async throws -> URL {
         guard !device.isAndroid else { throw DeviceHubError.capabilityUnavailable("Apple screen mirroring on Android") }
+        guard !device.isSimulator else { throw DeviceHubError.capabilityUnavailable("Apple screen mirroring on a simulator") }
         return try await daemon.startMirror(device.udid)
     }
 

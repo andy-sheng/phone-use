@@ -8,7 +8,6 @@ struct AutomationPanel: View {
     @ObservedObject var automation: AutomationModel
     let openLibrary: () -> Void
     let managePlugins: () -> Void
-    let close: () -> Void
     @AppStorage("automation.console.visible") private var showsConsole = true
     @AppStorage("automation.console.autoscroll") private var autoScroll = true
 
@@ -49,8 +48,6 @@ struct AutomationPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            panelHeader
-            Divider()
             if automation.selectedPlugin != nil {
                 pluginHeader
                 Divider()
@@ -75,21 +72,6 @@ struct AutomationPanel: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private var panelHeader: some View {
-        HStack(spacing: 8) {
-            Text("插件").font(.headline)
-            Spacer()
-            Button(action: close) { Image(systemName: "sidebar.right") }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("收起插件面板")
-                .accessibilityLabel("收起插件面板")
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 40)
     }
 
     private var pluginHeader: some View {

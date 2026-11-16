@@ -2,7 +2,7 @@ import DeviceHubKit
 import Foundation
 
 let usage = """
-usage: phone-use [--device <name|udid|android:serial>] <command>
+usage: phone-use [--device <name|udid|android:serial|simulator:udid>] <command>
   list
   pair                             show the Trust prompt on the device
   reveal-developer-mode            make the Developer Mode switch appear in Settings
@@ -100,7 +100,8 @@ func run() async throws {
         let start = Date()
         let image = try await session.screenshot()
         let elapsed = Date().timeIntervalSince(start)
-        try ImageEncoding.png(image)?.write(to: URL(fileURLWithPath: path))
+        guard let png = ImageEncoding.png(image) else { throw DeviceHubError.serviceFailed("PNG encoding failed") }
+        try png.write(to: URL(fileURLWithPath: path))
         print("saved \(image.width)x\(image.height) in \(String(format: "%.0f", elapsed * 1000)) ms")
     case "bench":
         let session = try await hub.session(for: deviceQuery)

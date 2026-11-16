@@ -9,7 +9,12 @@ Clients (the app, the MCP server, the CLI) connect to a Unix socket and speak th
 * ``openDevice`` -> ``{udid, productVersion, services}``; ``closeDevice``
 * ``openService`` -> ``{port}``: a loopback port relaying to that device service
 * ``startMirror`` -> ``{port, path}`` (iOS 27+); ``stopMirror``
+* ``accessibilitySettings`` -> ``{settings}``; ``setAccessibilitySetting`` (``name``, JSON ``value``)
+* ``simulateLocation`` (``latitude``, ``longitude``); ``clearLocation``
 * ``androidCommand`` -> platform-neutral screenshot/input replies (Android only)
+
+Booted iOS simulators are listed with connection ``simulator``. Clients control them in-process
+through CoreSimulator; ``openDevice`` acknowledges them without starting a worker.
 """
 
 import asyncio
@@ -35,6 +40,7 @@ from pymobiledevice3.services.mobile_image_mounter import (
 from devicehubd import VERSION, protocol
 from devicehubd.android import AndroidAttachment, AndroidDiscovery
 from devicehubd.protocol import RpcError
+from devicehubd.simulator import SIMULATOR, SimulatorAttachment, SimulatorDiscovery
 from devicehubd.transports import (
     DISCOVERIES,
     ENDPOINTS_ENV,
@@ -54,6 +60,8 @@ WORKER_START_TIMEOUT = 90.0
 # A transient `adb devices` failure (server restart, timeout) must not close every
 # Android session; only this many consecutive failures count as detachment.
 ANDROID_DISCOVERY_FAILURE_LIMIT = 3
+# The same tolerance for `simctl`, which can stall while CoreSimulator restarts.
+SIMULATOR_DISCOVERY_FAILURE_LIMIT = 3
 ANDROID_STATE_ERRORS = {
     "unauthorized": "Unlock the Android device and accept this computer's USB debugging authorization",
     "offline": "ADB reports this Android device offline; reconnect it and check USB debugging",
@@ -62,6 +70,8 @@ ANDROID_STATE_ERRORS = {
 WORKER_STOP_GRACE = 5.0
 WORKER_TERMINATE_GRACE = 1.0
 WORKER_KILL_GRACE = 2.0
+# Device settings the worker serves over its tunnel, used when Xcode's devicectl is not available.
+WORKER_SETTINGS_METHODS = {"accessibilitySettings", "setAccessibilitySetting", "simulateLocation", "clearLocation"}
 # Native-resolution PNG responses can be several MB; asyncio's default is 64 KB.
 WORKER_READ_LIMIT = 64 * 1024 * 1024
 TUNNEL_MOUNTS_VERSION = Version("27.0")
@@ -91,6 +101,10 @@ class DeviceRecord:
     adb_state: Optional[str] = None
 
     @property
+    def is_simulator(self) -> bool:
+        return self.connection == SIMULATOR
+
+    @property
     def image_needs_tunnel(self) -> bool:
         return self.platform == "ios" and self.product_version is not None and Version(self.product_version) >= TUNNEL_MOUNTS_VERSION
 
@@ -100,6 +114,8 @@ class DeviceRecord:
             return "disconnected"
         if self.platform == "android":
             return {"device": "ready", "unauthorized": "unauthorized", "offline": "offline"}.get(self.adb_state, "probing")
+        if self.is_simulator:
+            return "ready"
         if self.paired is None:
             return "probing"
         if not self.paired:
@@ -228,6 +244,9 @@ class Supervisor:
         self.android = AndroidDiscovery()
         self._android_seen: dict[str, AndroidAttachment] = {}
         self._android_failures = 0
+        self.simulators = SimulatorDiscovery()
+        self._simulators_seen: dict[str, SimulatorAttachment] = {}
+        self._simulator_failures = 0
         self._wireless_pairing: Optional[WirelessPairing] = None
         self._wireless_owner: Optional[asyncio.StreamWriter] = None
         self._wireless_lock = asyncio.Lock()
@@ -253,6 +272,8 @@ class Supervisor:
                 logger.debug("%s discovery failed: %r", discovery.connection, e)
         android = await self._discover_android()
         seen.update({udid: item.connection for udid, item in android.items()})
+        simulators = await self._discover_simulators()
+        seen.update({udid: SIMULATOR for udid in simulators})
         # A live Wi-Fi worker holds a tunnel to the device, which is better evidence than a
         # Bonjour/usbmuxd listing that drops sleeping devices. If the tunnel breaks the worker
         # exits, and the next poll detaches the device as usual.
@@ -274,7 +295,9 @@ class Supervisor:
                     platform="android" if udid in android else "ios",
                 )
                 changed = True
-            if udid in android:
+            if udid in simulators:
+                changed |= self._update_simulator_record(record, simulators[udid])
+            elif udid in android:
                 changed |= self._update_android_record(record, android[udid])
                 if record.state == "ready" and not record.product_version and loop.time() - record.probed_at > REPROBE_INTERVAL:
                     self._schedule_probe(udid)
@@ -303,6 +326,30 @@ class Supervisor:
         self._android_failures = 0
         self._android_seen = {attachment.udid: attachment for attachment in attached}
         return self._android_seen
+
+    async def _discover_simulators(self) -> dict[str, SimulatorAttachment]:
+        try:
+            attached = await self.simulators.attached()
+        except Exception as e:
+            self._simulator_failures += 1
+            logger.debug("simulator discovery failed (%d in a row): %r", self._simulator_failures, e)
+            if self._simulator_failures < SIMULATOR_DISCOVERY_FAILURE_LIMIT:
+                return self._simulators_seen
+            attached = []
+        self._simulator_failures = 0
+        self._simulators_seen = {attachment.udid: attachment for attachment in attached}
+        return self._simulators_seen
+
+    @staticmethod
+    def _update_simulator_record(record: DeviceRecord, attachment: SimulatorAttachment) -> bool:
+        """Applies one booted simulator; returns whether the published record changed."""
+        before = record.to_json()
+        record.name, record.product_type = attachment.name, attachment.product_type
+        record.product_version = attachment.product_version
+        record.paired = record.developer_mode = True
+        record.wireless = False
+        record.error = None
+        return record.to_json() != before
 
     def _update_android_record(self, record: DeviceRecord, attachment: AndroidAttachment) -> bool:
         """Applies one `adb devices` row; returns whether the published record changed."""
@@ -505,6 +552,8 @@ class Supervisor:
         record = self._record(udid)
         if record.platform != "ios":
             raise RpcError("unsupported", "This service is only available for iOS devices; Android uses USB debugging")
+        if record.is_simulator:
+            raise RpcError("unsupported", "iOS simulators are controlled through CoreSimulator, not device services")
         return record
 
     async def pair(self, udid: str) -> None:
@@ -548,7 +597,11 @@ class Supervisor:
     # MARK: Workers
 
     async def open_device(self, udid: str) -> dict[str, Any]:
-        self._record(udid)
+        record = self._record(udid)
+        if record.is_simulator:
+            # The client drives the simulator in-process; there is no worker to start.
+            return {"udid": udid, "platform": record.platform,
+                    "productVersion": record.product_version, "services": []}
         async with self._lock(udid):
             record = self._record(udid)
             worker = self.workers.get(udid)
@@ -775,6 +828,11 @@ class Supervisor:
             if worker is not None:
                 await worker.call("stopMirror", {})
             return {}
+        if method in WORKER_SETTINGS_METHODS:
+            self._ios_record(udid)
+            worker = await self._worker(udid)
+            forwarded = {key: value for key, value in params.items() if key != "udid"}
+            return await worker.call(method, forwarded, timeout=40)
         if method == "closeDevice":
             await self.close_device(udid)
             return {}

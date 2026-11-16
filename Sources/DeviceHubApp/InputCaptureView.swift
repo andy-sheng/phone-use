@@ -45,7 +45,9 @@ struct ScreenSurface: NSViewRepresentable {
             didSet {
                 guard hostedLayer !== oldValue else { return }
                 releaseHeldTouch()
-                oldValue?.removeFromSuperlayer()
+                // Switching layouts (such as to the compact window) can hand the layer to a new
+                // surface before this one is dismantled; never take it back from that surface.
+                if let oldValue, oldValue.superlayer === layer { oldValue.removeFromSuperlayer() }
                 if let hostedLayer {
                     layer?.addSublayer(hostedLayer)
                 }

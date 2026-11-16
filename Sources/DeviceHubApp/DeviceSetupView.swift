@@ -98,6 +98,9 @@ struct DeviceSetupView: View {
     @ViewBuilder
     private var appleSteps: some View {
         switch device.state {
+        case .disconnected where device.isSimulator:
+            Text("\(device.name) has shut down. Boot it from Simulator or Xcode, or run `xcrun simctl boot \(device.deviceIdentifier)`; it reappears here automatically.")
+                .textSelection(.enabled)
         case .disconnected:
             if device.wireless == true {
                 Text("Connect \(device.name) to this Mac with a USB cable, or unlock it on the same Wi-Fi network as this Mac.")

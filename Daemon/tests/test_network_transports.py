@@ -116,6 +116,7 @@ class NetworkDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         with patch('devicehubd.supervisor._load_cache', return_value={}):
             supervisor = Supervisor()
         supervisor.android.attached = AsyncMock(return_value=[])
+        supervisor.simulators.attached = AsyncMock(return_value=[])
         supervisor._schedule_probe = MagicMock()
         supervisor.broadcast = AsyncMock()
         with patch('devicehubd.supervisor.DISCOVERIES', [UsbDiscovery(), self.discovery]), \
@@ -129,6 +130,7 @@ class NetworkDiscoveryTests(unittest.IsolatedAsyncioTestCase):
         with patch('devicehubd.supervisor._load_cache', return_value={}):
             supervisor = Supervisor()
         supervisor.android.attached = AsyncMock(return_value=[])
+        supervisor.simulators.attached = AsyncMock(return_value=[])
         supervisor._schedule_probe = MagicMock()
         supervisor.broadcast = AsyncMock()
         record = DeviceRecord('friday', 'network', paired=True, developer_mode=True, developer_image=True, session='open')

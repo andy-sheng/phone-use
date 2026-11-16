@@ -19,8 +19,13 @@ final class ScreenModel: ObservableObject {
     @Published private(set) var reconnectGeneration = 0
     /// A short confirmation or error shown over the screen, cleared after a few seconds.
     @Published private(set) var notice: String?
+    /// Whether the connected device can record its screen, through Xcode or simctl.
+    @Published private(set) var canRecord = false
+    @Published private(set) var isRecording = false
 
     private var session: DeviceSession?
+    private var settings: DeviceSettings?
+    private var recording: ScreenRecording?
     private var noticeTask: Task<Void, Never>?
     private var currentDeviceID: String?
     private var manualTouch: (session: DeviceSession, point: CGPoint)?
@@ -70,6 +75,9 @@ final class ScreenModel: ObservableObject {
         let generation = UUID()
         runGeneration = generation
         releaseManualTouch()
+        finishRecording()
+        settings = nil
+        canRecord = false
         stream?.stop()
         stream = nil
         session = nil
@@ -132,6 +140,12 @@ final class ScreenModel: ObservableObject {
         attach(stream)
         status = nil
         isConnecting = false
+        Task {
+            let settings = await DeviceSettings.resolve(for: device)
+            guard isCurrentRequest(device.id, generation: generation) else { return }
+            self.settings = settings
+            canRecord = settings?.canRecord ?? false
+        }
 
         // A video source can come up late, for example after the device re-enumerates on USB,
         // so screenshot polling keeps retrying until one is available.
@@ -265,6 +279,44 @@ final class ScreenModel: ObservableObject {
                 show("\(error)")
             }
         }
+    }
+
+    /// Starts recording to the Desktop, or stops and saves the recording in progress.
+    func toggleRecording() {
+        if recording != nil {
+            finishRecording()
+            return
+        }
+        guard let settings, settings.canRecord, let name = session?.device.name else { return }
+        let url = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("\(name) \(Self.timestamp()).mp4")
+        do {
+            recording = try settings.startRecording(to: url)
+            isRecording = true
+        } catch {
+            show("\(error)")
+        }
+    }
+
+    /// Stops a recording in progress and saves it, also when the device goes away.
+    private func finishRecording() {
+        guard let recording else { return }
+        self.recording = nil
+        isRecording = false
+        Task {
+            do {
+                let url = try await recording.stop()
+                show("Saved \(url.lastPathComponent) to the Desktop")
+            } catch {
+                show("\(error)")
+            }
+        }
+    }
+
+    private static func timestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+        return formatter.string(from: Date())
     }
 
     func launchApp(bundleID: String) {

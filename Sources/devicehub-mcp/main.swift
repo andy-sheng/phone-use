@@ -1,238 +1,111 @@
+import AppKit
 import DeviceHubKit
 import Foundation
 
-// Minimal MCP server over stdio (newline-delimited JSON-RPC 2.0).
-// Coordinates are iOS points or Android pixels, with the origin at the top-left,
-// matching the image returned by `get_screen`.
+// MCP server over stdio (newline-delimited JSON-RPC 2.0), as a bridge to the phone-use app.
+// Tools run inside the app, which shares its device sessions with the preview. The bridge answers
+// initialize and tools/list itself and launches the app in the background on the first tool call.
+// stdout carries protocol messages only; diagnostics go to stderr.
 
-struct ToolFailure: Error {
-    let message: String
-}
+/// Serializes writes so replies from the app and local replies never interleave.
+final class StandardOutput: @unchecked Sendable {
+    private let lock = NSLock()
 
-let deviceProperty: [String: Any] = [
-    "type": "string",
-    "description": "Device name, UDID or identifier. Defaults to the first connected device.",
-]
-let returnScreenProperty: [String: Any] = [
-    "type": "boolean",
-    "description": "Return a screenshot taken shortly after the action.",
-]
-
-func pointProperty(_ description: String) -> [String: Any] {
-    ["type": "number", "description": description]
-}
-
-let tools: [[String: Any]] = [
-    [
-        "name": "list_devices",
-        "description": "List iOS and Android devices connected to this Mac. Only devices whose state is 'ready' can be controlled; the phone-use app guides the user through the other states.",
-        "inputSchema": ["type": "object", "properties": [String: Any]()],
-    ],
-    [
-        "name": "get_screen",
-        "description": "Capture the device screen. The image is scaled to the screen size in points; use the same coordinate space for tap and swipe. To enter text, focus a field and tap the keys of the on-screen keyboard, including the input method's candidate bar.",
-        "inputSchema": ["type": "object", "properties": ["device": deviceProperty]],
-    ],
-    [
-        "name": "tap",
-        "description": "Tap at a point on the screen.",
-        "inputSchema": [
-            "type": "object",
-            "properties": [
-                "x": pointProperty("X in points from the left edge"),
-                "y": pointProperty("Y in points from the top edge"),
-                "device": deviceProperty,
-                "return_screen": returnScreenProperty,
-            ],
-            "required": ["x", "y"],
-        ],
-    ],
-    [
-        "name": "long_press",
-        "description": "Touch and hold at a point on the screen.",
-        "inputSchema": [
-            "type": "object",
-            "properties": [
-                "x": pointProperty("X in points from the left edge"),
-                "y": pointProperty("Y in points from the top edge"),
-                "duration_ms": ["type": "integer", "description": "Hold duration, default 800"],
-                "device": deviceProperty,
-                "return_screen": returnScreenProperty,
-            ],
-            "required": ["x", "y"],
-        ],
-    ],
-    [
-        "name": "swipe",
-        "description": "Drag one finger from one point to another. Use it to scroll (drag up to scroll content down). Starting at the very bottom edge and dragging up goes to the home screen; starting at the top edge and dragging down opens Notification Center or Control Center.",
-        "inputSchema": [
-            "type": "object",
-            "properties": [
-                "from_x": pointProperty("Start X in points"),
-                "from_y": pointProperty("Start Y in points"),
-                "to_x": pointProperty("End X in points"),
-                "to_y": pointProperty("End Y in points"),
-                "duration_ms": ["type": "integer", "description": "Gesture duration, default 300"],
-                "device": deviceProperty,
-                "return_screen": returnScreenProperty,
-            ],
-            "required": ["from_x", "from_y", "to_x", "to_y"],
-        ],
-    ],
-    [
-        "name": "press_button",
-        "description": "Press a device button. back and app_switch are Android-only; siri is iOS-only.",
-        "inputSchema": [
-            "type": "object",
-            "properties": [
-                "button": ["type": "string", "enum": HardwareButton.allCases.map(\.rawValue)],
-                "device": deviceProperty,
-                "return_screen": returnScreenProperty,
-            ],
-            "required": ["button"],
-        ],
-    ],
-    [
-        "name": "launch_app",
-        "description": "Launch (or relaunch) an installed app by iOS bundle identifier or Android package name.",
-        "inputSchema": [
-            "type": "object",
-            "properties": [
-                "bundle_id": ["type": "string"],
-                "device": deviceProperty,
-                "return_screen": returnScreenProperty,
-            ],
-            "required": ["bundle_id"],
-        ],
-    ],
-]
-
-func text(_ value: String) -> [String: Any] {
-    ["type": "text", "text": value]
-}
-
-func number(_ arguments: [String: Any], _ key: String) throws -> Double {
-    if let value = arguments[key] as? Double { return value }
-    if let value = arguments[key] as? Int { return Double(value) }
-    if let value = arguments[key] as? NSNumber { return value.doubleValue }
-    throw ToolFailure(message: "Missing numeric argument '\(key)'")
-}
-
-func screenContent(_ session: DeviceSession) async throws -> [[String: Any]] {
-    let image = try await session.screenshot()
-    let width = Int(session.display.pointWidth.rounded())
-    let height = Int(session.display.pointHeight.rounded())
-    guard let scaled = ImageEncoding.resized(image, width: width, height: height),
-          let jpeg = ImageEncoding.jpeg(scaled) else {
-        throw ToolFailure(message: "Failed to encode screenshot")
+    func write(_ message: Data) {
+        lock.withLock { FileHandle.standardOutput.write(message + Data([0x0A])) }
     }
-    return [
-        ["type": "image", "data": jpeg.base64EncodedString(), "mimeType": "image/jpeg"],
-        text("Screen of \(session.device.name): \(width)x\(height) points, origin at top-left."),
-    ]
 }
 
-func callTool(_ name: String, _ arguments: [String: Any]) async throws -> [[String: Any]] {
-    let hub = DeviceHub.shared
-    let deviceQuery = arguments["device"] as? String
+enum AppLauncher {
+    enum LaunchError: Error, CustomStringConvertible {
+        case notFound
+        case spawnFailed(Int32)
 
-    if name == "list_devices" {
-        let devices = try await hub.devices()
-        let data = try JSONEncoder().encode(devices)
-        return [text(String(decoding: data, as: UTF8.self))]
-    }
-
-    let session = try await hub.session(for: deviceQuery)
-    let width = session.display.pointWidth
-    let height = session.display.pointHeight
-    let summary: String
-
-    switch name {
-    case "get_screen":
-        return try await screenContent(session)
-    case "tap":
-        let x = try number(arguments, "x"), y = try number(arguments, "y")
-        try await session.tap(x: x / width, y: y / height)
-        summary = "Tapped (\(x), \(y))."
-    case "long_press":
-        let x = try number(arguments, "x"), y = try number(arguments, "y")
-        let ms = (try? number(arguments, "duration_ms")) ?? 800
-        try await session.longPress(x: x / width, y: y / height, duration: .milliseconds(Int(ms)))
-        summary = "Long-pressed (\(x), \(y)) for \(Int(ms)) ms."
-    case "swipe":
-        let fromX = try number(arguments, "from_x"), fromY = try number(arguments, "from_y")
-        let toX = try number(arguments, "to_x"), toY = try number(arguments, "to_y")
-        let ms = (try? number(arguments, "duration_ms")) ?? 300
-        try await session.swipe(fromX: fromX / width, fromY: fromY / height,
-                                toX: toX / width, toY: toY / height, duration: .milliseconds(Int(ms)))
-        summary = "Swiped from (\(fromX), \(fromY)) to (\(toX), \(toY))."
-    case "press_button":
-        guard let raw = arguments["button"] as? String, let button = HardwareButton(rawValue: raw) else {
-            throw ToolFailure(message: "Unknown button")
+        var description: String {
+            switch self {
+            case .notFound: "phone-use.app could not be found. Install it or set DEVICEHUB_APP to its path."
+            case .spawnFailed(let code): "Starting phone-use-app failed (\(String(cString: strerror(code))))."
+            }
         }
-        try await session.press(button)
-        summary = "Pressed \(raw)."
-    case "launch_app":
-        guard let bundleID = arguments["bundle_id"] as? String else {
-            throw ToolFailure(message: "Missing 'bundle_id'")
+    }
+
+    /// Starts the app this bridge belongs to without a window: the enclosing .app bundle when
+    /// installed, the `phone-use-app` next to this executable in a SwiftPM build, or the app
+    /// LaunchServices knows by bundle identifier. `DEVICEHUB_APP` names either kind explicitly.
+    static func launch() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        let target: URL
+        if let override = environment["DEVICEHUB_APP"], !override.isEmpty {
+            target = URL(fileURLWithPath: override)
+        } else if let found = located() {
+            target = found
+        } else {
+            throw LaunchError.notFound
         }
-        try await session.launchApp(bundleID: bundleID)
-        summary = "Launched \(bundleID)."
-    default:
-        throw ToolFailure(message: "Unknown tool '\(name)'")
-    }
-
-    guard arguments["return_screen"] as? Bool == true else { return [text(summary)] }
-    try await Task.sleep(for: .milliseconds(600))
-    return [text(summary)] + (try await screenContent(session))
-}
-
-@MainActor
-func handle(_ message: [String: Any]) async -> [String: Any]? {
-    guard let method = message["method"] as? String else { return nil }
-    guard let id = message["id"] else { return nil }
-    let params = message["params"] as? [String: Any] ?? [:]
-
-    func reply(_ result: [String: Any]) -> [String: Any] {
-        ["jsonrpc": "2.0", "id": id, "result": result]
-    }
-
-    switch method {
-    case "initialize":
-        return reply([
-            "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
-            "capabilities": ["tools": [String: Any]()],
-            "serverInfo": ["name": "phone-use", "version": "0.1.0"],
-        ])
-    case "ping":
-        return reply([:])
-    case "tools/list":
-        return reply(["tools": tools])
-    case "tools/call":
-        let name = params["name"] as? String ?? ""
-        let arguments = params["arguments"] as? [String: Any] ?? [:]
-        do {
-            return reply(["content": try await callTool(name, arguments)])
-        } catch let failure as ToolFailure {
-            return reply(["content": [text(failure.message)], "isError": true])
-        } catch {
-            return reply(["content": [text("\(error)")], "isError": true])
+        let passed = environment.filter { $0.key.hasPrefix("DEVICEHUB_") && $0.key != "DEVICEHUB_APP" }
+        if target.pathExtension == "app" {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = false
+            configuration.addsToRecentItems = false
+            configuration.arguments = [PhoneUseApp.backgroundArgument]
+            configuration.environment = passed
+            _ = try await NSWorkspace.shared.openApplication(at: target, configuration: configuration)
+        } else {
+            try spawnDetached(target, environment: environment)
         }
-    default:
-        return ["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "Method not found: \(method)"]]
+        FileHandle.standardError.write(Data("phone-use-mcp: started \(target.path) in the background\n".utf8))
+    }
+
+    private static func located() -> URL? {
+        guard let executable = Bundle.main.executableURL?.resolvingSymlinksInPath() else { return nil }
+        let directory = executable.deletingLastPathComponent()
+        // phone-use.app/Contents/Helpers/phone-use-mcp
+        let bundle = directory.deletingLastPathComponent().deletingLastPathComponent()
+        if bundle.pathExtension == "app" { return bundle }
+        let sibling = directory.appendingPathComponent("phone-use-app")
+        if FileManager.default.isExecutableFile(atPath: sibling.path) { return sibling }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: PhoneUseApp.bundleIdentifier)
+    }
+
+    /// Runs a bare app executable in its own session, so it outlives this bridge and never
+    /// writes to the client's stdout.
+    private static func spawnDetached(_ executable: URL, environment: [String: String]) throws {
+        var actions: posix_spawn_file_actions_t?
+        var attributes: posix_spawnattr_t?
+        posix_spawn_file_actions_init(&actions)
+        posix_spawnattr_init(&attributes)
+        defer {
+            posix_spawn_file_actions_destroy(&actions)
+            posix_spawnattr_destroy(&attributes)
+        }
+        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0)
+        posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID))
+        let arguments = [executable.path, PhoneUseApp.backgroundArgument]
+        let variables = environment.map { "\($0.key)=\($0.value)" }
+        let argv = arguments.map { strdup($0) } + [nil]
+        let envp = variables.map { strdup($0) } + [nil]
+        defer { (argv + envp).forEach { free($0) } }
+        var pid: pid_t = 0
+        let status = posix_spawn(&pid, executable.path, &actions, &attributes, argv, envp)
+        guard status == 0 else { throw LaunchError.spawnFailed(status) }
     }
 }
 
-func write(_ response: [String: Any]) {
-    guard var data = try? JSONSerialization.data(withJSONObject: response) else { return }
-    data.append(0x0A)
-    FileHandle.standardOutput.write(data)
-}
+let standardOutput = StandardOutput()
+let bridge = MCPBridge(launchApp: { try await AppLauncher.launch() },
+                       output: { standardOutput.write($0) })
 
-for try await line in FileHandle.standardInput.bytes.lines {
-    guard let data = line.data(using: .utf8),
-          let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-    if let response = await handle(message) {
-        write(response)
+// Split on LF only: JSON may carry U+2028 and other characters `lines` would also break on.
+var line = Data()
+for try await byte in FileHandle.standardInput.bytes {
+    if byte == 0x0A {
+        await bridge.receive(line)
+        line.removeAll(keepingCapacity: true)
+    } else {
+        line.append(byte)
     }
 }
+if !line.isEmpty { await bridge.receive(line) }
+await bridge.finish()
