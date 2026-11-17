@@ -17,6 +17,8 @@ final class MirrorScreenStream: ScreenStream {
     private var readTask: Task<Void, Never>?
     private let recordingSink = ScreenRecordingSink()
     var canRecord: Bool { true }
+    func copyFrame() -> CGImage? { recordingSink.frameCapture.copyFrame() }
+    func copyPixelBuffer() -> CVPixelBuffer? { recordingSink.frameCapture.copyPixelBuffer() }
 
     func startRecording(to destination: URL) throws -> any ScreenRecordingSession {
         try recordingSink.start(to: destination)
@@ -48,6 +50,7 @@ final class MirrorScreenStream: ScreenStream {
                     let frame = try await Self.read(length, from: &iterator)
                     let frameKind = frame[frame.startIndex]
                     if frameKind == 2 {
+                        recordingSink.frameCapture.reset()
                         renderer.flush()
                         recordingSink.fail("The video stream dropped frames. Start a new recording.")
                     }
@@ -70,6 +73,7 @@ final class MirrorScreenStream: ScreenStream {
     }
 
     func stop() {
+        recordingSink.frameCapture.reset()
         readTask?.cancel()
         readTask = nil
     }

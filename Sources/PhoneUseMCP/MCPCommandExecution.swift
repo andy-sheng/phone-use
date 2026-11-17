@@ -22,9 +22,15 @@ extension DeviceSession: MCPDeviceSession {}
 struct MCPDeviceAccess: Sendable {
     let devices: @Sendable () async throws -> [DeviceSummary]
     let session: @Sendable (String) async throws -> any MCPDeviceSession
+    var files: @Sendable (DeviceSummary) throws -> any DeviceFileAccess = { try DeviceFiles(device: $0) }
+    var webPreview: @Sendable (String, UInt16) async throws -> URL = { _, _ in
+        throw ToolFailure(message: "Web preview discovery is not configured")
+    }
+    var previewWorkflow = MCPWebPreviewWorkflow()
 
     static let live = MCPDeviceAccess(devices: { try await DeviceHub.shared.devices() },
-                                     session: { try await DeviceHub.shared.session(for: $0) })
+                                     session: { try await DeviceHub.shared.session(for: $0) },
+                                     webPreview: { try await MCPWebPreview.url(deviceID: $0, port: $1) })
 }
 
 extension MCPCommand {
@@ -49,6 +55,22 @@ extension MCPCommand {
     }
 
     func execute(access: MCPDeviceAccess, workspace: MCPWorkspaceAccess? = nil) async throws -> [String: Any] {
+        let result = try await executeDevice(access: access, workspace: workspace)
+        switch action {
+        case .listDevices, .selectDevice, .webPreview, .listApps, .listSandboxFiles, .readSandboxFile, .downloadSandboxFile:
+            return result
+        default: break
+        }
+        guard let output = result["structuredContent"] as? [String: Any], let id = output["device"] as? String else { return result }
+        let force: Bool
+        if case .connectDevice = action { force = true } else { force = false }
+        // This is a best-effort handoff after execution. A preview outage must never convert
+        // delivered input into a tool failure that invites duplicate taps or text entry.
+        let preview = await access.previewWorkflow.lookup(deviceID: id, force: force, probe: access.webPreview)
+        return preview.appending(to: result)
+    }
+
+    private func executeDevice(access: MCPDeviceAccess, workspace: MCPWorkspaceAccess?) async throws -> [String: Any] {
         let devices = try await access.devices()
         let selection = await workspace?.selectedDevice()
         if case .listDevices = action {
@@ -72,10 +94,18 @@ extension MCPCommand {
                     "structuredContent": ["device": selected.udid, "selected": true, "state": selected.state.rawValue]]
         }
         let selected = try Self.resolve(query, in: devices)
+        if case .webPreview(let port) = action {
+            let preview = await access.previewWorkflow.lookup(deviceID: selected.udid, port: port, force: true, probe: access.webPreview)
+            guard let url = preview.url else { throw ToolFailure(message: preview.error ?? "Web preview unavailable") }
+            return preview.appending(to: ["content": [mcpText("Live browser control page for \(selected.name): \(url.absoluteString)")],
+                    "structuredContent": ["device": selected.udid, "url": url.absoluteString, "available": true,
+                                          "browser_opened": false, "same_host_required": true]])
+        }
+        if let result = try await executeFiles(selected: selected, access: access) { return result }
         if case .connectDevice = action {
             guard let workspace else { throw ToolFailure(message: "Explicit device connection requires the PhoneUse app host.") }
             try await workspace.connect(selected)
-            return ["content": [mcpText("Connected to \(selected.name). Preview requested; first frame is not yet verified.")],
+            return ["content": [mcpText("Connected to \(selected.name). Native UI preview requested; its first frame is not yet verified. Web preview status and the next client action are included below.")],
                     "structuredContent": ["device": selected.udid, "selected": true, "session_connected": true,
                                           "preview_requested": true, "first_frame_verified": false]]
         }
@@ -181,6 +211,49 @@ extension MCPCommand {
             }
         }
         return ["content": content, "structuredContent": output]
+    }
+}
+
+extension MCPCommand {
+    /// File operations resolve the shared device selection, but never start video or input.
+    private func executeFiles(selected: DeviceSummary, access: MCPDeviceAccess) async throws -> [String: Any]? {
+        switch action {
+        case .listApps, .listSandboxFiles, .readSandboxFile, .downloadSandboxFile: break
+        default: return nil
+        }
+        guard !selected.isAndroid else { throw ToolFailure(message: "App sandbox tools currently support iOS only.") }
+        let files = try access.files(selected)
+        func encoded<T: Encodable>(_ value: T) throws -> Any {
+            try JSONSerialization.jsonObject(with: JSONEncoder().encode(value))
+        }
+        var output: [String: Any] = ["device": selected.udid]
+        var content: String
+        switch action {
+        case .listApps(let search):
+            let apps = try await files.apps().filter {
+                guard let search else { return true }
+                return $0.name.localizedCaseInsensitiveContains(search) || $0.bundleIdentifier.localizedCaseInsensitiveContains(search)
+            }
+            output["apps"] = try encoded(apps)
+            content = try json(output)
+        case .listSandboxFiles(let bundle, let path, let offset, let limit):
+            let entries = try await files.list(bundleID: bundle, path: path)
+            let page = Array(entries.dropFirst(offset).prefix(limit))
+            output.merge(["bundle_id": bundle, "path": path, "files": try encoded(page), "total": entries.count,
+                          "offset": offset]) { _, new in new }
+            if offset + page.count < entries.count { output["next_offset"] = offset + page.count }
+            content = try json(output)
+        case .readSandboxFile(let bundle, let path):
+            let text = try await files.readText(bundleID: bundle, path: path)
+            output.merge(["bundle_id": bundle, "path": path, "encoding": "utf-8", "text": text]) { _, new in new }
+            content = try json(output)
+        case .downloadSandboxFile(let bundle, let path, let destination):
+            try await files.download(bundleID: bundle, path: path, to: destination)
+            output.merge(["bundle_id": bundle, "path": path, "local_path": destination.path]) { _, new in new }
+            content = try json(output)
+        default: return nil
+        }
+        return ["content": [mcpText(content)], "structuredContent": output]
     }
 }
 

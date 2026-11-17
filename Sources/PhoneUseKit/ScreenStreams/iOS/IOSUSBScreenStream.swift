@@ -46,6 +46,8 @@ final class USBScreenStream: ScreenStream {
     private let recordingSink = ScreenRecordingSink()
     private var recordingAvailable = false
     var canRecord: Bool { recordingAvailable }
+    func copyFrame() -> CGImage? { recordingSink.frameCapture.copyFrame() }
+    func copyPixelBuffer() -> CVPixelBuffer? { recordingSink.frameCapture.copyPixelBuffer() }
 
     func startRecording(to destination: URL) throws -> any ScreenRecordingSession {
         guard canRecord else { throw DeviceHubError.capabilityUnavailable("USB screen recording") }
@@ -85,6 +87,7 @@ final class USBScreenStream: ScreenStream {
     }
 
     func stop() {
+        recordingSink.frameCapture.reset()
         let session = captureSession
         Task.detached { session.stopRunning() }
     }

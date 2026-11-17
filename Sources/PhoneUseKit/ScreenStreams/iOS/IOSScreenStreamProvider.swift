@@ -17,7 +17,7 @@ enum IOSScreenStreamProvider {
         return fallback
     }
 
-    static func makeVideo(_ session: DeviceSession) async -> (any ScreenStream)? {
+    static func makeVideo(_ session: DeviceSession, captureFrames: Bool = false) async -> (any ScreenStream)? {
         var candidates: [any ScreenStream] = []
         if session.device.osMajorVersion >= 27 { candidates.append(MirrorScreenStream(session: session)) }
         if session.device.isWired {
@@ -26,6 +26,7 @@ enum IOSScreenStreamProvider {
         for candidate in candidates {
             guard !Task.isCancelled else { return nil }
             do {
+                if captureFrames { _ = candidate.copyFrame() }
                 try await candidate.start()
                 return candidate
             } catch {

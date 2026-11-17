@@ -1,4 +1,6 @@
 import Foundation
+import CoreGraphics
+import CoreVideo
 import QuartzCore
 
 public enum ScreenStreamKind: String, Sendable {
@@ -27,9 +29,17 @@ public protocol ScreenStream: AnyObject {
     func startRecording(to destination: URL) throws -> any ScreenRecordingSession
     func start() async throws
     func stop()
+    /// Copies the latest video frame without issuing a device screenshot request.
+    /// Returns nil until a frame is available. Callers should limit their sampling rate.
+    func copyFrame() -> CGImage?
+    /// Retains the latest decoded pixels, avoiding a CPU image copy for video encoders.
+    /// Never modify the returned buffer. Streams without pixel-buffer output return nil.
+    func copyPixelBuffer() -> CVPixelBuffer?
 }
 
 public extension ScreenStream {
+    func copyFrame() -> CGImage? { nil }
+    func copyPixelBuffer() -> CVPixelBuffer? { nil }
     var recoveryPolicy: ScreenStreamRecoveryPolicy { .none }
     var statusMessage: String? { nil }
     var canRecord: Bool { false }
@@ -57,8 +67,8 @@ public func makeScreenStream(for session: DeviceSession) async -> any ScreenStre
 }
 
 @MainActor
-public func makeVideoScreenStream(for session: DeviceSession) async -> (any ScreenStream)? {
-    if session.device.isAndroid { return await AndroidScreenStreamProvider.makeVideo(session) }
+public func makeVideoScreenStream(for session: DeviceSession, captureFrames: Bool = false) async -> (any ScreenStream)? {
+    if session.device.isAndroid { return await AndroidScreenStreamProvider.makeVideo(session, captureFrames: captureFrames) }
     if session.device.isSimulator { return await SimulatorScreenStreamProvider.makeVideo(session) }
-    return await IOSScreenStreamProvider.makeVideo(session)
+    return await IOSScreenStreamProvider.makeVideo(session, captureFrames: captureFrames)
 }

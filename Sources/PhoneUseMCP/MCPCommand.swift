@@ -33,6 +33,7 @@ enum MCPGesture: String, CaseIterable {
 struct MCPCommand {
     enum Action {
         case listDevices, selectDevice, connectDevice, screenshot
+        case webPreview(UInt16)
         case describeUI(json: Bool)
         case activate(UISelector)
         case typeText(String, UISelector?)
@@ -42,6 +43,10 @@ struct MCPCommand {
         case gesture(MCPGesture, Duration)
         case button(HardwareButton, Duration?)
         case launchApp(String)
+        case listApps(String?)
+        case listSandboxFiles(bundleID: String, path: String, offset: Int, limit: Int)
+        case readSandboxFile(bundleID: String, path: String)
+        case downloadSandboxFile(bundleID: String, path: String, destination: URL)
     }
 
     let action: Action
@@ -102,6 +107,38 @@ struct MCPCommand {
             return try UISelector(id: id, label: label, labelContains: contains, elementType: type)
         }
         switch name {
+        case "get_web_preview":
+            let port = try Self.optionalNumber(arguments, "port", range: 1...65535) ?? 8765
+            guard port.rounded() == port else { throw ToolFailure(message: "'port' must be an integer from 1 to 65535.") }
+            action = .webPreview(UInt16(port))
+        case "list_apps": action = .listApps(try Self.string(arguments, "search", optional: true))
+        case "list_sandbox_files", "read_sandbox_file", "download_sandbox_file":
+            let bundle = try Self.string(arguments, "bundle_id")!
+            guard !bundle.contains("\0") else { throw ToolFailure(message: "Invalid bundle_id.") }
+            let path = try DeviceFiles.relativePath(Self.string(arguments, "path", optional: name == "list_sandbox_files") ?? ".")
+            if name == "list_sandbox_files" {
+                func integer(_ key: String, default value: Int, range: ClosedRange<Int>) throws -> Int {
+                    guard arguments[key] != nil else { return value }
+                    let number = try Self.number(arguments, key)
+                    guard number.rounded() == number, Double(range.lowerBound)...Double(range.upperBound) ~= number else {
+                        throw ToolFailure(message: "'\(key)' must be an integer in \(range).")
+                    }
+                    return Int(number)
+                }
+                action = .listSandboxFiles(bundleID: bundle, path: path,
+                                           offset: try integer("offset", default: 0, range: 0...1_000_000),
+                                           limit: try integer("limit", default: 200, range: 1...500))
+            } else {
+                guard path != "." else { throw ToolFailure(message: "Select a file, not the sandbox root.") }
+                if name == "read_sandbox_file" { action = .readSandboxFile(bundleID: bundle, path: path) }
+                else {
+                    let destination = try Self.string(arguments, "destination")!
+                    guard destination.hasPrefix("/"), !destination.contains("\0"), !destination.hasSuffix("/") else {
+                        throw ToolFailure(message: "'destination' must be an absolute local file path, including a filename.")
+                    }
+                    action = .downloadSandboxFile(bundleID: bundle, path: path, destination: URL(fileURLWithPath: destination))
+                }
+            }
         case "list_devices": action = .listDevices
         case "select_device":
             guard device != nil else { throw ToolFailure(message: "select_device requires a device identifier or name.") }

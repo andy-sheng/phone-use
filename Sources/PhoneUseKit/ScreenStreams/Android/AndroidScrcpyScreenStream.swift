@@ -34,6 +34,9 @@ final class AndroidScrcpyScreenStream: ScreenStream {
     }
     var layer: CALayer { displayLayer }
     private(set) var hasDecodedFrame = false
+    private let frameCapture = ScreenFrameCapture()
+    func copyFrame() -> CGImage? { frameCapture.copyFrame() }
+    func copyPixelBuffer() -> CVPixelBuffer? { frameCapture.copyPixelBuffer() }
 
     private let display: DisplayInfo
     private let startEndpoint: StartEndpoint
@@ -110,6 +113,7 @@ final class AndroidScrcpyScreenStream: ScreenStream {
                 guard stream.generation == id, !Task.isCancelled else { transport.close(); return }
                 stream.readTask = AndroidScrcpyScreenStream.decode(
                     transport, display: stream.display, renderer: stream.displayLayer.sampleBufferRenderer,
+                    frameCapture: stream.frameCapture,
                     owner: owner, generation: id)
             } catch {
                 guard !Task.isCancelled else { return }
@@ -121,6 +125,7 @@ final class AndroidScrcpyScreenStream: ScreenStream {
     /// Reads and renders packets off the main actor until cancelled or the stream fails.
     private static func decode(_ transport: any ScrcpyVideoTransport, display: DisplayInfo,
                                renderer: AVSampleBufferVideoRenderer,
+                               frameCapture: ScreenFrameCapture,
                                owner: WeakBox<AndroidScrcpyScreenStream>, generation id: UUID) -> Task<Void, Never> {
         Task.detached {
             do {
@@ -137,6 +142,7 @@ final class AndroidScrcpyScreenStream: ScreenStream {
                     let packet = try decoder.packet(payload, header: header)
                     if packet.formatChanged { renderer.flush(); verifyNextFrame = true }
                     guard let sample = packet.sample else { continue }
+                    frameCapture.append(sample)
                     if verifyNextFrame {
                         try H264FirstFrameDecoder.verify(sample)
                         verifyNextFrame = false
@@ -190,6 +196,7 @@ final class AndroidScrcpyScreenStream: ScreenStream {
     }
 
     func stop() {
+        frameCapture.reset()
         generation = nil
         started = false
         connectionTask?.cancel()

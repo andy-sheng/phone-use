@@ -17,6 +17,10 @@ final class SimulatorScreenStream: ScreenStream {
     private let snapshot: Snapshot
     private let record: ((URL) throws -> ScreenRecording)?
     var canRecord: Bool { record != nil }
+    func copyFrame() -> CGImage? {
+        display.liveImage() ?? initialImage
+    }
+    private var initialImage: CGImage?
 
     func startRecording(to destination: URL) throws -> any ScreenRecordingSession {
         guard let record else { throw DeviceHubError.capabilityUnavailable("Simulator recording") }
@@ -58,6 +62,7 @@ final class SimulatorScreenStream: ScreenStream {
     }
 
     func stop() {
+        initialImage = nil
         if let observer { display.removeObserver(observer) }
         observer = nil
         snapshotTask?.cancel()
@@ -81,6 +86,7 @@ final class SimulatorScreenStream: ScreenStream {
     }
 
     private func show(_ surface: IOSurface) {
+        initialImage = nil
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         preview.orientation = display.framebufferOrientation
@@ -98,6 +104,7 @@ final class SimulatorScreenStream: ScreenStream {
     }
 
     private func setContents(_ image: CGImage) {
+        initialImage = image
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         // Session screenshots already include the orientation correction.

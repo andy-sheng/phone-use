@@ -127,8 +127,7 @@ struct DeviceScreenView: View {
             ScreenSurface(
                 screenLayer: stream.layer,
                 acceptsInput: allowsInput && screen.streamError == nil && !screen.isReconnecting && !screen.isChangingGeometry,
-                onTouch: { phase, point in screen.touch(phase, at: point) },
-                onFlick: { start, delta in screen.flick(from: start, by: delta) }
+                onTouch: { phase, point in screen.touch(phase, at: point) }
             )
         }
     }

@@ -7,7 +7,6 @@ struct ScreenSurface: NSViewRepresentable {
     let screenLayer: CALayer
     var acceptsInput = true
     let onTouch: (TouchPhase, CGPoint) -> Void
-    let onFlick: (CGPoint, CGVector) -> Void
 
     func makeNSView(context: Context) -> SurfaceNSView {
         let view = SurfaceNSView()
@@ -22,7 +21,6 @@ struct ScreenSurface: NSViewRepresentable {
     static func dismantleNSView(_ view: SurfaceNSView, coordinator: ()) {
         view.releaseHeldTouch()
         view.onTouch = nil
-        view.onFlick = nil
         view.hostedLayer = nil
     }
 
@@ -30,7 +28,6 @@ struct ScreenSurface: NSViewRepresentable {
         view.hostedLayer = screenLayer
         view.acceptsInput = acceptsInput
         view.onTouch = onTouch
-        view.onFlick = onFlick
     }
 
     final class SurfaceNSView: NSView {
@@ -40,7 +37,6 @@ struct ScreenSurface: NSViewRepresentable {
             }
         }
         var onTouch: ((TouchPhase, CGPoint) -> Void)?
-        var onFlick: ((CGPoint, CGVector) -> Void)?
         var hostedLayer: CALayer? {
             didSet {
                 guard hostedLayer !== oldValue else { return }
@@ -112,16 +108,13 @@ struct ScreenSurface: NSViewRepresentable {
 
         override func scrollWheel(with event: NSEvent) {
             guard acceptsInput else { return }
+            // Only phased, precise trackpad gestures become device touches. Mouse wheel
+            // events (including smooth wheels without gesture phases) never control devices.
+            guard event.hasPreciseScrollingDeltas, !event.phase.isEmpty else { return }
             // iOS derives its own momentum from the finger's release velocity.
             guard event.momentumPhase.isEmpty else { return }
             let delta = CGVector(dx: event.scrollingDeltaX / max(bounds.width, 1),
                                  dy: event.scrollingDeltaY / max(bounds.height, 1))
-
-            guard event.hasPreciseScrollingDeltas, !event.phase.isEmpty else {
-                let scale = 12.0
-                onFlick?(normalizedLocation(of: event), CGVector(dx: delta.dx * scale, dy: delta.dy * scale))
-                return
-            }
 
             if event.phase.contains(.began) {
                 releaseHeldTouch()

@@ -136,6 +136,9 @@ targets:
       base:
         PRODUCT_NAME: phone-use
         PRODUCT_MODULE_NAME: phone_use_cli
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
+        INFOPLIST_FILE: Support/PhoneUseCLI-Info.plist
+        CODE_SIGN_ENTITLEMENTS: Support/DeviceHub.entitlements
 
   automation-app:
     type: application

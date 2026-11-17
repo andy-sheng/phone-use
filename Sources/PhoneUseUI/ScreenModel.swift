@@ -345,22 +345,6 @@ public final class ScreenModel: ObservableObject {
         CGPoint(x: min(max(point.x, 0), 1), y: min(max(point.y, 0), 1))
     }
 
-    func flick(from start: CGPoint, by delta: CGVector) {
-        guard let session else { return }
-        let end = clamped(CGPoint(x: start.x + delta.dx, y: start.y + delta.dy))
-        let start = clamped(start)
-        Task {
-            do {
-                try await session.swipe(fromX: start.x, fromY: start.y,
-                                        toX: end.x, toY: end.y,
-                                        duration: .milliseconds(80))
-            } catch {
-                guard self.session === session else { return }
-                show("\(error)")
-            }
-        }
-    }
-
     func press(_ button: HardwareButton) {
         guard let session else { return }
         Task {

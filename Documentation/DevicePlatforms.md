@@ -165,7 +165,10 @@ type encoding, so the damage block takes an object. A headless simulator may not
 surface while nobody observes it; screenshots read the surface only after the session's own
 registration has seen a redraw, and otherwise capture with `simctl io screenshot`.
 When Xcode offers `devicectl device orientation`, the simulator controls include left/right
-90° rotation. The session queries the initial physical orientation and uses the command's
+90° rotation. Following DeviceHub, the primary toolbar button rotates Duo right and other
+simulators left, with the matching directional icon. Both directions remain available in
+the button's context menu and the compact device menu, with the primary direction first.
+The session queries the initial physical orientation and uses the command's
 reported orientation after each turn. Duo uses DeviceHub's `orientation-picker-control`
 vendor report to update the virtual motion sensor; a BackBoard orientation override alone is
 immediately superseded by that sensor. Its presets are `portrait`, `pud`, `landscape-left`
@@ -197,6 +200,29 @@ Release builds keep library validation; both frameworks are signed by Apple (`an
 Offline tests cover discovery parsing, supervisor routing and input mapping;
 `DEVICEHUB_SIMULATOR_UDID` enables a read-only display and screenshot check against a booted
 simulator. Touch delivery and the live preview were checked by hand on an iOS 27 simulator.
+
+## App sandbox files
+
+`DeviceFiles` in PhoneUseKit provides read-only app-container access through the existing
+`DeviceCtl` runner. MCP uses this service for `list_apps`, `list_sandbox_files`, `read_sandbox_file` and
+`download_sandbox_file`. These operations resolve the shared device selection without
+opening a video/input session. Android is explicitly unsupported. CoreDevice must know the
+device; daemon-only wireless pairing is not a fallback route for this feature.
+
+App availability comes from `containerAccessible`, not `builtByDeveloper`. Missing access
+metadata stays unknown. Directory listings are non-recursive; devicectl's entry paths are
+relative to the requested directory, and the service returns container-relative paths.
+Absolute paths and parent traversal are rejected. Only regular readable files can be read or
+downloaded; selected symlinks and directories are rejected. UTF-8 previews are limited to
+64 KiB, including a second size check after copying. Downloads stage beside the chosen local
+destination, publish after a successful copy, never replace an existing destination, and
+clean partial copies on failure. No device-side mutation commands are exposed.
+
+Offline tests cover path parsing, reported permissions, preview limits, download cleanup,
+MCP validation/dispatch/pagination. Read-only
+integration tests can be enabled with `DEVICEHUB_SANDBOX_DEVICE`, `DEVICEHUB_SANDBOX_APP`
+and `DEVICEHUB_SANDBOX_FILE`; they list the app/container and download the chosen file to
+a temporary location, without launching or modifying the app.
 
 ## Apple device settings
 
@@ -291,3 +317,36 @@ to avoid restarting an existing ADB server with a different version.
 Daemon tests cover routing, authentication, timeouts and cleanup. Swift tests cover
 framing, H.264 configuration, geometry and stream cancellation. Hardware checks are
 kept separate so offline regression tests never inject input into a connected phone.
+
+### Finder sandbox volumes
+
+PhoneUse's toolbar More menu exposes “应用沙箱…”, which opens the shared `DeviceFilesPanel`
+app picker, then opens
+an actual Finder volume instead of embedding a custom file browser. `DeviceSandboxVolumes`
+calls the daemon's `mountSandbox`, `sandboxMounts` and `unmountSandbox` RPCs. Only physical
+iOS devices are supported. Listing/ejecting mounts does not create a worker; mounting reuses
+the device worker's RSD connection and opens House Arrest for the selected app. It requires
+no screen/video session. The app list still comes from CoreDevice; its reported access flag
+is a hint, while House Arrest determines whether the container can actually be mounted.
+
+`sandbox_mounts.py` serves AFC through pymobiledevice3's existing WebDAV dependencies on
+an ephemeral loopback port. Each volume has a random URL prefix; RPC replies expose only
+mount ID, bundle ID and local path. The provider and macOS mount are read-only, and an ASGI
+guard rejects writes, traversal, unknown URL prefixes and recursive PROPFIND requests.
+`mount_webdav -S` enables system-managed cleanup when the server disappears. A worker
+watcher closes the file service after Finder ejects the volume; normal worker shutdown also
+unmounts volumes before closing the tunnel. A busy explicit eject keeps the server alive so
+users can close files and retry. No Samba, FUSE, device-side agent or additional daemon is
+installed. Finder may cache data; eject/remount to refresh files changed by the running app.
+
+Tests cover the HTTP guard, mount reuse/failure/cancellation/shutdown, Finder eject detection,
+RPC routing and late UI results after dismissing/changing devices. The Python opt-in test
+uses the same `DEVICEHUB_SANDBOX_DEVICE`, `DEVICEHUB_SANDBOX_APP`, `DEVICEHUB_SANDBOX_FILE`
+variables to mount through RSD, list/read a real file, check the filesystem read-only flag,
+and unmount. Run it with `PYTHONPATH=Daemon .venv-daemon/bin/python -m unittest discover
+-s Daemon/tests -p test_sandbox_mounts.py -v`.
+
+The picker loads real PNG app icons through `appIcon` and SpringBoard's `getIconPNGData`
+over the same RSD connection. Requests are serialized, bounded to 512 KiB per icon, and
+cached in worker memory by bundle ID/version (up to 128 entries). Rows load asynchronously
+and use a placeholder on failure; missing icons do not block app selection or mounting.

@@ -8,6 +8,7 @@ struct PhoneUseWindow: View {
     @EnvironmentObject private var model: DeviceListModel
     @AppStorage("inspector.visible") private var showsPanel = true
     @AppStorage("inspector.tab") private var selectedTab = Tab.uiTree.rawValue
+    @State private var filesDevice: DeviceSummary?
 
     enum Tab: String, CaseIterable {
         case uiTree, calls, settings, deviceInfo
@@ -24,7 +25,8 @@ struct PhoneUseWindow: View {
 
     var body: some View {
         DeviceWorkspace(title: "PhoneUse", tabs: Tab.allCases.map(\.workspaceTab),
-                        selectedTab: $selectedTab, showsPanel: $showsPanel) { tab, screen in
+                        selectedTab: $selectedTab, showsPanel: $showsPanel,
+                        browseSandbox: { filesDevice = $0 }) { tab, screen in
             switch Tab(rawValue: tab.id) ?? .settings {
             case .uiTree:
                 DeviceUIOutlinePanel(device: model.selectedDevice, screen: screen)
@@ -40,5 +42,7 @@ struct PhoneUseWindow: View {
                 }
             }
         }
+        .sheet(item: $filesDevice) { DeviceFilesPanel(device: $0) }
+        .onAppear { if selectedTab == "files" { selectedTab = Tab.uiTree.rawValue } }
     }
 }

@@ -105,7 +105,7 @@ private struct LayoutFixture: View {
         } detail: {
             DeviceFrame(screenAspectRatio: screenAspectRatio) {
                 ScreenSurface(screenLayer: screenLayer, acceptsInput: false,
-                              onTouch: { _, _ in }, onFlick: { _, _ in })
+                              onTouch: { _, _ in })
             }
             .padding(.top, 52)
             .padding(.bottom, 84)

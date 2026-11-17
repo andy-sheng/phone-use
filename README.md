@@ -46,6 +46,47 @@ swift build && swift run automation-app
 
 Android 设备需要启用 USB 调试并授权电脑；输入控制还可能需要厂商的 USB 调试安全设置。
 
+### 本地 Web 视频预览
+
+应用或守护进程运行后，可用 CLI 启动本地 HTTP 视频预览与控制：
+
+```sh
+swift build --product phone-use
+.build/debug/phone-use serve 8765
+# 指定设备（省略时选择第一台就绪设备）
+.build/debug/phone-use --device android:SERIAL serve 8765
+```
+
+打开 `http://127.0.0.1:8765/`。`/stream.mjpeg` 是可直接用于 `<img>` 的 MJPEG 流，
+`/snapshot.jpg` 返回流的最新画面，`/health` 返回设备、视频来源和输出帧数。
+服务只监听本机 IPv4 回环地址，按 Ctrl-C 停止；USB iPhone 首次使用需要允许摄像头权限。
+
+在网页画面上点击、长按或拖动后松开，可执行点击、长按和直线滑动（最长两秒）；按 Esc
+或切出网页可取消尚未提交的手势。下方提供 Home、音量和锁屏 / 唤醒，Android 另外提供返回和多任务。
+手势在松开后执行，不是实时跟手拖拽，不支持多指触控。设备操作失败会显示原因，不自动重试。
+物理 iPhone 的触控使用竖屏坐标；画面方向与设备输入尺寸不一致时会拒绝触控，避免点错位置。
+
+网页通过 `POST /input` 提交操作，使用每次服务启动随机生成的 `X-PhoneUse-Token`，
+并校验来源和 JSON 参数；不同网页的操作不会并发执行。服务重启后需要刷新网页。设备尚未输出视频时页面保持等待，`/health` 的 `frames` 为 0，截图返回 503。
+单独嵌入下方 `<img>` 只显示视频，不包含控制界面。
+
+MCP 模型可调用 `get_web_preview`（`device?`、`port?`，默认 8765）检查当前服务并获取页面地址。
+连接工具会自动校验 Web 地址并返回 `next_required_action`，后续截图、启动和输入结果也会重复引导。
+模型应使用允许的本机浏览器工具打开页面；宿主规则禁止或能力不可用时，展示链接并说明原因。
+详见 [MCP 页面引导](Documentation/MCP.md#引导模型打开实时控制页)。
+
+```html
+<img src="http://127.0.0.1:8765/stream.mjpeg" alt="设备实时画面">
+```
+
+画面来自 USB 视频、Android scrcpy、iOS Mirror 或模拟器帧缓冲，不循环调用设备截图接口。
+网页优先使用 VideoToolbox 硬件 H.264 编码、WebSocket 传输和 WebCodecs 解码，目标 60 fps，
+保留源分辨率（最长边最多 4096 像素，尺寸对齐偶数），不含音频。实际更新率受设备视频源、编码和浏览器性能限制。
+浏览器不支持 WebCodecs 或硬件编码不可用时自动回退到 MJPEG（最长边 1920、目标 30 fps）；
+`/snapshot.jpg` 保留最长边 4096 的高质量画面。慢客户端只保留有界的在途帧，H.264 丢帧后等待关键帧恢复，避免延迟积累。
+页面只显示手机画面和基本按键；点击、长按、滑动直接在画面上操作，↻ 刷新连接。
+其他网页嵌入时仍受浏览器混合内容和本地网络访问策略约束。
+
 在侧栏选中设备后，点击屏幕中央的「连接」才会建立预览会话并加载画面。连接过程中可取消，失败后可点击「重试」；切换设备后需要重新点击连接。
 
 ## ADB 依赖下载
@@ -141,6 +182,35 @@ Claude Desktop、Cursor 等使用 JSON 配置的客户端，在 MCP 配置中加
 MCP 也可通过 `list_devices` → `select_device` → `connect_device` 完成界面的选中与连接流程；选择与界面同步，连接成功后请求预览。省略 `device` 时使用当前选择，并发 agent 应显式指定设备。
 
 工具定义、模拟器 UI 树与文本输入、手势、坐标单位及旧调用兼容见 [MCP 操作约定](Documentation/MCP.md)。
+
+## 应用沙箱文件
+
+选择就绪的 iPhone 或 iPad，打开工具栏「…」菜单中的「应用沙箱…」，搜索并选择应用，再点击「在 Finder 中打开」。
+应用列表按需加载设备上安装的真实应用图标；图标不可用时显示默认图标。
+沙箱会挂载成 Finder 原生的只读卷，可使用列表/分栏浏览、快速查看、拖拽复制到 Mac。
+重复打开同一应用会复用挂载；在 Finder 或应用选择弹窗中「弹出」即可断开。
+关闭选择弹窗不会卸载卷；设备连接结束或守护进程退出时会清理挂载。
+
+Finder 挂载通过现有设备连接上的 House Arrest/AFC 服务，以本机回环地址的 WebDAV 提供，
+每个卷使用随机访问地址，仅允许读取，不需要安装 Samba 或额外的文件系统驱动。
+目录和文件内容可能被 Finder 缓存，设备端文件变化后可弹出并重新挂载刷新。
+应用列表仍通过 Xcode/CoreDevice 获取，需本机提供 `devicectl` 且能识别目标设备。
+应用是否开放容器以实际请求结果为准，开发签名或 Debug 名称本身并不保证权限。
+Finder 挂载暂不支持模拟器和 Android；任意系统路径、Keychain、iCloud Drive 和第三方文件提供器
+不在此功能范围内。
+
+MCP 保留独立的 CoreDevice 文件接口，不依赖 Finder 挂载，沿用设备选择规则，也可显式传入 `device`：
+
+- `list_apps`：可选 `search`，返回应用及容器访问权限。
+- `list_sandbox_files`：必填 `bundle_id`，`path` 默认为 `.`；返回文件类型、大小、修改时间，
+  支持 `offset` / `limit` 分页（默认 200，最多 500），存在后续条目时返回 `next_offset`。
+- `read_sandbox_file`：传入 `bundle_id` 和容器相对 `path`，返回最多 64 KiB 的 UTF-8 文本。
+- `download_sandbox_file`：另传 `destination`（运行 PhoneUse 的 Mac 上的绝对文件路径），
+  下载成功后返回 `local_path`。不递归下载目录，不跟随所选符号链接。
+
+例如先列出应用，再用返回的 Bundle ID 浏览 `Library`。所有远端路径都相对应用数据容器，
+不接受绝对路径或 `..`。运行中的 SQLite 数据库可能依赖 WAL/SHM；单独下载 `.db` 文件不代表
+取得了一份一致的数据库备份。
 
 ## 自动更新与发布
 

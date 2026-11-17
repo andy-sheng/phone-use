@@ -836,6 +836,13 @@ class Supervisor:
             self._ios_record(udid)
             worker = await self._worker(udid)
             return await worker.call("startMirror", {}, timeout=60)
+        if method in {"mountSandbox", "sandboxMounts", "unmountSandbox", "appIcon"}:
+            self._ios_record(udid)
+            worker = await self._worker(udid) if method in {"mountSandbox", "appIcon"} else self.workers.get(udid or "")
+            if worker is None:
+                return {"mounts": []} if method == "sandboxMounts" else {}
+            forwarded = {key: value for key, value in params.items() if key != "udid"}
+            return await worker.call(method, forwarded, timeout=45)
         if method == "stopMirror":
             self._ios_record(udid)
             worker = self.workers.get(udid or "")

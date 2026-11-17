@@ -3,6 +3,7 @@ import Foundation
 
 /// Receives samples on the stream's existing delivery queue. No second device connection is opened.
 final class ScreenRecordingSink: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
+    let frameCapture = ScreenFrameCapture()
     private let lock = NSLock()
     private var recording: StreamRecording?
 
@@ -16,6 +17,7 @@ final class ScreenRecordingSink: NSObject, AVCaptureVideoDataOutputSampleBufferD
     }
 
     func append(_ sample: CMSampleBuffer) {
+        frameCapture.append(sample)
         lock.withLock { recording }?.append(sample)
     }
 

@@ -14,6 +14,7 @@ usage: phone-use [--device <name|udid|android:serial|simulator:udid>] <command>
   screenshot <file.png>
   launch <bundle-id|package-name>
   bench                            screenshot polling rate
+  serve [port]                     local web video preview (default: 8765)
 
 Needs a running phone-use (or a daemon at $DEVICEHUB_SOCKET).
 """
@@ -65,6 +66,12 @@ func run() async throws {
     }
     let hub = DeviceHub.shared
     switch command {
+    case "serve":
+        let value = arguments.count > 1 ? arguments[1] : "8765"
+        guard let port = UInt16(value), port > 0, arguments.count <= 2 else {
+            throw DeviceHubError.serviceFailed("Usage: phone-use [--device <device>] serve [1...65535]")
+        }
+        try await serveWebPreview(deviceQuery: deviceQuery, port: port)
     case "list":
         for device in try await hub.devices() {
             print([device.name, device.state.rawValue, device.productType ?? "", device.osDescription ?? "",

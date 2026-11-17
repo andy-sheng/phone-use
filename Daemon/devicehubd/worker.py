@@ -25,10 +25,12 @@ from pymobiledevice3.services.dvt.instruments.location_simulation import Locatio
 from pymobiledevice3.services.mobile_image_mounter import auto_mount
 
 from devicehubd import protocol
+from devicehubd.app_icons import AppIcons
 from devicehubd.ios_ui import IOSUI, selector_from
 from devicehubd.ios_keyboard import text_keys, type_keys
 from devicehubd.lifetime import WORKER_EXIT_DEADLINE, exit_after
 from devicehubd.protocol import RpcError
+from devicehubd.sandbox_mounts import SandboxMounts
 from devicehubd.transports import Tunnel, make_tunnel
 
 logger = logging.getLogger("devicehubd.worker")
@@ -94,6 +96,8 @@ class Worker:
         self._location_lock = asyncio.Lock()
         self._audit: Optional[AccessibilityAudit] = None
         self._audit_lock = asyncio.Lock()
+        self._sandbox_mounts: SandboxMounts | None = None
+        self._app_icons: AppIcons | None = None
 
     async def emit(self, message: dict[str, Any]) -> None:
         async with self._out_lock:
@@ -328,6 +332,20 @@ class Worker:
         try:
             if method == "forward":
                 result: Any = {"port": await self.forward(params["service"])}
+            elif method == "mountSandbox":
+                if self._sandbox_mounts is None:
+                    self._sandbox_mounts = SandboxMounts(self.rsd)
+                result = await self._sandbox_mounts.mount(params.get("bundleID"), params.get("label"))
+            elif method == "appIcon":
+                if self._app_icons is None:
+                    self._app_icons = AppIcons(self.rsd)
+                result = await self._app_icons.get(params.get("bundleID"), params.get("version", ""))
+            elif method == "sandboxMounts":
+                result = {"mounts": self._sandbox_mounts.snapshot() if self._sandbox_mounts else []}
+            elif method == "unmountSandbox":
+                if self._sandbox_mounts:
+                    await self._sandbox_mounts.unmount(params.get("token"))
+                result = {}
             elif method == "startMirror":
                 result = {"port": await self.start_mirror(), "path": "/stream.bin"}
             elif method == "stopMirror":
@@ -360,6 +378,8 @@ class Worker:
             await asyncio.sleep(1)
 
     async def close(self) -> None:
+        if self._sandbox_mounts:
+            await self._sandbox_mounts.close()
         await self.stop_mirror()
         await self._stop_location()
         await self._close_audit()

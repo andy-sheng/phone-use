@@ -21,9 +21,10 @@ enum AndroidScreenStreamProvider {
         }
     }
 
-    static func makeVideo(_ session: DeviceSession) async -> (any ScreenStream)? {
+    static func makeVideo(_ session: DeviceSession, captureFrames: Bool = false) async -> (any ScreenStream)? {
         let stream = AndroidScrcpyScreenStream(session: session)
         do {
+            if captureFrames { _ = stream.copyFrame() }
             try await stream.start()
             return stream
         } catch {

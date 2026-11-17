@@ -46,7 +46,8 @@ let package = Package(
 
         // phone-use
         .target(name: "PhoneUseMCP", dependencies: ["PhoneUseKit"]),
-        .executableTarget(name: "PhoneUseCLI", dependencies: ["PhoneUseKit"]),
+        .executableTarget(name: "PhoneUseCLI", dependencies: ["PhoneUseKit"],
+                          linkerSettings: infoPlist("PhoneUseCLI-Info.plist")),
         .executableTarget(name: "PhoneUseMCPServer", dependencies: ["PhoneUseKit", "PhoneUseMCP"]),
         .executableTarget(
             name: "PhoneUseApp",
@@ -66,6 +67,7 @@ let package = Package(
         .executableTarget(name: "AutomationBridge", dependencies: ["PhoneUseKit"]),
 
         .testTarget(name: "PhoneUseKitTests", dependencies: ["PhoneUseKit"]),
+        .testTarget(name: "PhoneUseCLITests", dependencies: ["PhoneUseCLI"]),
         .testTarget(name: "PhoneUseUITests", dependencies: ["PhoneUseUI", "PhoneUseKit"]),
         .testTarget(name: "PhoneUseMCPTests", dependencies: ["PhoneUseMCP", "PhoneUseKit"]),
         .testTarget(name: "PhoneUseAppTests", dependencies: ["PhoneUseApp", "PhoneUseKit"]),

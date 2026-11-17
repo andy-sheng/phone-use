@@ -146,6 +146,25 @@ public actor DaemonClient {
         try await callIgnoringResult("stopMirror", ["udid": udid])
     }
 
+    public func mountSandbox(_ udid: String, bundleID: String, label: String) async throws -> SandboxMount {
+        try await call("mountSandbox", ["udid": udid, "bundleID": bundleID, "label": label], as: SandboxMount.self)
+    }
+
+    public func appIcon(_ udid: String, bundleID: String, version: String = "") async throws -> Data? {
+        struct Reply: Decodable { let png: String? }
+        let reply = try await call("appIcon", ["udid": udid, "bundleID": bundleID, "version": version], as: Reply.self)
+        return reply.png.flatMap { Data(base64Encoded: $0) }
+    }
+
+    public func sandboxMounts(_ udid: String) async throws -> [SandboxMount] {
+        struct Reply: Decodable { let mounts: [SandboxMount] }
+        return try await call("sandboxMounts", ["udid": udid], as: Reply.self).mounts
+    }
+
+    public func unmountSandbox(_ udid: String, token: String) async throws {
+        try await callIgnoringResult("unmountSandbox", ["udid": udid, "token": token])
+    }
+
     func iosUITree(_ udid: String) async throws -> UITree {
         try await call("describeUI", ["udid": udid], as: UITree.self)
     }

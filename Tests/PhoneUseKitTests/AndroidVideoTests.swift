@@ -69,15 +69,34 @@ final class AndroidVideoTests: XCTestCase {
         XCTAssertThrowsError(try decoder.packet(rotated, header: parsedHeader(config: true, length: rotated.count)))
     }
 
+    func testCompressedVideoCanBeCopiedForWebPreview() throws {
+        let parts = try split(portrait)
+        var builder = H264SampleBuilder(display: display)
+        _ = try builder.packet(parts.config, header: parsedHeader(config: true, length: parts.config.count))
+        let frame = try builder.packet(parts.frame, header: parsedHeader(key: true, length: parts.frame.count))
+        let capture = ScreenFrameCapture()
+        XCTAssertNil(capture.copyFrame())
+        capture.append(try XCTUnwrap(frame.sample))
+        let image = try XCTUnwrap(capture.copyFrame())
+        XCTAssertEqual(image.width, 64)
+        XCTAssertEqual(image.height, 128)
+        capture.reset()
+        XCTAssertNil(capture.copyFrame())
+        capture.append(try XCTUnwrap(frame.sample))
+        XCTAssertNotNil(capture.copyFrame())
+    }
+
     func testStartWaitsForAnActuallyDecodedFrameAndStopReleasesOnlyItsToken() async throws {
         let transport = FakeVideoTransport(data: try framedVideo())
         let endpoints = EndpointRecorder()
         let stream = AndroidScrcpyScreenStream(display: display, startupTimeout: .seconds(3),
             startEndpoint: { AndroidVideoEndpoint(port: 12345, token: "video-one") },
             stopEndpoint: { await endpoints.stop($0) }, transportFactory: { _ in transport })
+        XCTAssertNil(stream.copyFrame())
         try await stream.start()
         XCTAssertEqual(stream.kind, .scrcpy)
         XCTAssertTrue(stream.hasDecodedFrame)
+        XCTAssertNotNil(stream.copyFrame())
         XCTAssertEqual(transport.writes, [Data("video-one\n".utf8)])
         stream.stop()
         stream.stop()

@@ -44,6 +44,7 @@ public struct DeviceWorkspace<Panel: View>: View {
     @Binding private var showsPanel: Bool
     private let allowsInput: Bool
     private let badgedTabs: Set<String>
+    private let browseSandbox: ((DeviceSummary) -> Void)?
     private let panel: (WorkspaceTab, ScreenModel) -> Panel
 
     /// - Parameters:
@@ -53,6 +54,7 @@ public struct DeviceWorkspace<Panel: View>: View {
     ///   - panel: the side panel's content for the selected tab.
     public init(title: String, tabs: [WorkspaceTab], selectedTab: Binding<String>, showsPanel: Binding<Bool>,
                 allowsInput: Bool = true, badgedTabs: Set<String> = [],
+                browseSandbox: ((DeviceSummary) -> Void)? = nil,
                 @ViewBuilder panel: @escaping (WorkspaceTab, ScreenModel) -> Panel) {
         self.title = title
         self.tabs = tabs
@@ -60,6 +62,7 @@ public struct DeviceWorkspace<Panel: View>: View {
         _showsPanel = showsPanel
         self.allowsInput = allowsInput
         self.badgedTabs = badgedTabs
+        self.browseSandbox = browseSandbox
         self.panel = panel
     }
 
@@ -303,6 +306,12 @@ public struct DeviceWorkspace<Panel: View>: View {
         let isAndroid = model.selectedDevice?.isAndroid ?? false
         return Menu {
             Button("启动应用…") { showingLaunch = true }.disabled(!canControl)
+            if let browseSandbox {
+                Button("应用沙箱…", systemImage: "folder") {
+                    if let device = model.selectedDevice { browseSandbox(device) }
+                }
+                .disabled(model.selectedDevice.map { !$0.isReady || $0.isAndroid || $0.isSimulator } ?? true)
+            }
             Divider()
             if isAndroid {
                 Button("重新连接画面") { Task { await screen.reconnect() } }
@@ -402,8 +411,7 @@ public struct DeviceWorkspace<Panel: View>: View {
                         Button("音量 +") { screen.press(.volumeUp) }
                         if screen.canRotate {
                             Divider()
-                            Button("向左旋转 90°", systemImage: "rotate.left") { screen.rotate(.left) }
-                            Button("向右旋转 90°", systemImage: "rotate.right") { screen.rotate(.right) }
+                            rotationMenu
                         }
                     } label: {
                         Image(systemName: "ellipsis")
@@ -423,12 +431,12 @@ public struct DeviceWorkspace<Panel: View>: View {
             .padding(4)
             .glassCapsule()
             if screen.canRotate && !isCompact {
-                HStack(spacing: 2) {
-                    ControlBarButton("向左旋转 90°", assetImage: "DeviceRotateLeft") { screen.rotate(.left) }
-                        .accessibilityIdentifier("device.rotate.left")
-                    ControlBarButton("向右旋转 90°", assetImage: "DeviceRotateRight") { screen.rotate(.right) }
-                        .accessibilityIdentifier("device.rotate.right")
+                ControlBarButton(screen.canFold ? "向右旋转 90°" : "向左旋转 90°",
+                                 assetImage: screen.canFold ? "DeviceRotateRight" : "DeviceRotateLeft") {
+                    screen.rotate(primaryRotationDirection)
                 }
+                .accessibilityIdentifier("device.rotate.\(primaryRotationDirection.rawValue)")
+                .contextMenu { rotationMenu }
                 .disabled(!canControl)
                 .padding(4)
                 .glassCapsule()
@@ -442,6 +450,24 @@ public struct DeviceWorkspace<Panel: View>: View {
                 .disabled(!canControl)
                 .padding(4)
                 .glassCapsule()
+            }
+        }
+    }
+
+    // Match DeviceHub: Duo exposes Rotate Right, while other simulators expose Rotate Left.
+    private var primaryRotationDirection: DeviceRotationDirection { screen.canFold ? .right : .left }
+
+    private var rotationMenu: some View {
+        let directions: [DeviceRotationDirection] = screen.canFold ? [.right, .left] : [.left, .right]
+        return ForEach(directions, id: \.rawValue) { direction in
+            Button {
+                screen.rotate(direction)
+            } label: {
+                Label {
+                    Text(direction == .right ? "向右旋转 90°" : "向左旋转 90°")
+                } icon: {
+                    Image(direction == .right ? "DeviceRotateRight" : "DeviceRotateLeft", bundle: .module)
+                }
             }
         }
     }
@@ -599,24 +625,31 @@ private struct DeviceRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: device.deviceIcon)
-                .font(.system(size: 14))
-                .frame(width: 30, height: 30)
-                .background(.quaternary, in: Circle())
-                .foregroundStyle(device.isAttached ? .primary : .tertiary)
+            if device.isSimulator {
+                SimulatorDeviceIcon(device: device)
+            } else {
+                Image(systemName: device.deviceIcon)
+                    .font(.system(size: 14))
+                    .frame(width: 32, height: 32)
+                    .background(.quaternary, in: Circle())
+                    .foregroundStyle(device.isAttached ? .primary : .tertiary)
+            }
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
                     Text(device.name)
+                        .fontWeight(device.isSimulator ? .semibold : .regular)
                         .lineLimit(1)
-                    Image(device.isAndroid ? "PlatformAndroid" : "PlatformApple", bundle: platformIconBundle)
-                        .resizable()
-                        .renderingMode(.template)
-                        .scaledToFit()
-                        .frame(width: 14, height: 14)
-                        .foregroundStyle(.secondary)
-                        .help(device.platformName)
-                        .accessibilityLabel(device.platformName)
-                        .fixedSize()
+                    if !device.isSimulator {
+                        Image(device.isAndroid ? "PlatformAndroid" : "PlatformApple", bundle: platformIconBundle)
+                            .resizable()
+                            .renderingMode(.template)
+                            .scaledToFit()
+                            .frame(width: 14, height: 14)
+                            .foregroundStyle(.secondary)
+                            .help(device.platformName)
+                            .accessibilityLabel(device.platformName)
+                            .fixedSize()
+                    }
                 }
                 Text(subtitle)
                     .font(.caption)
