@@ -31,6 +31,19 @@ final class UIAutomationTests: XCTestCase {
         XCTAssertThrowsError(try SimulatorKeyboard.keys(for: String(repeating: "a", count: 10001)))
     }
 
+    func testPhysicalTreeDecodesUnknownGeometryAndEnabledStateWithoutFabricatingValues() throws {
+        let data = Data(#"{"elements":[{"type":"Button","label":"Save","depth":0}],"truncated":false,"coordinateSpace":"unavailable"}"#.utf8)
+        let tree = try JSONDecoder().decode(UITree.self, from: data)
+        XCTAssertNil(tree.elements[0].frame)
+        XCTAssertNil(tree.elements[0].enabled)
+        XCTAssertEqual(tree.outline, "Button \"Save\"")
+        XCTAssertFalse(tree.outline.contains("frame="))
+        let roundTrip = try JSONSerialization.jsonObject(with: JSONEncoder().encode(tree)) as! [String: Any]
+        let row = (roundTrip["elements"] as! [[String: Any]])[0]
+        XCTAssertNil(row["frame"])
+        XCTAssertNil(row["enabled"])
+    }
+
     func testModernHIDSelectionUsesLoadedCoreSimulatorVersion() {
         XCTAssertFalse(SimulatorInput.requiresModernHID(version: nil))
         XCTAssertFalse(SimulatorInput.requiresModernHID(version: "1155.3"))
@@ -76,8 +89,9 @@ final class UIAutomationTests: XCTestCase {
         // Also exercise the HID coordinate channel, independently of AX activation.
         let returned = try await connection.uiTree()
         let freshGeneral = try XCTUnwrap(returned.elements.first { $0.id == general.id })
-        try await connection.tap(x: (freshGeneral.frame.x + freshGeneral.frame.width / 2) / display.pointWidth,
-                                 y: (freshGeneral.frame.y + freshGeneral.frame.height / 2) / display.pointHeight)
+        let frame = try XCTUnwrap(freshGeneral.frame)
+        try await connection.tap(x: (frame.x + frame.width / 2) / display.pointWidth,
+                                 y: (frame.y + frame.height / 2) / display.pointHeight)
         try await Task.sleep(for: .milliseconds(500))
         let tapped = try await connection.uiTree()
         guard tapped.elements.contains(where: { $0.type == "Heading" && $0.label == general.label }) else {

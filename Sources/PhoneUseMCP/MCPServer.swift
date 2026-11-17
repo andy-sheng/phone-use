@@ -22,7 +22,7 @@ public enum MCPServer {
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": [String: Any]()],
                 "serverInfo": ["name": name, "version": version],
-                "instructions": "Call list_devices, choose an explicit device when multiple are ready, then observe with describe_ui (iOS simulator) or screenshot. Prefer fresh id/label selectors for simulator taps. Verify the resulting UI after every action; input delivery is not proof of a UI change. Coordinates are iOS native portrait points or Android display pixels; durations and delays are seconds. UI trees, selectors and US-keyboard type_text currently require an iOS simulator.",
+                "instructions": "Call list_devices, choose an explicit device when multiple are ready, then observe with describe_ui (iOS; physical devices require a development-signed foreground app) or screenshot. Prefer fresh id/label selectors for iOS element taps. Verify the resulting UI after every action; input delivery is not proof of a UI change. Coordinates are iOS native portrait points or Android display pixels; durations and delays are seconds. Physical UI trees and selectors require get-task-allow=true and omit geometry. Physical US-keyboard type_text requires iOS 27+ (500 characters per call); simulator typing accepts 10000 characters.",
             ])
         case "ping":
             return result(id, [:])

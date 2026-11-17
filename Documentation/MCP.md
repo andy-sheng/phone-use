@@ -8,15 +8,15 @@ PhoneUseKit 的共享设备会话执行；无需另装 sim-use、idb、XcodeBuil
 
 1. 调用 `list_devices`，查看设备状态及 `capabilities`。只有 `ready` 设备可操作。
 2. 多台设备就绪时必须传 `device`，优先使用返回的完整标识；名称匹配不唯一时也会报错。
-3. iOS 模拟器优先用 `describe_ui` 读取界面，并用 `id`、`label` 或 `label_contains` 定位。
-   真机、Android 或自绘控件使用 `screenshot`，根据返回图像的坐标操作。
+3. iOS 模拟器和真机中的开发签名应用优先用 `describe_ui` 读取界面，并用 `id`、`label` 或 `label_contains` 定位。
+   真机中的系统/App Store/TestFlight 应用、Android 或自绘控件使用 `screenshot`，根据返回图像的坐标操作。
 4. 操作后再次读取 UI 树或截图验证。返回 `input_sent: true` 仅表示输入已发送，
    `ui_change_verified` 仍为 `false`，不表示页面或字段已经按预期变化。
 
 ## 工具
 
 PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `describe_ui` 文本。
-先连接所选模拟器，面板打开时每次读取完成后间隔 1 秒刷新，支持暂停、立即刷新和复制。
+先连接所选 iOS 设备，面板打开时每次读取完成后刷新：模拟器间隔 1 秒、真机间隔 3 秒，错误后至少等待 5 秒。支持暂停、立即刷新和复制。
 切换页签、隐藏面板或进入紧凑窗口后停止读取；切换设备时清空旧内容，并忽略旧请求的迟到结果。
 读取失败会显示错误及上次成功更新时间，后续刷新继续尝试。它复用预览会话，单纯选中设备不会建立连接。
 
@@ -24,14 +24,14 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
 | --- | --- | --- |
 | `list_devices` | 无 | iOS/Android 真机与已启动的 iOS 模拟器；返回每台设备的能力 |
 | `screenshot` | `device?` | JPEG 图像、尺寸、平台、坐标单位与原点 |
-| `describe_ui` | `device?`, `format?: outline/json` | iOS 模拟器前台应用的 UI 树；默认简洁文本，不附加原始私有对象 |
+| `describe_ui` | `device?`, `format?: outline/json` | iOS 模拟器或真机开发签名应用的 UI 树；默认简洁文本，不附加原始私有对象 |
 | `tap` | `x, y` 或一个元素选择器；`duration?` | 坐标点击支持可选按住时长；元素点击使用实时无障碍激活 |
 | `long_press` | `x, y, duration?` | 长按，默认 **0.8 秒** |
 | `swipe` | `start_x, start_y, end_x, end_y, duration?` | 单指拖动，默认 **0.3 秒** |
 | `gesture` | `preset, duration?` | 四个滚动和四个边缘手势；滚动默认 **0.5 秒**，边缘默认 **0.3 秒** |
 | `button` | `button, duration?` | 硬件按钮，可指定按住时长 |
 | `launch_app` | `bundle_id` | iOS bundle ID 或 Android 包名/activity，启动或重新启动已安装的应用 |
-| `type_text` | `text`，可选元素选择器 | iOS 模拟器原生 HID 键盘输入；指定选择器时先激活文本框 |
+| `type_text` | `text`，可选元素选择器 | iOS 模拟器及 iOS 27+ 真机 HID 键盘输入；指定选择器时先激活文本框 |
 
 输入操作共同支持 `device`、`pre_delay`、`post_delay` 和 `return_screen`。
 新参数 `duration`、`pre_delay`、`post_delay` 均以**秒**为单位；时长须大于 0 且不超过
@@ -44,11 +44,15 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
   原点为左上角，X 向右、Y 向下。坐标和截图使用同一尺寸。
 - iOS 坐标为设备的**原生竖屏 framebuffer** 坐标，Android 为当前显示坐标。
   这与 sim-use 默认的方向校准 UI 坐标有区别；不要将横屏 UI 树的 frame 直接当作截图坐标。
-- `describe_ui` 的 frame 使用无障碍 UI 点坐标，`coordinateSpace` 为
+- 模拟器 `describe_ui` 的 frame 使用无障碍 UI 点坐标，`coordinateSpace` 为
   `accessibility-ui-points`。元素点击走无障碍激活，不靠猜测旋转或换算 frame。
 - 元素包含 `type`、`id`、`label`、`value`、`enabled`、`frame`、`depth`。
   安全文本框不返回其值。遍历最多 500 个元素、32 层；到达上限会返回 `truncated: true`。
   读取有超时限制，不自动重启模拟器或它的无障碍服务。
+- 真机使用 `coordinateSpace: unavailable`，不返回 `frame` 或 `value`，未报告的启用状态省略 `enabled`。
+  保留设备返回的角色名称用于 `element_type` 匹配，不通过坐标推测元素位置。
+  层级查询使用 `_AXHierarchyElementsAttribute`，不移动检查器焦点，也不会为读取树主动滚动页面。
+  真机读取/操作最多执行 30 秒（含排队，不含有限的清理时间）；截断树不能证明匹配唯一，因此拒绝按元素操作。
 - 自绘界面、部分 WebView 和跨进程弹层可能缺失控件；UI 树不保证覆盖所有可见内容。
   缺失时查看截图；无障碍服务错误不会伪造空树或成功操作。
 
@@ -63,13 +67,13 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
 ```
 
 `id` 和 `label` 精确匹配，`label_contains` 为区分大小写的子串匹配；`element_type`
-是可选角色过滤器。每次操作重新读取树，必须恰好匹配一个启用的元素。
+是可选角色过滤器。每次操作重新读取树，必须恰好匹配一个元素；已知禁用或忽略的元素会拒绝。真机无法确认启用状态时不伪造状态，激活后需验证。
 找不到或匹配多项时返回候选，要求重新读取并细化选择器，不选择第一项。
 选择器不能混用，`tap` 的选择器也不能与坐标或 `duration` 混用。
 当前没有 sim-use 的 `@N`/列表缓存别名，也不承诺 MobileBuildMCP 的 `elementRef` 快照协议兼容。
 
 `type_text` 与 sim-use 的 HID `type` 一样支持 US 键盘字符：英文字母、数字、标点、空格、
-换行和 Tab，单次最多 10000 字符。它在当前光标/选区输入，不清空整个文本框，
+换行和 Tab，模拟器单次最多 10000 字符、真机最多 500 字符。它在当前光标/选区输入，不清空整个文本框，
 并遵循设备当前键盘、输入法及智能标点设置；输入法组合态和候选需要另外确认。
 中文、emoji 等需要在屏幕输入法中输入；整段包含不支持字符时，会在激活文本框或发送任何键之前拒绝。
 未指定选择器时，应先点击输入框；指定选择器时，目标必须为文本输入控件。
@@ -115,8 +119,14 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
 另接受 `ui` 和 `snapshot_ui` 作为 `describe_ui` 的调用别名，但不实现其他工具的完整协议。
 新旧坐标字段或新旧时长字段不能同时提交；错误类型、超范围、未知参数不会被静默忽略。
 
-UI 树、元素定位和直接文本输入目前仅适用于 **iOS 模拟器**。iOS 真机和 Android 保留
-现有截图、坐标输入、按钮与应用启动能力；没有这些新增能力时会明确给出替代操作。
+iOS 真机的 UI 树和元素定位需要设备已配对、解锁、启用开发者模式，并且前台应用为
+**开发签名（`get-task-allow=true`）**。系统、App Store、TestFlight 和分发签名应用不支持此层级接口，
+继续使用截图及坐标操作。PhoneUse 复用现有 RSD 隧道和 Developer Disk Image；无需安装额外 Runner。
+
+真机 `type_text` 使用当前依赖提供的临时 Universal HID 键盘，要求 **iOS 27+** 的屏幕流认证。
+它复用已有屏幕流，不停止其他消费者的流；临时硬件键盘可能暂时收起屏幕键盘，结束时释放按键并关闭键盘连接。
+不指定选择器时可向已聚焦输入框发送按键；指定选择器仍受开发签名限制。发送失败不自动重试。
+Android 暂不支持 UI 树、元素定位和直接文本输入，原有截图、坐标输入、按钮与应用启动能力不变。
 Framework 不依赖 MCP 或第三方工具，PhoneUse 和 Automation 仍保持相互独立。
 
 ## 参考来源
@@ -147,3 +157,14 @@ DEVICEHUB_SIMULATOR_UDID=<UDID> swift test --filter UIAutomationTests.testLiveSi
 ```sh
 DEVICEHUB_SIMULATOR_UDID=<UDID> PHONEUSE_LIVE_UI_ACTIONS=1 swift test --filter UIAutomationTests.testLiveSimulatorInteractions
 ```
+
+
+真机只读集成检查（先解锁并打开开发签名应用，普通测试不会连接设备）：
+
+```sh
+PHONEUSE_PHYSICAL_UDID=<UDID> PHONEUSE_PHYSICAL_CONNECTION=usb \
+PYTHONPATH=Daemon .venv-daemon/bin/python -m unittest discover -s Daemon/tests -p test_ios_ui.py -k test_live_physical_hierarchy -v
+```
+
+无线设备可将 connection 设为 `network`，需要 PhoneUse 已有可用的配对通道。
+该检查只验证层级读取，不代表元素激活、文字送达或 macOS 侧边栏视觉效果已验证。

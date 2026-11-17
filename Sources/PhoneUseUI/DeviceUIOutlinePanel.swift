@@ -27,7 +27,7 @@ final class UIOutlineModel: ObservableObject {
         }
     }
 
-    func run(deviceID: String, read: @MainActor () async throws -> UITree?) async {
+    func run(deviceID: String, pollInterval: Duration? = nil, read: @MainActor () async throws -> UITree?) async {
         guard !Task.isCancelled else { return }
         let token = UUID()
         generation = token
@@ -58,7 +58,9 @@ final class UIOutlineModel: ObservableObject {
                 self.error = String(describing: error)
             }
             isRefreshing = false
-            do { try await Task.sleep(for: interval) } catch { return }
+            let normalInterval = pollInterval ?? interval
+            let delay = error != nil && pollInterval != nil ? max(normalInterval, .seconds(5)) : normalInterval
+            do { try await Task.sleep(for: delay) } catch { return }
         }
     }
 }
@@ -76,6 +78,8 @@ public struct DeviceUIOutlinePanel: View {
         self.screen = screen
     }
 
+    private var supportsOutline: Bool { device.map { !$0.isAndroid } ?? false }
+
     private var isConnected: Bool {
         guard let device else { return false }
         return device.isReady && screen.isShowingDevice(device.id) && screen.stream != nil
@@ -90,7 +94,7 @@ public struct DeviceUIOutlinePanel: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("describe_ui").font(.headline.monospaced())
-                    Text(device?.isSimulator != true || !isConnected ? "等待可用的模拟器连接" : isPaused ? "已暂停" : "实时刷新 · 间隔 1 秒")
+                    Text(!supportsOutline || !isConnected ? "等待可用的 iOS 连接" : isPaused ? "已暂停" : (device?.isSimulator == true ? "实时刷新 · 间隔 1 秒" : "实时刷新 · 间隔 3 秒"))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -98,10 +102,10 @@ public struct DeviceUIOutlinePanel: View {
                     Label(isPaused ? "继续刷新" : "暂停刷新", systemImage: isPaused ? "play.fill" : "pause.fill")
                 }
                 .help(isPaused ? "继续刷新" : "暂停刷新")
-                .disabled(!isConnected || device?.isSimulator != true)
+                .disabled(!isConnected || !supportsOutline)
                 Button { refreshGeneration += 1 } label: { Label("立即刷新", systemImage: "arrow.clockwise") }
                     .help("立即刷新")
-                    .disabled(isPaused || !isConnected || device?.isSimulator != true || model.isRefreshing)
+                    .disabled(isPaused || !isConnected || !supportsOutline || model.isRefreshing)
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(model.outline, forType: .string)
@@ -125,11 +129,11 @@ public struct DeviceUIOutlinePanel: View {
             }
         }
         .task(id: pollingKey) {
-            guard let device, device.isSimulator, isConnected, !isPaused else {
-                model.stop(clear: !isPaused || !isConnected || device?.isSimulator != true)
+            guard let device, supportsOutline, isConnected, !isPaused else {
+                model.stop(clear: !isPaused || !isConnected || !supportsOutline)
                 return
             }
-            await model.run(deviceID: device.id) { try await screen.uiTree(for: device.id) }
+            await model.run(deviceID: device.id, pollInterval: device.isSimulator ? .seconds(1) : .seconds(3)) { try await screen.uiTree(for: device.id) }
         }
         .onDisappear { model.stop(clear: true) }
     }
@@ -138,9 +142,9 @@ public struct DeviceUIOutlinePanel: View {
     private var content: some View {
         if device == nil {
             ContentUnavailableView("未选择设备", systemImage: "iphone")
-        } else if device?.isSimulator != true {
+        } else if !supportsOutline {
             ContentUnavailableView("此设备暂不支持界面结构", systemImage: "list.bullet.indent",
-                                   description: Text("describe_ui 目前支持 iOS 模拟器。"))
+                                   description: Text("describe_ui 支持 iOS；真机需要开发签名应用。"))
         } else if !isConnected {
             ContentUnavailableView("连接后查看界面结构", systemImage: "link",
                                    description: Text("点击设备画面中的“连接”后自动开始刷新。"))

@@ -20,9 +20,9 @@ enum MCPToolCatalog {
             "description": "Screenshot coordinate: iOS points, Android pixels; origin at top-left. iOS uses the native portrait framebuffer."]
         let observe = " Observe with screenshot before acting, then verify the resulting screen; input delivery alone does not confirm a UI change."
         let selectors: [String: Any] = [
-            "id": ["type": "string", "minLength": 1, "description": "Exact accessibility identifier from describe_ui (iOS simulator only)."],
-            "label": ["type": "string", "minLength": 1, "description": "Exact accessibility label (iOS simulator only)."],
-            "label_contains": ["type": "string", "minLength": 1, "description": "Case-sensitive label substring (iOS simulator only)."],
+            "id": ["type": "string", "minLength": 1, "description": "Exact accessibility identifier from describe_ui (iOS; physical devices require a development-signed app)."],
+            "label": ["type": "string", "minLength": 1, "description": "Exact accessibility label (iOS; physical devices require a development-signed app)."],
+            "label_contains": ["type": "string", "minLength": 1, "description": "Case-sensitive label substring (iOS; physical devices require a development-signed app)."],
             "element_type": ["type": "string", "minLength": 1, "description": "Optional accessibility role filter, such as Button or TextField. Requires a selector."],
         ]
 
@@ -41,9 +41,9 @@ enum MCPToolCatalog {
         return [
             tool("list_devices", "List attached iOS/Android devices and booted iOS simulators (connection: simulator). Only state: ready devices can be controlled. Multiple ready devices require an explicit device argument.", [:], action: false),
             tool("screenshot", "Capture a JPEG image and coordinate metadata. One image pixel corresponds to one input coordinate: iOS points or Android pixels. iOS uses native portrait coordinates, not orientation-calibrated UI coordinates.", ["device": device], action: false),
-            tool("describe_ui", "Read the foreground app's accessibility tree (iOS simulators only). Prefer id, then label selectors from this result. Frames use accessibility UI points; use screenshot for native coordinate taps. Not all custom-rendered controls expose accessibility; use screenshot for visual checks. Run again after each action.",
+            tool("describe_ui", "Read the foreground app's accessibility tree (iOS; physical devices require an unlocked, development-signed foreground app with get-task-allow=true; system/App Store/TestFlight apps are unsupported). Physical trees omit frames and may omit enabled status. Prefer id, then label selectors from this result. Frames use accessibility UI points; use screenshot for native coordinate taps. Not all custom-rendered controls expose accessibility; use screenshot for visual checks. Run again after each action.",
                  ["device": device, "format": ["type": "string", "enum": ["outline", "json"], "default": "outline"]], action: false),
-            tool("tap", "Tap x/y, OR activate exactly one id/label/label_contains selector (simulator only), optionally filtered by element_type. Selectors are resolved fresh and must match exactly one enabled element; no cached aliases. duration is supported for coordinate taps only (e.g. 0.05 seconds for a switch)." + observe,
+            tool("tap", "Tap x/y, OR activate exactly one id/label/label_contains selector (iOS; physical devices require a development-signed app), optionally filtered by element_type. Selectors are resolved fresh and must match exactly one element; known disabled/ignored elements are rejected and physical enabled state may be unknown. No cached aliases. duration is supported for coordinate taps only (e.g. 0.05 seconds for a switch)." + observe,
                  fields(selectors.merging(["x": coordinate, "y": coordinate, "duration": duration]) { _, new in new }),
                  oneOf: [["x", "y"], ["id"], ["label"], ["label_contains"]]),
             tool("long_press", "Touch and hold a screen coordinate. duration is in seconds (default 0.8), following sim-use long-press." + observe,
@@ -64,7 +64,7 @@ enum MCPToolCatalog {
                  fields(["button": ["type": "string", "enum": buttonNames], "duration": duration]), required: ["button"]),
             tool("launch_app", "Launch or relaunch an installed app using an iOS bundle identifier or Android package/activity name." + observe,
                  fields(["bundle_id": ["type": "string", "minLength": 1]]), required: ["bundle_id"]),
-            tool("type_text", "Type into the focused field, optionally focusing exactly one id/label/label_contains selector first (iOS simulator only). Uses US keyboard HID like sim-use type: ASCII letters, digits, punctuation, space, newline and tab; Unicode text must use the on-screen input method. Input follows the active keyboard/IME, so inspect composition/candidates as well as the field. Inserts at the current caret/selection without clearing existing text. Unsupported text is rejected in full before focus or typing. Inspect the field after errors before retrying.",
+            tool("type_text", "Type into the focused field, optionally focusing exactly one id/label/label_contains selector first. Physical iOS requires iOS 27+ and accepts at most 500 characters; selector focus requires a development-signed app. Simulator accepts 10000 characters. Uses US keyboard HID like sim-use type: ASCII letters, digits, punctuation, space, newline and tab; Unicode text must use the on-screen input method. Input follows the active keyboard/IME, so inspect composition/candidates as well as the field. Inserts at the current caret/selection without clearing existing text. Unsupported text is rejected in full before focus or typing. Inspect the field after errors before retrying.",
                  fields(selectors.merging(["text": ["type": "string", "minLength": 1, "maxLength": 10000]]) { _, new in new }), required: ["text"]),
         ]
     }()

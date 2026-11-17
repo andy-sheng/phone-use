@@ -146,6 +146,22 @@ public actor DaemonClient {
         try await callIgnoringResult("stopMirror", ["udid": udid])
     }
 
+    func iosUITree(_ udid: String) async throws -> UITree {
+        try await call("describeUI", ["udid": udid], as: UITree.self)
+    }
+
+    /// One RPC holds the tree and its live element handle on the same DTX connection.
+    func iosUIAction(_ udid: String, selector: UISelector?, text: String? = nil) async throws {
+        var params = ["udid": udid]
+        if let selector {
+            let fields = ["id": selector.id, "label": selector.label, "label_contains": selector.labelContains,
+                          "element_type": selector.elementType].compactMapValues { $0 }
+            params["selector"] = String(decoding: try JSONEncoder().encode(fields), as: UTF8.self)
+        }
+        if let text { params["text"] = text }
+        try await callIgnoringResult(text == nil ? "activateUI" : "typeText", params)
+    }
+
     /// The device's accessibility audit settings, such as `REDUCE_MOTION` or `DYNAMIC_TYPE`.
     func accessibilitySettings(_ udid: String) async throws -> [String: Any] {
         try Self.settings(in: await rawCall("accessibilitySettings", ["udid": udid]))

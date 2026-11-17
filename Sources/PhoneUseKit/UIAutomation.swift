@@ -30,7 +30,7 @@ public struct UISelector: Sendable {
             }.joined(separator: "; ")
             throw DeviceHubError.serviceFailed("\(matches.isEmpty ? "No element matches" : "Multiple elements match") the selector. Run describe_ui and refine id/label/element_type. Candidates: \(candidates)")
         }
-        guard elements[matches[0]].enabled else { throw DeviceHubError.serviceFailed("The matching element is disabled") }
+        guard elements[matches[0]].enabled != false else { throw DeviceHubError.serviceFailed("The matching element is disabled") }
         return matches[0]
     }
 }
@@ -46,15 +46,17 @@ public struct UIElement: Codable, Sendable {
     public let id: String?
     public let label: String?
     public let value: String?
-    public let enabled: Bool
-    public let frame: Frame
+    /// nil means the platform did not report enabled state.
+    public let enabled: Bool?
+    /// Physical AX Audit supplies no geometry; never substitute a zero rectangle.
+    public let frame: Frame?
     public let depth: Int
 }
 
 public struct UITree: Codable, Sendable {
     public let elements: [UIElement]
     public let truncated: Bool
-    /// AX frames are visual UI points. Selectors are activated through AX, without coordinate guessing.
+    /// Simulator AX frames are visual UI points; physical AX Audit uses "unavailable".
     public let coordinateSpace: String
 
     public var outline: String {
@@ -63,8 +65,8 @@ public struct UITree: Codable, Sendable {
             let id = element.id.map { " id=\(String(reflecting: $0))" } ?? ""
             // Secure field values must never be included in either output format.
             let value = element.value.map { " value=\(String(reflecting: String($0.prefix(120))))" } ?? ""
-            let frame = element.frame
-            return "\(String(repeating: "  ", count: element.depth))\(element.type)\(label)\(id)\(value)\(element.enabled ? "" : " disabled") frame=(\(frame.x),\(frame.y),\(frame.width),\(frame.height))"
+            let frame = element.frame.map { " frame=(\($0.x),\($0.y),\($0.width),\($0.height))" } ?? ""
+            return "\(String(repeating: "  ", count: element.depth))\(element.type)\(label)\(id)\(value)\(element.enabled == false ? " disabled" : "")\(frame)"
         }.joined(separator: "\n") + (truncated ? "\n[Tree truncated; use stable selectors or screenshot for missing controls.]" : "")
     }
 }
@@ -84,7 +86,7 @@ enum SimulatorKeyboard {
             if let index = plain.firstIndex(of: char) { return Key(code: codes[index], shift: false) }
             if let index = shifted.firstIndex(of: char) { return Key(code: codes[index], shift: true) }
             if let code: UInt32 = [" ": 44, "\n": 40, "\t": 43][String(char)] { return Key(code: code, shift: false) }
-            throw DeviceHubError.capabilityUnavailable("Text contains characters unsupported by simulator HID typing. Use US keyboard characters, or enter Unicode using the on-screen input method. No text was sent")
+            throw DeviceHubError.capabilityUnavailable("Text contains characters unsupported by HID typing. Use US keyboard characters, or enter Unicode using the on-screen input method. No text was sent")
         }
     }
 }

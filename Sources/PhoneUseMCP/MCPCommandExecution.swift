@@ -53,9 +53,11 @@ extension MCPCommand {
         if case .listDevices = action {
             let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(devices)) as? [[String: Any]] ?? []
             let rows = zip(devices, encoded).map { device, row in
-                row.merging(["capabilities": device.isSimulator
-                    ? ["screenshot", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "describe_ui", "element_targeting", "type_text"]
-                    : ["screenshot", "tap", "long_press", "swipe", "gesture", "button", "launch_app"],
+                var capabilities = ["screenshot", "tap", "long_press", "swipe", "gesture", "button", "launch_app"]
+                if !device.isAndroid { capabilities += ["describe_ui", "element_targeting"] }
+                if device.isSimulator || !device.isAndroid && device.osMajorVersion >= 27 { capabilities.append("type_text") }
+                return row.merging(["capabilities": capabilities,
+                    "ui_scope": device.isAndroid ? "unavailable" : device.isSimulator ? "accessibility" : "development-signed foreground app (get-task-allow=true); no element geometry",
                     "coordinate_unit": device.isAndroid ? "pixels" : "points"]) { _, new in new }
             }
             return ["content": [mcpText(try json(rows))], "structuredContent": ["devices": rows]]
@@ -95,10 +97,15 @@ extension MCPCommand {
                 throw ToolFailure(message: "Button \(button.rawValue) is unavailable on \(selected.platform.rawValue). back/recents are Android-only; siri is iOS-only.")
             }
         case .describeUI, .activate, .typeText:
-            guard selected.isSimulator else {
-                throw ToolFailure(message: "UI trees, element targeting and direct text input are currently supported on iOS simulators only. Use screenshot, coordinate tap and the on-screen keyboard for this device.")
+            guard !selected.isAndroid else {
+                throw ToolFailure(message: "UI trees, element targeting and direct text input are currently unavailable on Android. Use screenshot, coordinate tap and the on-screen keyboard for this device.")
             }
         default: break
+        }
+        if case .typeText(let text, _) = action, !selected.isSimulator {
+            guard session.device.osMajorVersion >= 27, text.count <= 500 else {
+                throw ToolFailure(message: "Physical iOS type_text requires iOS 27+ and accepts up to 500 US keyboard characters per call. Use the on-screen keyboard on older devices.")
+            }
         }
         if case .screenshot = action { return ["content": try await screen(), "structuredContent": metadata] }
         if case .describeUI(let useJSON) = action {
@@ -144,7 +151,7 @@ extension MCPCommand {
         default: throw ToolFailure(message: "Unsupported action")
         }
         if postDelay > .zero { try await Task.sleep(for: postDelay) }
-        var content = [mcpText(summary + " Verify the resulting UI with describe_ui (simulator) or screenshot before the next action.")]
+        var content = [mcpText(summary + " Verify the resulting UI with describe_ui (supported iOS apps) or screenshot before the next action.")]
         var output: [String: Any] = ["device": selected.udid, "input_sent": true, "ui_change_verified": false]
         if returnScreen {
             do {

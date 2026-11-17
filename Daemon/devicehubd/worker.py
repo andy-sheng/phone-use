@@ -25,6 +25,8 @@ from pymobiledevice3.services.dvt.instruments.location_simulation import Locatio
 from pymobiledevice3.services.mobile_image_mounter import auto_mount
 
 from devicehubd import protocol
+from devicehubd.ios_ui import IOSUI, selector_from
+from devicehubd.ios_keyboard import text_keys, type_keys
 from devicehubd.lifetime import WORKER_EXIT_DEADLINE, exit_after
 from devicehubd.protocol import RpcError
 from devicehubd.transports import Tunnel, make_tunnel
@@ -237,6 +239,48 @@ class Worker:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(audit.__aexit__(None, None, None), timeout=3)
 
+    async def ui_command(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        # Validate before opening inspector, focusing a target, or authenticating HID.
+        selector = selector_from(params.get("selector")) if method == "activateUI" or "selector" in params else None
+        keys = text_keys(params.get("text")) if method == "typeText" else None
+        if keys is not None and Version(self.rsd.product_version) < MIRROR_MIN_VERSION:
+            raise RpcError("unsupported", "Physical iOS type_text requires iOS 27 media-authenticated HID; use the on-screen keyboard")
+        audit = None
+        inspector = None
+        # Includes lock wait: an expired queued command must never execute later.
+        try:
+            async with asyncio.timeout(30):
+                async with self._audit_lock:
+                    try:
+                        if method != "typeText" or selector is not None:
+                            # Separate from the persistent settings channel, which must stay open.
+                            audit = AccessibilityAudit(self.rsd)
+                            await audit.__aenter__()
+                            inspector = IOSUI(audit)
+                            await inspector.prepare()
+                        if method == "describeUI":
+                            tree, _ = await inspector.fetch()
+                            return tree
+                        if selector is not None:
+                            await inspector.activate(selector, text_target=keys is not None)
+                        if keys is not None:
+                            # Reuse existing preview authentication; do not stop another consumer's stream.
+                            await self.start_mirror()
+                            await asyncio.sleep(0.5)
+                            await type_keys(self.rsd, keys)
+                        return {}
+                    finally:
+                        if inspector is not None:
+                            await inspector.finish()
+                        if audit is not None:
+                            with contextlib.suppress(Exception):
+                                await asyncio.wait_for(audit.close(), 1)
+        except TimeoutError as error:
+            message = "UI request timed out. "
+            message += ("Unlock the device and use a development-signed foreground app." if method == "describeUI"
+                        else "Input may have been sent; inspect the screen before retrying. The action was not replayed.")
+            raise RpcError("uiTimeout", message) from error
+
     async def simulate_location(self, latitude: float, longitude: float) -> None:
         """The device keeps a simulated location only while its DVT channel stays open."""
         async with self._location_lock:
@@ -289,6 +333,8 @@ class Worker:
             elif method == "stopMirror":
                 await self.stop_mirror()
                 result = {}
+            elif method in {"describeUI", "activateUI", "typeText"}:
+                result = await self.ui_command(method, params)
             elif method == "accessibilitySettings":
                 result = {"settings": await self.accessibility_settings()}
             elif method == "setAccessibilitySetting":

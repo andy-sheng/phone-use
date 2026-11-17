@@ -71,6 +71,15 @@ final class IOSDeviceConnection: DeviceConnection, Sendable {
         _ = try CoreDeviceInvocation.output(of: reply, feature: AppLaunch.feature)
     }
 
+    func uiTree() async throws -> UITree { try await channels.uiTree() }
+
+    func activate(_ selector: UISelector) async throws { try await channels.uiAction(selector: selector) }
+
+    func typeText(_ text: String, target: UISelector?) async throws {
+        _ = try SimulatorKeyboard.keys(for: text)
+        try await channels.uiAction(selector: target, text: text)
+    }
+
     func close() async {
         await channels.closeAll()
     }
@@ -110,6 +119,12 @@ actor ServiceChannels {
         }
         let state = phase == .ended ? HIDReports.release : HIDReports.contact
         try await send(DeviceService.universalHID, HIDReports.touchMessage(HIDReports.touchscreen(state: state, x: x, y: y)))
+    }
+
+    func uiTree() async throws -> UITree { try await daemon.iosUITree(udid) }
+
+    func uiAction(selector: UISelector?, text: String? = nil) async throws {
+        try await daemon.iosUIAction(udid, selector: selector, text: text)
     }
 
     func closeAll() async {

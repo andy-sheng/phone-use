@@ -4,9 +4,9 @@ import XCTest
 @testable import PhoneUseMCP
 import PhoneUseKit
 
-private func testDevice(_ id: String = "simulator:one", name: String = "iPhone", platform: String = "ios", connection: String = "simulator") throws -> DeviceSummary {
+private func testDevice(_ id: String = "simulator:one", name: String = "iPhone", platform: String = "ios", connection: String = "simulator", version: String = "") throws -> DeviceSummary {
     try JSONDecoder().decode(DeviceSummary.self, from: JSONSerialization.data(withJSONObject: [
-        "udid": id, "name": name, "platform": platform, "connection": connection, "state": "ready", "session": "open",
+        "productVersion": version, "udid": id, "name": name, "platform": platform, "connection": connection, "state": "ready", "session": "open",
     ]))
 }
 
@@ -132,6 +132,37 @@ final class MCPCommandTests: XCTestCase {
         _ = try await result("type_text", ["text": "Hello!", "id": "name"], session: session)
         _ = try await result("snapshot_ui", [:], session: session)
         XCTAssertEqual(session.calls, ["swipe 0.5,0.8 0.5,0.2 0.5 seconds", "swipe 0.5,1.0 0.5,0.3 0.3 seconds", "activate save", "type Hello! name", "tree"])
+    }
+
+    func testPhysicalIOSRoutesHierarchyAndSelectorsAndReportsConditionalCapabilities() async throws {
+        let session = try TestSession(device: testDevice("physical", connection: "usb"))
+        let ui = try await result("describe_ui", [:], session: session)
+        XCTAssertNil(ui["isError"])
+        _ = try await result("tap", ["id": "save"], session: session)
+        XCTAssertEqual(session.calls, ["tree", "activate save"])
+        let list = try await result("list_devices", [:], session: session)
+        let rows = (list["structuredContent"] as? [String: Any])?["devices"] as? [[String: Any]]
+        let capabilities = try XCTUnwrap(rows?.first?["capabilities"] as? [String])
+        XCTAssertTrue(capabilities.contains("describe_ui"))
+        XCTAssertTrue(capabilities.contains("element_targeting"))
+        // The fixture has no known OS version; never promise the iOS 27 HID path.
+        XCTAssertFalse(capabilities.contains("type_text"))
+        let text = try await result("type_text", ["text": "Hello"], session: session)
+        XCTAssertEqual(text["isError"] as? Bool, true)
+        XCTAssertEqual(session.calls, ["tree", "activate save"])
+    }
+
+    func testPhysicalIOS27TextLimitsAndCapabilityReporting() async throws {
+        let session = try TestSession(device: testDevice("physical", connection: "network", version: "27.1"))
+        let list = try await result("list_devices", [:], session: session)
+        let rows = (list["structuredContent"] as? [String: Any])?["devices"] as? [[String: Any]]
+        XCTAssertTrue((rows?.first?["capabilities"] as? [String])?.contains("type_text") == true)
+        let invalid = try await result("type_text", ["text": String(repeating: "a", count: 501), "id": "field"], session: session)
+        XCTAssertEqual(invalid["isError"] as? Bool, true)
+        XCTAssertTrue(session.calls.isEmpty, "Length must fail before selector activation")
+        let valid = try await result("type_text", ["text": "42", "id": "field"], session: session)
+        XCTAssertNil(valid["isError"])
+        XCTAssertEqual(session.calls, ["type 42 field"])
     }
 
     func testAmbiguousDeviceSelectionNeverOpensASession() async throws {

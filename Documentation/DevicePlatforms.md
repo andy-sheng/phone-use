@@ -148,8 +148,15 @@ input. The AXP translator runs on a serial background queue with bounded callbac
 selectors are resolved fresh and ambiguous matches fail. AX frames are UI points, distinct from
 the native portrait screenshot coordinates. Element activation uses AX rather than guessing a
 rotation transform. Text input validates the complete string before activation, releases keys on
-failure and never replays partial input. Physical iOS and Android adapters currently report these
-capabilities as unavailable. The MCP contract and compatibility details are in [MCP.md](MCP.md).
+failure and never replays partial input. The physical iOS adapter forwards hierarchy and selector
+operations to `ios_ui.py` through the existing daemon. A bounded, serialized AX Audit session reads
+`_AXHierarchyElementsAttribute` without focus walking; selectors are resolved and activated on the
+same DTX connection. Inspector cleanup runs on success, failure and cancellation independently of
+the persistent settings channel. Only development-signed foreground apps expose this hierarchy.
+Physical trees omit unavailable geometry and value, and enabled state may be unknown. Truncated
+trees cannot be used for selector actions. On iOS 27+, `ios_keyboard.py` supplies a temporary virtual
+HID keyboard authenticated by the worker's existing media stream; partial input is never replayed.
+Android still reports these capabilities as unavailable. The MCP contract and compatibility details are in [MCP.md](MCP.md).
 
 Release builds keep library validation; both frameworks are signed by Apple (`anchor apple`).
 Offline tests cover discovery parsing, supervisor routing and input mapping;

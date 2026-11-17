@@ -71,6 +71,7 @@ WORKER_STOP_GRACE = 5.0
 WORKER_TERMINATE_GRACE = 1.0
 WORKER_KILL_GRACE = 2.0
 # Device settings the worker serves over its tunnel, used when Xcode's devicectl is not available.
+WORKER_UI_METHODS = {"describeUI", "activateUI", "typeText"}
 WORKER_SETTINGS_METHODS = {"accessibilitySettings", "setAccessibilitySetting", "simulateLocation", "clearLocation"}
 # Native-resolution PNG responses can be several MB; asyncio's default is 64 KB.
 WORKER_READ_LIMIT = 64 * 1024 * 1024
@@ -834,7 +835,7 @@ class Supervisor:
             if worker is not None:
                 await worker.call("stopMirror", {})
             return {}
-        if method in WORKER_SETTINGS_METHODS:
+        if method in WORKER_SETTINGS_METHODS | WORKER_UI_METHODS:
             self._ios_record(udid)
             worker = await self._worker(udid)
             forwarded = {key: value for key, value in params.items() if key != "udid"}

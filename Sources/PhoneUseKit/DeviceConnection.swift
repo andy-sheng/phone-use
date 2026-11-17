@@ -19,9 +19,9 @@ protocol DeviceConnection: Sendable {
 }
 
 extension DeviceConnection {
-    func uiTree() async throws -> UITree { throw DeviceHubError.capabilityUnavailable("UI tree on this device; supported on iOS simulators. Use screenshot for this device") }
-    func activate(_ selector: UISelector) async throws { throw DeviceHubError.capabilityUnavailable("Element targeting on this device; supported on iOS simulators. Use screenshot and coordinate tap") }
-    func typeText(_ text: String, target: UISelector?) async throws { throw DeviceHubError.capabilityUnavailable("Direct text input on this device; supported on iOS simulators. Use the on-screen keyboard") }
+    func uiTree() async throws -> UITree { throw DeviceHubError.capabilityUnavailable("UI tree on this device; supported on iOS (physical UI trees require development signing). Use screenshot for this device") }
+    func activate(_ selector: UISelector) async throws { throw DeviceHubError.capabilityUnavailable("Element targeting on this device; supported on iOS (physical UI trees require development signing). Use screenshot and coordinate tap") }
+    func typeText(_ text: String, target: UISelector?) async throws { throw DeviceHubError.capabilityUnavailable("Direct text input on this device; supported on iOS (physical UI trees require development signing). Use the on-screen keyboard") }
 }
 
 /// How `DeviceSession` delivers the interactive preview's queued touches to one adapter.
