@@ -15,6 +15,12 @@ final class MirrorScreenStream: ScreenStream {
     private let session: DeviceSession
     private let displayLayer = AVSampleBufferDisplayLayer()
     private var readTask: Task<Void, Never>?
+    private let recordingSink = ScreenRecordingSink()
+    var canRecord: Bool { true }
+
+    func startRecording(to destination: URL) throws -> any ScreenRecordingSession {
+        try recordingSink.start(to: destination)
+    }
 
     init(session: DeviceSession) {
         self.session = session
@@ -29,6 +35,7 @@ final class MirrorScreenStream: ScreenStream {
         }
         let renderer = displayLayer.sampleBufferRenderer
         let owner = WeakBox(self)
+        let recordingSink = recordingSink
         readTask = Task.detached {
             var decoder = HEVCSampleBuilder()
             var meter = FrameMeter()
@@ -40,15 +47,23 @@ final class MirrorScreenStream: ScreenStream {
                     guard length > 0 else { continue }
                     let frame = try await Self.read(length, from: &iterator)
                     let frameKind = frame[frame.startIndex]
-                    if frameKind == 2 { renderer.flush() }
+                    if frameKind == 2 {
+                        renderer.flush()
+                        recordingSink.fail("The video stream dropped frames. Start a new recording.")
+                    }
                     guard let sample = decoder.sample(fromAccessUnit: frame.dropFirst(), isKey: frameKind != 1) else { continue }
                     if renderer.status == .failed { renderer.flush() }
                     renderer.enqueue(sample)
+                    recordingSink.append(sample)
                     if let fps = meter.tick() {
                         await MainActor.run { owner.value?.onFrame?(fps) }
                     }
                 }
             } catch {
+                if !Task.isCancelled {
+                    recordingSink.fail("The video stream ended: \(error)")
+                    await MainActor.run { owner.value?.onError?("The video stream ended: \(error)") }
+                }
                 FileHandle.standardError.write(Data("mirror stream ended: \(error)\n".utf8))
             }
         }

@@ -1,6 +1,6 @@
 """iOS Simulator discovery through ``simctl``; importing this module never touches a simulator.
 
-Only booted iOS/iPadOS simulators are published. Their record UDIDs carry a ``simulator:``
+Available iOS/iPadOS simulators are published, including shut-down devices. Their UDIDs carry a ``simulator:``
 prefix so they can never collide with a physical device, and control happens in the client
 process through CoreSimulator rather than through a daemon worker.
 """
@@ -25,6 +25,7 @@ class SimulatorAttachment:
     name: str
     product_type: str | None
     product_version: str
+    state: str = "Booted"
 
     @property
     def udid(self) -> str:
@@ -40,7 +41,7 @@ def product_type(device_type: str | None) -> str | None:
 
 
 def parse_devices(output: str) -> list[SimulatorAttachment]:
-    """Parses ``simctl list devices -j``, keeping booted iOS and iPadOS simulators."""
+    """Parses available iOS and iPadOS simulators, preserving their power state."""
     devices: dict[str, Any] = json.loads(output).get("devices") or {}
     attached = []
     for runtime, entries in devices.items():
@@ -49,7 +50,7 @@ def parse_devices(output: str) -> list[SimulatorAttachment]:
             continue
         version = match.group(1).replace("-", ".")
         for entry in entries:
-            if not isinstance(entry, dict) or entry.get("state") != "Booted":
+            if not isinstance(entry, dict) or entry.get("state") not in {"Booted", "Shutdown", "Booting", "Shutting Down"}:
                 continue
             if entry.get("isAvailable") is False or not entry.get("udid"):
                 continue
@@ -58,6 +59,7 @@ def parse_devices(output: str) -> list[SimulatorAttachment]:
                 name=entry.get("name") or entry["udid"],
                 product_type=product_type(entry.get("deviceTypeIdentifier")),
                 product_version=version,
+                state=entry["state"],
             ))
     return attached
 
@@ -83,7 +85,7 @@ class SimulatorDiscovery:
         if xcrun is None:
             self._last = []
             return self._last
-        output = await self.command(xcrun, "simctl", "list", "devices", "booted", "-j")
+        output = await self.command(xcrun, "simctl", "list", "devices", "available", "-j")
         self._last = parse_devices(output)
         return self._last
 

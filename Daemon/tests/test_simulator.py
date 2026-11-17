@@ -25,9 +25,11 @@ LISTING = json.dumps({"devices": {
 
 
 class ParsingTests(unittest.TestCase):
-    def test_only_booted_available_ios_simulators_are_listed(self):
+    def test_available_ios_simulators_include_shutdown_devices(self):
         devices = {device.identifier: device for device in parse_devices(LISTING)}
-        self.assertEqual(set(devices), {"AAAA", "CCCC"})
+        self.assertEqual(set(devices), {"AAAA", "BBBB", "CCCC"})
+        self.assertEqual(devices["BBBB"].state, "Shutdown")
+        self.assertEqual(devices["AAAA"].state, "Booted")
         phone = devices["AAAA"]
         self.assertEqual((phone.udid, phone.name, phone.product_type, phone.product_version),
                          ("simulator:AAAA", "iPhone 17 Pro", "iPhone 17 Pro", "27.1"))
@@ -49,7 +51,7 @@ class DiscoveryTests(unittest.IsolatedAsyncioTestCase):
             first = await discovery.attached()
             second = await discovery.attached()
         self.assertEqual(first, second)
-        command.assert_awaited_once_with("/usr/bin/xcrun", "simctl", "list", "devices", "booted", "-j")
+        command.assert_awaited_once_with("/usr/bin/xcrun", "simctl", "list", "devices", "available", "-j")
 
     async def test_missing_xcode_lists_nothing(self):
         with patch("devicehubd.simulator.find_xcrun", return_value=None):
@@ -89,6 +91,36 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.supervisor.simulators.attached.return_value = []
         await self.poll()
         self.assertEqual(self.supervisor.records["simulator:AAAA"].state, "disconnected")
+        self.assertIsNone(self.supervisor.records["simulator:AAAA"].to_json()["simulatorState"])
+
+    async def test_shutdown_is_discovered_before_first_boot_and_cannot_open(self):
+        self.supervisor.simulators.attached.return_value = [
+            SimulatorAttachment("AAAA", "iPhone 17 Pro", "iPhone 17 Pro", "27.1", "Shutdown")]
+        await self.poll()
+        record = self.supervisor.records["simulator:AAAA"]
+        self.assertEqual(record.state, "disconnected")
+        self.assertEqual(record.to_json()["simulatorState"], "Shutdown")
+        with self.assertRaises(RpcError):
+            await self.supervisor.open_device(record.udid)
+        self.supervisor.broadcast.reset_mock()
+        await self.poll()
+        self.supervisor.broadcast.assert_not_awaited()
+        self.supervisor.simulators.attached.return_value = [self.simulator]
+        await self.poll()
+        self.assertEqual(record.state, "ready")
+        self.assertEqual(record.to_json()["simulatorState"], "Booted")
+        self.assertEqual(self.supervisor.workers, {})
+
+    async def test_shutdown_after_boot_preserves_metadata_and_closes_session(self):
+        await self.poll()
+        self.supervisor.simulators.attached.return_value = [
+            SimulatorAttachment("AAAA", "iPhone 17 Pro", "iPhone 17 Pro", "27.1", "Shutdown")]
+        await self.poll()
+        record = self.supervisor.records["simulator:AAAA"]
+        self.assertEqual(record.state, "disconnected")
+        self.assertEqual(record.to_json()["simulatorState"], "Shutdown")
+        self.assertEqual(record.name, "iPhone 17 Pro")
+        self.assertEqual(record.session, "closed")
 
     async def test_open_starts_no_worker_and_device_services_are_rejected(self):
         await self.poll()

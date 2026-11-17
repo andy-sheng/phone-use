@@ -6,6 +6,7 @@ struct SimctlSettings: DeviceSettingsBackend {
 
     /// The simulator's UDID.
     let identifier: String
+    var displayIdentifier: String? = nil
     var source: Settings.Source { .simctl }
     var canRecord: Bool { SimulatorTools.developerDirectory() != nil }
 
@@ -60,7 +61,9 @@ struct SimctlSettings: DeviceSettingsBackend {
         guard let developer = SimulatorTools.developerDirectory() else { throw Self.unsupported("Screen recording") }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        process.arguments = ["simctl", "io", identifier, "recordVideo", "--codec=h264", "--force", destination.path]
+        var arguments = ["simctl", "io", identifier, "recordVideo", "--codec=h264", "--force"]
+        if let displayIdentifier { arguments += ["--display", displayIdentifier] }
+        process.arguments = arguments + [destination.path]
         process.environment = ProcessInfo.processInfo.environment.merging(["DEVELOPER_DIR": developer]) { $1 }
         process.standardInput = FileHandle.nullDevice
         return try ScreenRecording(process: process, destination: destination)

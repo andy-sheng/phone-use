@@ -77,8 +77,8 @@ public final class DeviceListModel: ObservableObject {
         devices.first { $0.id == selection }
     }
 
-    var availableDevices: [DeviceSummary] { devices.filter(\.isAttached) }
-    var unavailableDevices: [DeviceSummary] { devices.filter { !$0.isAttached } }
+    var availableDevices: [DeviceSummary] { devices.filter(\.isAvailable) }
+    var unavailableDevices: [DeviceSummary] { devices.filter { !$0.isAvailable } }
 
     /// Starts the daemon and mirrors its device list, reconnecting if the daemon restarts.
     public func run() async {
@@ -98,7 +98,7 @@ public final class DeviceListModel: ObservableObject {
     }
 
     func apply(_ update: [DeviceSummary]) {
-        devices = update.sorted { ($0.isAttached ? 0 : 1, $0.name) < ($1.isAttached ? 0 : 1, $1.name) }
+        devices = update.sorted { ($0.isAvailable ? 0 : 1, $0.name) < ($1.isAvailable ? 0 : 1, $1.name) }
         // Keep an existing target through discovery gaps. MCP must not silently operate on a
         // different device after the selected one disappears.
         if selection == nil {

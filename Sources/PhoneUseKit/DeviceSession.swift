@@ -3,11 +3,34 @@ import Foundation
 
 /// A shared device facade backed by exactly one platform-specific control adapter.
 ///
-/// Coordinates are normalized to the opened framebuffer (native portrait on iOS): (0, 0) is the
+/// Coordinates are normalized to the opened framebuffer (native portrait on physical iOS,
+/// current displayed orientation on Simulator): (0, 0) is the
 /// top-left corner and (1, 1) the bottom-right corner.
 public final class DeviceSession: @unchecked Sendable {
     public let device: DeviceSummary
-    public let display: DisplayInfo
+    private let initialDisplay: DisplayInfo
+    public var display: DisplayInfo {
+        guard let framebuffer = simulatorDisplay, let size = try? framebuffer.pixelSize() else { return initialDisplay }
+        return DisplayInfo(pixelWidth: Double(size.width), pixelHeight: Double(size.height),
+                           pointScale: initialDisplay.pointScale)
+    }
+
+    public var canFold: Bool { (connection as? SimulatorDeviceConnection)?.canFold == true }
+    public var canRotate: Bool { (connection as? SimulatorDeviceConnection)?.canRotate == true }
+
+    public func rotate(_ direction: DeviceRotationDirection) async throws {
+        guard let simulator = connection as? SimulatorDeviceConnection else {
+            throw DeviceHubError.capabilityUnavailable("screen rotation on this connection")
+        }
+        try await simulator.rotate(direction)
+    }
+
+    public func setPosture(_ posture: SimulatorPosture) async throws {
+        guard let simulator = connection as? SimulatorDeviceConnection else {
+            throw DeviceHubError.capabilityUnavailable("simulator folding on this connection")
+        }
+        try await simulator.setPosture(posture)
+    }
     public let services: Set<String>
 
     private let daemon: DaemonClient
@@ -61,7 +84,7 @@ public final class DeviceSession: @unchecked Sendable {
     private init(device: DeviceSummary, display: DisplayInfo, services: Set<String>,
                  daemon: DaemonClient, connection: any DeviceConnection) {
         self.device = device
-        self.display = display
+        self.initialDisplay = display
         self.services = services
         self.daemon = daemon
         self.connection = connection

@@ -13,7 +13,7 @@ Clients (the app, the MCP server, the CLI) connect to a Unix socket and speak th
 * ``simulateLocation`` (``latitude``, ``longitude``); ``clearLocation``
 * ``androidCommand`` -> platform-neutral screenshot/input replies (Android only)
 
-Booted iOS simulators are listed with connection ``simulator``. Clients control them in-process
+Available iOS simulators are listed with connection ``simulator``. Clients control them in-process
 through CoreSimulator; ``openDevice`` acknowledges them without starting a worker.
 """
 
@@ -99,6 +99,7 @@ class DeviceRecord:
     platform: str = "ios"
     adb_serial: Optional[str] = None
     adb_state: Optional[str] = None
+    simulator_state: Optional[str] = None
 
     @property
     def is_simulator(self) -> bool:
@@ -115,7 +116,7 @@ class DeviceRecord:
         if self.platform == "android":
             return {"device": "ready", "unauthorized": "unauthorized", "offline": "offline"}.get(self.adb_state, "probing")
         if self.is_simulator:
-            return "ready"
+            return "ready" if self.simulator_state == "Booted" else "disconnected"
         if self.paired is None:
             return "probing"
         if not self.paired:
@@ -132,6 +133,7 @@ class DeviceRecord:
             "platform": self.platform,
             "adbSerial": self.adb_serial,
             "adbState": self.adb_state,
+            "simulatorState": self.simulator_state if self.attached else None,
             "connection": self.connection,
             "name": self.name or self.product_type or self.udid,
             "productType": self.product_type,
@@ -343,10 +345,13 @@ class Supervisor:
 
     @staticmethod
     def _update_simulator_record(record: DeviceRecord, attachment: SimulatorAttachment) -> bool:
-        """Applies one booted simulator; returns whether the published record changed."""
+        """Applies an available simulator; only booted devices can open sessions."""
         before = record.to_json()
         record.name, record.product_type = attachment.name, attachment.product_type
         record.product_version = attachment.product_version
+        record.simulator_state = attachment.state
+        if attachment.state != "Booted":
+            record.session = "closed"
         record.paired = record.developer_mode = True
         record.wireless = False
         record.error = None
@@ -601,6 +606,8 @@ class Supervisor:
         record = self._record(udid)
         if record.is_simulator:
             # The client drives the simulator in-process; there is no worker to start.
+            if record.state != "ready":
+                raise RpcError("deviceNotReady", f"{record.name} is not booted")
             return {"udid": udid, "platform": record.platform,
                     "productVersion": record.product_version, "services": []}
         async with self._lock(udid):

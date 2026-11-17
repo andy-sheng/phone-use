@@ -19,45 +19,61 @@ public final class ScreenModel: ObservableObject {
     @Published private(set) var reconnectGeneration = 0
     /// A short confirmation or error shown over the screen, cleared after a few seconds.
     @Published private(set) var notice: String?
-    /// Whether the connected device can record its screen, through Xcode or simctl.
+    /// Whether the preview stream or simulator recording backend can save video.
     @Published private(set) var canRecord = false
     @Published private(set) var isRecording = false
+    @Published private(set) var canFold = false
+    @Published private(set) var canRotate = false
+    @Published private(set) var isChangingGeometry = false
+    @Published private(set) var posture: SimulatorPosture?
 
     private var session: DeviceSession?
     private var settings: DeviceSettings?
-    private var recording: ScreenRecording?
+    private var recording: (any ScreenRecordingSession)?
     private var noticeTask: Task<Void, Never>?
     private var currentDeviceID: String?
+    private var requestedSimulatorStartID: String?
     private var manualTouch: (session: DeviceSession, point: CGPoint)?
     private var runGeneration = UUID()
     private let prepareSession: @MainActor (DeviceSummary) async -> Void
     private let openSession: @MainActor (String) async throws -> DeviceSession
+    private let startSimulator: @MainActor (DeviceSummary) async throws -> Void
     private let connectionAttempts: Int
     private let retryDelay: Duration
 
     init(prepareSession: @escaping @MainActor (DeviceSummary) async -> Void = { await prepareScreenSession(for: $0) },
          openSession: @escaping @MainActor (String) async throws -> DeviceSession = { try await DeviceHub.shared.session(for: $0) },
+         startSimulator: @escaping @MainActor (DeviceSummary) async throws -> Void = {
+             await DeviceHub.shared.closeSession(for: $0.id)
+             try await SimulatorLifecycle.start($0)
+         },
          connectionAttempts: Int = 5, retryDelay: Duration = .seconds(2)) {
         self.prepareSession = prepareSession
         self.openSession = openSession
+        self.startSimulator = startSimulator
         self.connectionAttempts = max(connectionAttempts, 1)
         self.retryDelay = retryDelay
     }
 
     /// Discovery and selection alone never prepare USB capture or open a device session.
     func requestConnection(to device: DeviceSummary) {
-        guard device.isReady else { return }
+        guard device.isReady || device.canStartSimulator else { return }
         if requestedDeviceID == device.id && (isConnecting || stream != nil) { return }
         requestedDeviceID = device.id
+        requestedSimulatorStartID = device.canStartSimulator ? device.id : nil
         reconnectGeneration += 1
     }
 
     func selectionChanged(to deviceID: String?) {
-        if requestedDeviceID != deviceID { requestedDeviceID = nil }
+        if requestedDeviceID != deviceID {
+            requestedDeviceID = nil
+            requestedSimulatorStartID = nil
+        }
     }
 
     func cancelConnection() {
         requestedDeviceID = nil
+        requestedSimulatorStartID = nil
         reconnectGeneration += 1
     }
 
@@ -90,6 +106,10 @@ public final class ScreenModel: ObservableObject {
         stream = nil
         session = nil
         display = nil
+        canFold = false
+        canRotate = false
+        posture = nil
+        isChangingGeometry = false
         framesPerSecond = nil
         isAndroid = device?.isAndroid ?? false
         currentDeviceID = device?.id
@@ -101,10 +121,25 @@ public final class ScreenModel: ObservableObject {
         fallbackMessage = nil
         noticeTask?.cancel()
         notice = nil
-        guard let device, device.isReady, requestedDeviceID == device.id else { return }
+        guard let device, device.isReady || device.canStartSimulator, requestedDeviceID == device.id else { return }
+        // Shutting down a live preview must not turn the simulator back on automatically.
+        guard device.isReady || requestedSimulatorStartID == device.id else { return }
+        if device.isReady { requestedSimulatorStartID = nil }
         isConnecting = true
         defer {
             if runGeneration == generation { isConnecting = false }
+        }
+        if device.canStartSimulator {
+            status = "Starting \(device.name)…"
+            do {
+                try await startSimulator(device)
+            } catch {
+                guard isCurrentRequest(device.id, generation: generation) else { return }
+                connectionError = String(describing: error)
+                status = nil
+                return
+            }
+            guard isCurrentRequest(device.id, generation: generation) else { return }
         }
         status = "Connecting to \(device.name)…"
         await prepareSession(device)
@@ -140,8 +175,9 @@ public final class ScreenModel: ObservableObject {
                 self.show(message)
             }
         }
-        display = session.display
-        aspectRatio = session.display.pixelWidth / session.display.pixelHeight
+        updateDisplay(session)
+        canFold = session.canFold
+        canRotate = session.canRotate
         status = "Starting screen…"
 
         var stream = await makeScreenStream(for: session)
@@ -153,23 +189,28 @@ public final class ScreenModel: ObservableObject {
             let settings = await DeviceSettings.resolve(for: device)
             guard isCurrentRequest(device.id, generation: generation) else { return }
             self.settings = settings
-            canRecord = settings?.canRecord ?? false
+            canRecord = self.stream?.canRecord == true || settings?.canRecord == true
         }
 
         // A video source can come up late, for example after the device re-enumerates on USB,
         // so screenshot polling keeps retrying until one is available.
         while isCurrentRequest(device.id, generation: generation) {
             try? await Task.sleep(for: .seconds(stream.kind == .screenshots ? 5 : 1))
+            guard isCurrentRequest(device.id, generation: generation) else { break }
+            updateDisplay(session)
+            if let recording, !recording.isRunning { finishRecording() }
             guard stream.recoveryPolicy == .retryVideo, isCurrentRequest(device.id, generation: generation),
                   let video = await makeVideoScreenStream(for: session) else { continue }
             guard isCurrentRequest(device.id, generation: generation) else {
                 video.stop()
                 break
             }
+            finishRecording()
             stream.stop()
             stream = video
             attach(video)
         }
+        if self.stream === stream { finishRecording() }
         stream.stop()
         if self.stream === stream {
             self.stream = nil
@@ -180,6 +221,7 @@ public final class ScreenModel: ObservableObject {
         Diagnostics.record("preview.stream", ["kind": String(describing: stream.kind), "fallback": stream.statusMessage ?? ""])
         // Error callbacks may replay a failure that happened just after startup.
         self.stream = stream
+        canRecord = stream.canRecord || settings?.canRecord == true
         framesPerSecond = nil
         streamError = nil
         fallbackMessage = stream.statusMessage
@@ -189,6 +231,7 @@ public final class ScreenModel: ObservableObject {
             // re-rendered for each frame.
             let shown = fps.rounded()
             if self.framesPerSecond != shown { self.framesPerSecond = shown }
+            if let session = self.session { self.updateDisplay(session) }
             if self.streamError != nil { self.streamError = nil }
         }
         stream.onError = { [weak self, weak stream] message in
@@ -219,7 +262,60 @@ public final class ScreenModel: ObservableObject {
         }
     }
 
+    private func updateDisplay(_ session: DeviceSession) {
+        let next = session.display
+        if display?.pixelWidth != next.pixelWidth || display?.pixelHeight != next.pixelHeight {
+            display = next
+            aspectRatio = next.pixelWidth / next.pixelHeight
+        }
+    }
+
+    func setPosture(_ posture: SimulatorPosture) {
+        guard let session, canFold, !isChangingGeometry else { return }
+        let generation = runGeneration
+        releaseManualTouch()
+        isChangingGeometry = true
+        // simctl recording is bound to a particular panel; finalize before it becomes inactive.
+        let savedRecording = finishRecording()
+        Task {
+            defer { if runGeneration == generation { isChangingGeometry = false } }
+            do {
+                await savedRecording?.value
+                guard runGeneration == generation else { return }
+                try await session.setPosture(posture)
+                guard runGeneration == generation else { return }
+                self.posture = posture
+                updateDisplay(session)
+            } catch {
+                guard runGeneration == generation else { return }
+                show(String(describing: error))
+            }
+        }
+    }
+
+    func rotate(_ direction: DeviceRotationDirection) {
+        guard let session, canRotate, !isChangingGeometry else { return }
+        let generation = runGeneration
+        releaseManualTouch()
+        isChangingGeometry = true
+        let savedRecording = finishRecording()
+        Task {
+            defer { if runGeneration == generation { isChangingGeometry = false } }
+            do {
+                await savedRecording?.value
+                guard runGeneration == generation else { return }
+                try await session.rotate(direction)
+                guard runGeneration == generation else { return }
+                updateDisplay(session)
+            } catch {
+                guard runGeneration == generation else { return }
+                show(String(describing: error))
+            }
+        }
+    }
+
     func touch(_ phase: TouchPhase, at point: CGPoint) {
+        guard !isChangingGeometry else { return }
         let point = clamped(point)
         switch phase {
         case .began:
@@ -301,11 +397,18 @@ public final class ScreenModel: ObservableObject {
             finishRecording()
             return
         }
-        guard let settings, settings.canRecord, let name = session?.device.name else { return }
+        guard canRecord, let session else { return }
+        let name = session.device.name
         let url = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("\(name) \(Self.timestamp()).mp4")
+            .appendingPathComponent("\(name) \(Self.timestamp()) \(UUID().uuidString.prefix(8)).mp4")
         do {
-            recording = try settings.startRecording(to: url)
+            if !session.device.isSimulator, let settings, settings.canRecord {
+                recording = try settings.startRecording(to: url)
+            } else if let stream, stream.canRecord {
+                recording = try stream.startRecording(to: url)
+            } else if let settings, settings.canRecord {
+                recording = try settings.startRecording(to: url)
+            } else { return }
             isRecording = true
         } catch {
             show("\(error)")
@@ -313,11 +416,12 @@ public final class ScreenModel: ObservableObject {
     }
 
     /// Stops a recording in progress and saves it, also when the device goes away.
-    private func finishRecording() {
-        guard let recording else { return }
+    @discardableResult
+    private func finishRecording() -> Task<Void, Never>? {
+        guard let recording else { return nil }
         self.recording = nil
         isRecording = false
-        Task {
+        return Task {
             do {
                 let url = try await recording.stop()
                 show("Saved \(url.lastPathComponent) to the Desktop")

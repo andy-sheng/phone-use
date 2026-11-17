@@ -76,7 +76,7 @@ public struct DeviceWorkspace<Panel: View>: View {
         return screen.stream
     }
 
-    private var canControl: Bool { liveStream != nil && allowsInput }
+    private var canControl: Bool { liveStream != nil && allowsInput && !screen.isChangingGeometry }
 
     /// The system, how the device is connected and, while the screen streams, its frame rate.
     private var windowSubtitle: String {
@@ -219,7 +219,14 @@ public struct DeviceWorkspace<Panel: View>: View {
     @ViewBuilder
     private func deviceStage(compact: Bool) -> some View {
         if let device = model.selectedDevice {
-            if !device.isReady {
+            if device.canStartSimulator {
+                SimulatorStartView(device: device,
+                                   isStarting: screen.requestedDeviceID == device.id && screen.isConnecting,
+                                   status: screen.isShowingDevice(device.id) ? screen.status : nil,
+                                   error: screen.isShowingDevice(device.id) ? screen.connectionError : nil,
+                                   start: { screen.requestConnection(to: device) },
+                                   cancel: { screen.cancelConnection() })
+            } else if !device.isReady {
                 DeviceSetupView(device: device)
                     .padding(compact ? 16 : 24)
             } else if let stream = liveStream {
@@ -374,32 +381,80 @@ public struct DeviceWorkspace<Panel: View>: View {
                 .disabled(!canControl)
                 ControlBarButton("保存截图到桌面 (⌘S)", systemImage: "camera.viewfinder") { screen.saveScreenshot() }
                     .keyboardShortcut("s", modifiers: .command)
-                    .disabled(liveStream == nil)
+                    .disabled(liveStream == nil || screen.isChangingGeometry)
                 if !isAndroid {
                     ControlBarButton(recordingHelp, systemImage: screen.isRecording ? "stop.circle.fill" : "record.circle") {
                         screen.toggleRecording()
                     }
                     .foregroundStyle(screen.isRecording ? Color.red : Color.primary)
                     .keyboardShortcut("r", modifiers: [.command, .shift])
-                    .disabled(!screen.isRecording && (liveStream == nil || !screen.canRecord))
+                    .disabled(screen.isChangingGeometry || (!screen.isRecording && (liveStream == nil || !screen.canRecord)))
                 }
             }
             .padding(4)
             .glassCapsule()
             HStack(spacing: 2) {
-                ControlBarButton("锁定屏幕", systemImage: "lock") { screen.press(.lock) }
-                ControlBarButton("音量 −", systemImage: "speaker.wave.1") { screen.press(.volumeDown) }
-                ControlBarButton("音量 +", systemImage: "speaker.wave.3") { screen.press(.volumeUp) }
+                if isCompact && (screen.canFold || screen.canRotate) {
+                    // Keep all fold presets visible even in the 300-point compact window.
+                    Menu {
+                        Button("锁定屏幕") { screen.press(.lock) }
+                        Button("音量 −") { screen.press(.volumeDown) }
+                        Button("音量 +") { screen.press(.volumeUp) }
+                        if screen.canRotate {
+                            Divider()
+                            Button("向左旋转 90°", systemImage: "rotate.left") { screen.rotate(.left) }
+                            Button("向右旋转 90°", systemImage: "rotate.right") { screen.rotate(.right) }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .frame(width: 28, height: 32)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .help("设备操作")
+                    .accessibilityLabel("设备操作")
+                } else {
+                    ControlBarButton("锁定屏幕", systemImage: "lock") { screen.press(.lock) }
+                    ControlBarButton("音量 −", systemImage: "speaker.wave.1") { screen.press(.volumeDown) }
+                    ControlBarButton("音量 +", systemImage: "speaker.wave.3") { screen.press(.volumeUp) }
+                }
             }
             .disabled(!canControl)
             .padding(4)
             .glassCapsule()
+            if screen.canRotate && !isCompact {
+                HStack(spacing: 2) {
+                    ControlBarButton("向左旋转 90°", assetImage: "DeviceRotateLeft") { screen.rotate(.left) }
+                        .accessibilityIdentifier("device.rotate.left")
+                    ControlBarButton("向右旋转 90°", assetImage: "DeviceRotateRight") { screen.rotate(.right) }
+                        .accessibilityIdentifier("device.rotate.right")
+                }
+                .disabled(!canControl)
+                .padding(4)
+                .glassCapsule()
+            }
+            if screen.canFold {
+                HStack(spacing: 2) {
+                    postureButton(.closed, title: "折叠", icon: "DuoClosed")
+                    postureButton(.partiallyOpen, title: "半开", icon: "DuoHalfOpen")
+                    postureButton(.openFlat, title: "展开", icon: "DuoOpen")
+                }
+                .disabled(!canControl)
+                .padding(4)
+                .glassCapsule()
+            }
         }
+    }
+
+    private func postureButton(_ posture: SimulatorPosture, title: String, icon: String) -> some View {
+        ControlBarButton(title, assetImage: icon) { screen.setPosture(posture) }
+            .foregroundStyle(screen.posture == posture ? Color.accentColor : Color.primary)
+            .accessibilityIdentifier("device.posture.\(posture.rawValue)")
     }
 
     private var recordingHelp: String {
         if screen.isRecording { return "停止录屏并保存到桌面 (⇧⌘R)" }
-        return screen.canRecord ? "录制屏幕 (⇧⌘R)" : "录屏需要 Xcode"
+        return screen.canRecord ? "录制屏幕 (⇧⌘R)" : "当前连接不支持录屏"
     }
 
     /// Separates toolbar groups into their own glass capsules on macOS 26.
@@ -507,18 +562,28 @@ public struct DeviceWorkspace<Panel: View>: View {
 
 private struct ControlBarButton: View {
     let title: String
-    let systemImage: String
+    let image: Image
     let action: () -> Void
 
     init(_ title: String, systemImage: String, action: @escaping () -> Void) {
         self.title = title
-        self.systemImage = systemImage
+        self.image = Image(systemName: systemImage)
+        self.action = action
+    }
+
+    init(_ title: String, assetImage: String, action: @escaping () -> Void) {
+        self.title = title
+        #if SWIFT_PACKAGE
+        self.image = Image(assetImage, bundle: .module).renderingMode(.template)
+        #else
+        self.image = Image(assetImage).renderingMode(.template)
+        #endif
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemImage)
+            image
                 .font(.system(size: 15, weight: .medium))
                 .frame(width: 36, height: 32)
                 .contentShape(Capsule())
@@ -576,7 +641,8 @@ private struct DeviceRow: View {
     }
 
     private var subtitle: String {
-        switch device.state {
+        if device.isSimulator { return "Simulator" }
+        return switch device.state {
         case .ready where !device.isWired:
             [device.modelName, device.connectionDescription].compactMap { $0 }.joined(separator: " · ")
         case .ready, .disconnected: device.modelName ?? device.connectionDescription

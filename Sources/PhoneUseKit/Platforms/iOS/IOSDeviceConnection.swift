@@ -56,8 +56,14 @@ final class IOSDeviceConnection: DeviceConnection, Sendable {
             throw DeviceHubError.capabilityUnavailable("\(button.rawValue) on iOS")
         }
         try await channels.send(DeviceService.indigoHID, HIDReports.buttonMessage(page: usage.page, code: usage.code, down: true))
-        try await Task.sleep(for: duration ?? button.defaultHold)
+        do { try await Task.sleep(for: duration ?? button.defaultHold) }
+        catch {
+            try? await channels.send(DeviceService.indigoHID, HIDReports.buttonMessage(page: usage.page, code: usage.code, down: false))
+            throw error
+        }
         try await channels.send(DeviceService.indigoHID, HIDReports.buttonMessage(page: usage.page, code: usage.code, down: false))
+        // The device dispatches HID asynchronously; keep the channel alive through the release.
+        try await Task.sleep(for: .milliseconds(100))
     }
 
     // MARK: Screen and apps

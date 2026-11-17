@@ -13,18 +13,97 @@ import IOSurface
 final class SimulatorDisplay: @unchecked Sendable {
     private static let bgra: OSType = 0x4247_5241 // 'BGRA'
 
-    private let descriptor: AnyObject
+    struct Panel: @unchecked Sendable {
+        let descriptor: AnyObject
+        let identifier: String
+
+        var digitizerTarget: UInt64 {
+            guard let properties = CoreSimulatorBridge.object(descriptor, "screenProperties") else { return 0 }
+            let selector = NSSelectorFromString("screenID")
+            guard properties.responds(to: selector) else { return 0 }
+            typealias ID = @convention(c) (AnyObject, Selector) -> UInt32
+            return UInt64(unsafeBitCast(properties.method(for: selector), to: ID.self)(properties, selector))
+        }
+
+        var area: Int {
+            guard let surface = CoreSimulatorBridge.object(descriptor, "framebufferSurface") as? IOSurface else { return 0 }
+            return surface.width * surface.height
+        }
+
+        var isLit: Bool {
+            guard let properties = CoreSimulatorBridge.object(descriptor, "screenProperties"),
+                  let backlight = CoreSimulatorBridge.object(properties, "backlight") else { return false }
+            let selector = NSSelectorFromString("state")
+            guard backlight.responds(to: selector) else { return false }
+            typealias State = @convention(c) (AnyObject, Selector) -> Int32
+            return unsafeBitCast(backlight.method(for: selector), to: State.self)(backlight, selector) > 0
+        }
+    }
+
+    private let panels: [Panel]
+    private let landscapePanelIdentifier: String?
+    private var selectedIndex = 0
+    private var commandedIndex: Int?
+    private var currentOrientation = SimulatorOrientation.portrait
+    var orientation: SimulatorOrientation { lock.withLock { currentOrientation } }
+    /// Duo's inner panel is mounted a quarter-turn from the cover, despite both IOSurfaces
+    /// reporting portrait dimensions. Keep the physical sensor pose separate from this correction.
+    var framebufferOrientation: SimulatorOrientation {
+        let physical = orientation
+        return selectedPanel.identifier == landscapePanelIdentifier ? physical.rotated(.right) : physical
+    }
+
+    func setOrientation(_ orientation: SimulatorOrientation) {
+        let handlers = lock.withLock {
+            currentOrientation = orientation
+            return closed ? [] : Array(observers.values)
+        }
+        for handler in handlers { handler() }
+    }
+    var isFoldable: Bool { panels.count == 2 }
+
+    /// Port powerState stays on for both Duo screens. The screen backlight identifies the active one.
+    private var selectedPanel: Panel {
+        if panels.count == 1 { return panels[0] }
+        if let index = lock.withLock({ commandedIndex }) { return panels[index] }
+        let lit = panels.firstIndex(where: { $0.isLit })
+        return lock.withLock {
+            if let lit { selectedIndex = lit }
+            return panels[selectedIndex]
+        }
+    }
+
+    var identifier: String { selectedPanel.identifier }
+    var digitizerTarget: UInt64 { isFoldable ? selectedPanel.digitizerTarget : 0 }
+
+    func select(_ posture: SimulatorPosture) {
+        guard isFoldable else { return }
+        let ordered = panels.indices.sorted { panels[$0].area < panels[$1].area }
+        // This runtime can report the cover backlight as on after moving the scene inside.
+        // Like DeviceHub, prefer the commanded hinge's panel over inconsistent backlight metadata.
+        lock.withLock {
+            commandedIndex = posture == .closed ? ordered.first : ordered.last
+            selectedIndex = commandedIndex ?? selectedIndex
+        }
+        let handlers = lock.withLock { closed ? [] : Array(observers.values) }
+        for handler in handlers { handler() }
+    }
     private let damageID = NSUUID()
     private let lock = NSLock()
-    private var damageReports = 0
+    private var damageReports: Set<String> = []
     private var observers: [UUID: @Sendable () -> Void] = [:]
     private var closed = false
 
-    init(descriptor: AnyObject) {
-        self.descriptor = descriptor
-        let damaged: @convention(block) (AnyObject?) -> Void = { [weak self] _ in self?.damaged() }
-        CoreSimulatorBridge.register(descriptor, "registerCallbackWithUUID:damageRectanglesCallback:",
-                                     uuid: damageID, block: damaged as AnyObject)
+    init(panels: [Panel]) {
+        precondition(!panels.isEmpty)
+        self.panels = panels
+        landscapePanelIdentifier = panels.count == 2 ? panels.max(by: { $0.area < $1.area })?.identifier : nil
+        for panel in panels {
+            let identifier = panel.identifier
+            let damaged: @convention(block) (AnyObject?) -> Void = { [weak self] _ in self?.damaged(identifier) }
+            CoreSimulatorBridge.register(panel.descriptor, "registerCallbackWithUUID:damageRectanglesCallback:",
+                                         uuid: damageID, block: damaged as AnyObject)
+        }
     }
 
     deinit {
@@ -34,19 +113,20 @@ final class SimulatorDisplay: @unchecked Sendable {
     /// Read on each use (about 0.2 ms): the simulator may replace the surface, for example
     /// after a display resize, and its replacement notification has no stable signature.
     var currentSurface: IOSurface? {
-        CoreSimulatorBridge.object(descriptor, "framebufferSurface") as? IOSurface
+        CoreSimulatorBridge.object(selectedPanel.descriptor, "framebufferSurface") as? IOSurface
     }
 
     /// Whether the surface has been redrawn since this registration began.
     var isLive: Bool {
-        lock.withLock { damageReports > 0 }
+        let identifier = identifier
+        return lock.withLock { damageReports.contains(identifier) }
     }
 
     func pixelSize() throws -> (width: Int, height: Int) {
         guard let surface = currentSurface, surface.width > 0, surface.height > 0 else {
             throw DeviceHubError.serviceFailed("The simulator has no framebuffer; open it once in Simulator or reboot it")
         }
-        return (surface.width, surface.height)
+        return framebufferOrientation.isLandscape ? (surface.height, surface.width) : (surface.width, surface.height)
     }
 
     /// Runs `handler` on an arbitrary queue after each redraw.
@@ -68,11 +148,12 @@ final class SimulatorDisplay: @unchecked Sendable {
         surface.unlock(options: .readOnly, seed: nil)
         guard let provider = CGDataProvider(data: data as CFData),
               let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
-        return CGImage(width: surface.width, height: surface.height, bitsPerComponent: 8, bitsPerPixel: 32,
+        guard let image = CGImage(width: surface.width, height: surface.height, bitsPerComponent: 8, bitsPerPixel: 32,
                        bytesPerRow: surface.bytesPerRow, space: space,
                        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue
                                                 | CGBitmapInfo.byteOrder32Little.rawValue),
-                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { return nil }
+        return try? framebufferOrientation.image(image)
     }
 
     func close() {
@@ -81,12 +162,15 @@ final class SimulatorDisplay: @unchecked Sendable {
             return !closed
         }
         guard wasOpen else { return }
-        CoreSimulatorBridge.invoke(descriptor, "unregisterDamageRectanglesCallbackWithUUID:", damageID)
+        for panel in panels {
+            CoreSimulatorBridge.invoke(panel.descriptor, "unregisterDamageRectanglesCallbackWithUUID:", damageID)
+        }
     }
 
-    private func damaged() {
+    private func damaged(_ identifier: String) {
         let handlers = lock.withLock {
-            damageReports += 1
+            guard !closed else { return [@Sendable () -> Void]() }
+            damageReports.insert(identifier)
             return Array(observers.values)
         }
         for handler in handlers { handler() }

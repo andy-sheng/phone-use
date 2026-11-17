@@ -8,22 +8,30 @@ final class SimulatorScreenStream: ScreenStream {
     typealias Snapshot = @Sendable () async throws -> CGImage
 
     let kind = ScreenStreamKind.simulator
-    let layer = CALayer()
+    private let preview = SimulatorPreviewLayer()
+    var layer: CALayer { preview }
     var onFrame: ((Double) -> Void)?
     var onError: ((String) -> Void)?
 
     private let display: SimulatorDisplay
     private let snapshot: Snapshot
+    private let record: ((URL) throws -> ScreenRecording)?
+    var canRecord: Bool { record != nil }
+
+    func startRecording(to destination: URL) throws -> any ScreenRecordingSession {
+        guard let record else { throw DeviceHubError.capabilityUnavailable("Simulator recording") }
+        return try record(destination)
+    }
     private var observer: UUID?
     private var snapshotTask: Task<Void, Never>?
     private let gate = FrameGate()
     private var lastFrame: Date?
     private var fps = 0.0
 
-    init(display: SimulatorDisplay, snapshot: @escaping Snapshot) {
+    init(display: SimulatorDisplay, record: ((URL) throws -> ScreenRecording)? = nil, snapshot: @escaping Snapshot) {
         self.display = display
         self.snapshot = snapshot
-        layer.contentsGravity = .resize
+        self.record = record
     }
 
     func start() async throws {
@@ -75,14 +83,16 @@ final class SimulatorScreenStream: ScreenStream {
     private func show(_ surface: IOSurface) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        if (layer.contents as AnyObject?) !== surface {
-            layer.contents = surface
-        } else if layer.responds(to: Self.contentsChanged) {
+        preview.orientation = display.framebufferOrientation
+        let content = preview.surfaceLayer
+        if (content.contents as AnyObject?) !== surface {
+            content.contents = surface
+        } else if content.responds(to: Self.contentsChanged) {
             // The surface is reused for every frame; tell Core Animation its pixels changed.
-            layer.perform(Self.contentsChanged)
+            content.perform(Self.contentsChanged)
         } else {
-            layer.contents = nil
-            layer.contents = surface
+            content.contents = nil
+            content.contents = surface
         }
         CATransaction.commit()
     }
@@ -90,11 +100,45 @@ final class SimulatorScreenStream: ScreenStream {
     private func setContents(_ image: CGImage) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        layer.contents = image
+        // Session screenshots already include the orientation correction.
+        preview.orientation = .portrait
+        preview.surfaceLayer.contents = image
         CATransaction.commit()
     }
 
     private static let contentsChanged = NSSelectorFromString("setContentsChanged")
+}
+
+/// Rotates the IOSurface using Core Animation, without copying pixels each frame.
+final class SimulatorPreviewLayer: CALayer {
+    let surfaceLayer = CALayer()
+    var orientation = SimulatorOrientation.portrait {
+        didSet { if orientation != oldValue { setNeedsLayout() } }
+    }
+
+    override init() {
+        super.init()
+        surfaceLayer.contentsGravity = .resize
+        addSublayer(surfaceLayer)
+    }
+
+    override init(layer: Any) {
+        super.init(layer: layer)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func layoutSublayers() {
+        super.layoutSublayers()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        surfaceLayer.bounds = CGRect(origin: .zero, size: orientation.isLandscape
+            ? CGSize(width: bounds.height, height: bounds.width) : bounds.size)
+        surfaceLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        // CALayer uses bottom-left coordinates; physical clockwise rotation is negative.
+        surfaceLayer.setAffineTransform(CGAffineTransform(rotationAngle: -orientation.radians))
+        CATransaction.commit()
+    }
 }
 
 /// At most one refresh waits for the main actor; damage reports arrive on CoreSimulator's queues.
@@ -127,7 +171,10 @@ enum SimulatorScreenStreamProvider {
 
     static func makeVideo(_ session: DeviceSession) async -> (any ScreenStream)? {
         guard let display = session.simulatorDisplay else { return nil }
-        let stream = SimulatorScreenStream(display: display) { try await session.screenshot() }
+        let stream = SimulatorScreenStream(display: display, record: { destination in
+            try SimctlSettings(identifier: session.device.deviceIdentifier, displayIdentifier: display.identifier)
+                .startRecording(to: destination)
+        }) { try await session.screenshot() }
         do {
             try await stream.start()
             return stream

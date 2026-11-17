@@ -92,12 +92,13 @@ final class CoreSimulatorBridge: @unchecked Sendable {
     }
 
     /// The device's built-in display, which renders into an IOSurface shared with this process.
-    func mainDisplay(of device: AnyObject) throws -> AnyObject {
+    func mainDisplays(of device: AnyObject) throws -> [SimulatorDisplay.Panel] {
         guard let renderable = objc_getProtocol("SimDisplayIOSurfaceRenderable"),
               let io = Self.object(device, "io"),
               let ports = Self.object(io, "ioPorts") as? [AnyObject] else {
             throw DeviceHubError.serviceFailed("CoreSimulator did not list the simulator's displays")
         }
+        var panels: [SimulatorDisplay.Panel] = []
         for port in ports {
             guard let descriptor = Self.object(port, "descriptor"), descriptor.conforms(to: renderable),
                   let state = Self.object(descriptor, "state") else { continue }
@@ -106,10 +107,12 @@ final class CoreSimulatorBridge: @unchecked Sendable {
             typealias DisplayClass = @convention(c) (AnyObject, Selector) -> UInt16
             // Display class 0 is the main screen; external displays and CarPlay use others.
             if unsafeBitCast(state.method(for: selector), to: DisplayClass.self)(state, selector) == 0 {
-                return descriptor
+                guard let uuid = Self.object(port, "uuid") as? NSUUID else { continue }
+                panels.append(.init(descriptor: descriptor, identifier: uuid.uuidString))
             }
         }
-        throw DeviceHubError.capabilityUnavailable("simulator main display")
+        guard !panels.isEmpty else { throw DeviceHubError.capabilityUnavailable("simulator main display") }
+        return panels
     }
 
     func pointScale(of device: AnyObject) -> Double {
@@ -178,14 +181,17 @@ final class CoreSimulatorBridge: @unchecked Sendable {
 /// Xcode 27's DTUHID service. Legacy Indigo callbacks can succeed while the guest drops the
 /// event, so modern toolchains must establish a live channel instead of falling back silently.
 final class SimulatorHIDChannel: @unchecked Sendable {
-    private static let service = "com.apple.coredevice.feature.remote.hid.digitizer"
+    static let digitizerService = "com.apple.coredevice.feature.remote.hid.digitizer"
+    static let vendorService = "com.apple.coredevice.feature.remote.hid.vendordefined"
+    private let service: String
     private let connection: xpc_connection_t
     private let queue = DispatchQueue(label: "PhoneUseKit.simulator-hid")
     private let lock = NSLock()
     private var disconnected = false
 
-    private init(_ connection: xpc_connection_t) {
+    private init(_ connection: xpc_connection_t, service: String) {
         self.connection = connection
+        self.service = service
         xpc_connection_set_target_queue(connection, queue)
         xpc_connection_set_event_handler(connection) { [weak self] event in
             if xpc_get_type(event) == XPC_TYPE_ERROR { self?.lock.withLock { self?.disconnected = true } }
@@ -193,7 +199,7 @@ final class SimulatorHIDChannel: @unchecked Sendable {
         xpc_connection_resume(connection)
     }
 
-    static func open(_ device: AnyObject) async throws -> SimulatorHIDChannel {
+    static func open(_ device: AnyObject, service: String = digitizerService) async throws -> SimulatorHIDChannel {
         typealias Endpoint = @convention(c) (UInt32, UInt64, UInt64) -> Unmanaged<AnyObject>?
         typealias Connect = @convention(c) (xpc_object_t) -> Unmanaged<AnyObject>?
         typealias Enable = @convention(c) (xpc_connection_t) -> Void
@@ -215,9 +221,9 @@ final class SimulatorHIDChannel: @unchecked Sendable {
             throw DeviceHubError.serviceFailed("Cannot create the simulator's DTUHID channel")
         }
         unsafeBitCast(enableSymbol, to: Enable.self)(connection)
-        let channel = SimulatorHIDChannel(connection)
+        let channel = SimulatorHIDChannel(connection, service: service)
         do {
-            try await channel.barrier()
+            if service == digitizerService { try await channel.barrier() }
             try await Task.sleep(for: .milliseconds(200))
             return channel
         } catch {
@@ -226,7 +232,7 @@ final class SimulatorHIDChannel: @unchecked Sendable {
         }
     }
 
-    private static func message(_ type: String, payload: xpc_object_t, barrier: Bool = false) -> xpc_object_t {
+    private func message(_ type: String, payload: xpc_object_t, barrier: Bool = false) -> xpc_object_t {
         let object = xpc_dictionary_create(nil, nil, 0)
         xpc_dictionary_set_string(object, "messageType", type)
         xpc_dictionary_set_string(object, "featureIdentifier", service)
@@ -243,7 +249,7 @@ final class SimulatorHIDChannel: @unchecked Sendable {
 
     private func send(_ type: String, payload: xpc_object_t) async throws {
         try requireConnected()
-        xpc_connection_send_message(connection, Self.message(type, payload: payload))
+        xpc_connection_send_message(connection, message(type, payload: payload))
         await withCheckedContinuation { continuation in
             xpc_connection_send_barrier(connection) { continuation.resume() }
         }
@@ -265,7 +271,12 @@ final class SimulatorHIDChannel: @unchecked Sendable {
         let payload = xpc_dictionary_create(nil, nil, 0)
         xpc_dictionary_set_uint64(payload, "usageCode", 0)
         xpc_dictionary_set_uint64(payload, "state", 2)
-        let message = Self.message("IndigoKeyboardButtonEvent", payload: payload, barrier: true)
+        let message = message("IndigoKeyboardButtonEvent", payload: payload, barrier: true)
+        try await request(message)
+    }
+
+    private func request(_ message: xpc_object_t) async throws {
+        try requireConnected()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let answer = Reply(continuation)
             queue.asyncAfter(deadline: .now() + 4) {
@@ -294,15 +305,46 @@ final class SimulatorHIDChannel: @unchecked Sendable {
         try await send("IndigoButtonEvent", payload: payload)
     }
 
-    func touch(_ phase: TouchPhase, x: Double, y: Double) async throws {
+    func touch(_ phase: TouchPhase, x: Double, y: Double, target: UInt64 = 0) async throws {
         let point = xpc_dictionary_create(nil, nil, 0), payload = xpc_dictionary_create(nil, nil, 0)
         xpc_dictionary_set_double(point, "x", x)
         xpc_dictionary_set_double(point, "y", y)
         xpc_dictionary_set_value(payload, "pointOne", point)
         xpc_dictionary_set_uint64(payload, "eventType", phase == .began ? 0 : phase == .moved ? 1 : 2)
         xpc_dictionary_set_uint64(payload, "edge", 0)
-        xpc_dictionary_set_uint64(payload, "target", 0)
+        xpc_dictionary_set_uint64(payload, "target", target)
         try await send("IndigoDigitizerEvent", payload: payload)
+    }
+
+    /// DeviceHub's Pop plugin sends an IOCF binary dictionary on vendor page FF61/usage 5B.
+    /// Keep the service separate from the digitizer so its report is routed to the hinge sensor.
+    func setPosture(_ posture: SimulatorPosture) async throws {
+        try await sendVirtualMachineControl(posture.command)
+    }
+
+    func setOrientation(_ orientation: SimulatorOrientation) async throws {
+        try await sendVirtualMachineControl(orientation.command)
+    }
+
+    private func sendVirtualMachineControl(_ command: [String: Any]) async throws {
+        typealias Serialize = @convention(c) (CFTypeRef, UInt32) -> Unmanaged<CFData>?
+        guard let handle = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW) else {
+            throw DeviceHubError.capabilityUnavailable("IOKit simulator control serialization")
+        }
+        defer { dlclose(handle) }
+        guard let symbol = dlsym(handle, "IOCFSerialize"),
+              let serialized = unsafeBitCast(symbol, to: Serialize.self)(command as NSDictionary, 1) else {
+            throw DeviceHubError.serviceFailed("Could not encode the simulator control command")
+        }
+        let data = serialized.takeRetainedValue() as Data
+        let payload = xpc_dictionary_create(nil, nil, 0)
+        xpc_dictionary_set_uint64(payload, "usagePage", 0xff61)
+        xpc_dictionary_set_uint64(payload, "usage", 0x5b)
+        xpc_dictionary_set_uint64(payload, "version", 0)
+        data.withUnsafeBytes { xpc_dictionary_set_data(payload, "data", $0.baseAddress, $0.count) }
+        try await send("IndigoVendorDefinedEvent", payload: payload)
+        // A barrier acknowledges earlier events but does not dispatch its own payload.
+        try await request(message("IndigoVendorDefinedEvent", payload: payload, barrier: true))
     }
 
     func drain() async throws { try await Task.sleep(for: .milliseconds(80)); try requireConnected() }
@@ -464,8 +506,20 @@ enum SimulatorTools {
 
     /// Runs `simctl` and returns its trimmed standard output.
     @discardableResult
-    static func simctl(_ arguments: [String], developerDirectory: String) async throws -> String {
-        let data = try await run("/usr/bin/xcrun", ["simctl"] + arguments, environment: ["DEVELOPER_DIR": developerDirectory])
+    static func simctl(_ arguments: [String], developerDirectory: String, timeout: Duration? = nil) async throws -> String {
+        let data = try await withThrowingTaskGroup(of: Data.self) { group in
+            group.addTask {
+                try await run("/usr/bin/xcrun", ["simctl"] + arguments, environment: ["DEVELOPER_DIR": developerDirectory])
+            }
+            if let timeout {
+                group.addTask {
+                    try await Task.sleep(for: timeout)
+                    throw DeviceHubError.serviceFailed("Simulator startup timed out. Try starting it again.")
+                }
+            }
+            defer { group.cancelAll() }
+            return try await group.next()!
+        }
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -494,19 +548,24 @@ enum SimulatorTools {
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = output
         process.standardError = errors
-        let finished = AsyncStream<Void> { continuation in
-            process.terminationHandler = { _ in continuation.finish() }
-        }
+        let finished = ProcessTermination(process)
+        try Task.checkCancellation()
         try process.run()
-        // Drain both pipes so a chatty child can never block on a full buffer.
-        async let stdout = Task.detached { output.fileHandleForReading.readDataToEndOfFile() }.value
-        async let stderr = Task.detached { errors.fileHandleForReading.readDataToEndOfFile() }.value
-        let (data, message) = await (stdout, stderr)
-        for await _ in finished {}
-        guard process.terminationStatus == 0 else {
-            let detail = String(decoding: message, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            throw DeviceHubError.serviceFailed(detail.isEmpty ? "simctl \(arguments.dropFirst().first ?? "") failed" : detail)
+        return try await withTaskCancellationHandler {
+            // Drain both pipes so a chatty child can never block on a full buffer.
+            async let stdout = Task.detached { output.fileHandleForReading.readDataToEndOfFile() }.value
+            async let stderr = Task.detached { errors.fileHandleForReading.readDataToEndOfFile() }.value
+            let (data, message) = await (stdout, stderr)
+            let status = await finished.wait()
+            try Task.checkCancellation()
+            guard status == 0 else {
+                let detail = String(decoding: message, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                throw DeviceHubError.serviceFailed(detail.isEmpty ? "simctl \(arguments.dropFirst().first ?? "") failed" : detail)
+            }
+            return data
+        } onCancel: {
+            // Stop only our command-line waiter, never the simulator or CoreSimulatorService.
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
         }
-        return data
     }
 }

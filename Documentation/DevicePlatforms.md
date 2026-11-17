@@ -35,6 +35,21 @@ independent of the preview's Connect button.
 `PhoneUseUITests` exercises selection without transport side effects, explicit
 retry, cancellation and late completion; it is included in `swift test`.
 
+## Recording and physical iOS lock
+
+Physical devices advertising `com.apple.coredevice.feature.screenrecording` use native
+`devicectl device capture screen-record` first. Devices without that capability use the
+preview's existing USB sample buffers or Mirror HEVC stream, written as a video-only MP4
+on the Mac. Appearance support or an OS version alone does not establish recording support. Simulator
+recording always uses `simctl io recordVideo`, independently of its settings backend.
+Screenshot-only connections do not offer recording. Stopping or switching the preview
+finalizes the current movie; stream errors, dropped compressed frames or format changes
+stop recording and report the failure, preserving any playable prefix.
+
+Physical iOS lock uses a 100 ms Consumer/Power press (page `0x0C`, usage `0x30`),
+verified on iPhone 16 / iOS 26.5. The old 500 ms hold invoked Siri instead of locking.
+Presses release their key even when the hold is cancelled.
+
 ## iOS nearby pairing
 
 `wireless_pairing.py` owns explicit, three-minute discovery and pairing sessions.
@@ -116,11 +131,19 @@ native-resolution operations for preview fallback and automation recognition.
 
 ## iOS Simulator
 
-Booted iOS and iPadOS simulators join the shared device list with `platform: ios`,
+Available iOS and iPadOS simulators join the shared device list with `platform: ios`,
 `connection: simulator` and a `simulator:<UDID>` identifier, so plugins and automation see
-an iOS device. `simulator.py` lists them with `xcrun simctl list devices booted -j`, at most
+an iOS device. `simulator.py` lists them with `xcrun simctl list devices available -j`, at most
 every three seconds; a few consecutive `simctl` failures are tolerated before simulators are
-detached. They are always `ready`: no pairing, Developer Mode or disk image applies. The
+detached. Only booted simulators are `ready`; shut-down simulators remain in the sidebar's
+Available section with `state: disconnected` and their `simulatorState`. No pairing,
+Developer Mode or disk image applies. The shared window shows a device illustration,
+name, OS version and Start button. Starting runs `simctl bootstatus <UDID> -b` with a
+three-minute deadline and continues into the preview as discovery reports readiness.
+Failures offer Retry. Cancel or changing selection stops the waiter and prevents a late
+completion from opening a preview; it does not shut down the simulator. Discovery and
+selection never boot a simulator, and shutting down an existing preview requires another
+explicit Start. The
 daemon starts no worker for them, acknowledges `openDevice` without one, and rejects Apple
 device services, mirroring and Android RPC for simulator identifiers.
 
@@ -141,7 +164,19 @@ report. CoreSimulator returns remote proxies that marshal callback arguments fro
 type encoding, so the damage block takes an object. A headless simulator may not update the
 surface while nobody observes it; screenshots read the surface only after the session's own
 registration has seen a redraw, and otherwise capture with `simctl io screenshot`.
-Coordinates are normalized to the portrait framebuffer, as on physical iOS devices.
+When Xcode offers `devicectl device orientation`, the simulator controls include left/right
+90° rotation. The session queries the initial physical orientation and uses the command's
+reported orientation after each turn. Duo uses DeviceHub's `orientation-picker-control`
+vendor report to update the virtual motion sensor; a BackBoard orientation override alone is
+immediately superseded by that sensor. Its presets are `portrait`, `pud`, `landscape-left`
+and `landscape-right`. Core Animation rotates the native IOSurface without
+per-frame pixel copies; screenshots and normalized touches use the same displayed orientation.
+The Duo inner panel adds its 90° mounting correction to the physical orientation, so unfolding
+from a portrait cover displays the wide inner screen with matching touch coordinates.
+Landscape dimensions therefore swap in `DeviceSession.display`. Physical iOS devices retain
+their native portrait coordinate convention. A rotation or fold releases held touches and
+finishes any active UI recording before changing geometry. Unsupported toolchains hide the
+rotation controls.
 
 `DeviceSession.uiTree`, `activate` and `typeText` provide simulator accessibility and US-keyboard
 input. The AXP translator runs on a serial background queue with bounded callbacks and traversal;
@@ -165,13 +200,13 @@ simulator. Touch delivery and the live preview were checked by hand on an iOS 27
 
 ## Apple device settings
 
-The app's settings panel and screen recording use `DeviceSettings`, which picks one route per
-iPhone, iPad or simulator; Android has none yet.
+The app's settings panel uses `DeviceSettings`, which picks one settings route per
+iPhone, iPad or simulator; Android has none yet. Recording chooses its transport separately.
 
 - **Xcode (`devicectl`)**, when `devicectl help device settings appearance` lists the
   accessibility options (Xcode 27). It covers interface style, Liquid Glass, color filters, text
   size, Increase Contrast, Reduce Motion, Reduce Transparency, Show Borders, VoiceOver, audio
-  routing and volume, location scenarios and screen recording, and changes persist on the device.
+  routing and volume, and location scenarios; changes persist on the device.
   A physical device is used only if `devicectl device info appearance` answers for it, since
   CoreDevice may not know a device that only the daemon paired.
 - **Device services**, for physical devices otherwise. The worker holds one
@@ -182,8 +217,19 @@ iPhone, iPad or simulator; Android has none yet.
 - **`simctl`**, for simulators on an older Xcode: `ui` appearance, Increase Contrast and content
   size, `location`, and `io recordVideo`.
 
-Device rotation and foldable display postures have no command-line interface: `devicectl device
-orientation set` reports success on an iOS 27 simulator but leaves the orientation unchanged.
+Dual-screen simulators expose closed (0°), partially open (90°), and flat (180°) controls in
+both apps through `DeviceSession.setPosture`. This follows Xcode DeviceHub's Pop plugin:
+`IndigoVendorDefinedEvent`, vendor usage `0xFF61/0x5B`, carries an IOCF-serialized hinge command
+on the simulator's dedicated vendor HID channel. It requires Xcode's modern DTUHID service.
+The preview observes both framebuffers and selects the commanded panel (cover when closed,
+inner otherwise), because this runtime can leave backlight metadata pointing at the cover.
+Touch events carry that panel's screen ID; screenshots and recording use its display UUID.
+Input pauses while SpringBoard settles the hinge, and changing posture finalizes any recording.
+This provides screen controls, not DeviceHub's 3D chassis animation. `DEVICEHUB_FOLDABLE_SIMULATOR_UDID`
+enables the integration test that exercises all three postures on a booted Duo.
+
+Device rotation still has no supported control here: `devicectl device orientation set`
+reports success on an iOS 27 simulator but leaves the orientation unchanged.
 
 ## ADB selection
 

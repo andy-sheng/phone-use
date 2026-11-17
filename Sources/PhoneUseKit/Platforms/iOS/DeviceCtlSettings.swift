@@ -5,8 +5,14 @@ struct DeviceCtlSettings: DeviceSettingsBackend {
     typealias Settings = DeviceSettings
 
     let identifier: String
+    var canRecord = false
     var source: Settings.Source { .xcode }
-    var canRecord: Bool { true }
+
+    static func supportsRecording(_ details: [String: Any]) -> Bool {
+        (details["capabilities"] as? [[String: Any]] ?? []).contains {
+            $0["featureIdentifier"] as? String == "com.apple.coredevice.feature.screenrecording"
+        }
+    }
 
     func appearance() async throws -> Settings.Appearance {
         try Self.appearance(from: try await DeviceCtl.run(["device", "info", "appearance", "--device", identifier]))
@@ -119,9 +125,11 @@ struct DeviceCtlSettings: DeviceSettingsBackend {
     }
 
     func startRecording(to destination: URL) throws -> ScreenRecording {
-        try ScreenRecording(process: DeviceCtl.process(["device", "capture", "screen-record", "--device", identifier,
-                                                        "--destination", destination.path, "--quiet"]),
-                            destination: destination)
+        guard canRecord else { throw Self.unsupported("Screen recording") }
+        return try ScreenRecording(process: DeviceCtl.process([
+            "device", "capture", "screen-record", "--device", identifier,
+            "--destination", destination.path, "--quiet",
+        ]), destination: destination)
     }
 }
 
@@ -167,12 +175,11 @@ enum DeviceCtl {
         let output = Pipe()
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
-        let finished = AsyncStream<Void> { continuation in
-            process.terminationHandler = { _ in continuation.finish() }
-        }
+        let finished = ProcessTermination(process)
         try process.run()
         let data = await Task.detached { output.fileHandleForReading.readDataToEndOfFile() }.value
-        for await _ in finished {}
+        _ = await finished.wait()
+        try Task.checkCancellation()
         return String(decoding: data, as: UTF8.self)
     }
 
@@ -184,15 +191,14 @@ enum DeviceCtl {
         let errors = Pipe()
         process.standardOutput = FileHandle.nullDevice
         process.standardError = errors
-        let finished = AsyncStream<Void> { continuation in
-            process.terminationHandler = { _ in continuation.finish() }
-        }
+        let finished = ProcessTermination(process)
         try process.run()
         let message = await Task.detached { errors.fileHandleForReading.readDataToEndOfFile() }.value
-        for await _ in finished {}
+        let status = await finished.wait()
+        try Task.checkCancellation()
         let document = (try? Data(contentsOf: output))
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-        if process.terminationStatus == 0, let result = document?["result"] as? [String: Any] {
+        if status == 0, let result = document?["result"] as? [String: Any] {
             return result
         }
         throw DeviceHubError.serviceFailed(failure(in: document) ?? {

@@ -22,8 +22,10 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
     public let udid: String
     public let platform: Platform
     /// How the Mac reaches the device: `usb`, `network` (Wi-Fi), `emulator` (Android) or
-    /// `simulator` (an iOS simulator booted on this Mac).
+    /// `simulator` (an iOS simulator installed on this Mac).
     public let connection: String
+    /// CoreSimulator power state, present while its runtime and device remain available.
+    public let simulatorState: String?
     public let name: String
     public let productType: String?
     public private(set) var productVersion: String?
@@ -39,7 +41,7 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
     public let error: String?
 
     private enum CodingKeys: String, CodingKey {
-        case udid, platform, connection, name, productType, productVersion, buildVersion, state
+        case udid, platform, connection, simulatorState, name, productType, productVersion, buildVersion, state
         case paired, developerMode, developerImage, wireless, session, error
     }
 
@@ -49,6 +51,7 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
         // Older daemons only discover Apple devices and do not send this field.
         platform = try values.decodeIfPresent(Platform.self, forKey: .platform) ?? .ios
         connection = try values.decode(String.self, forKey: .connection)
+        simulatorState = try values.decodeIfPresent(String.self, forKey: .simulatorState)
         name = try values.decode(String.self, forKey: .name)
         productType = try values.decodeIfPresent(String.self, forKey: .productType)
         productVersion = try values.decodeIfPresent(String.self, forKey: .productVersion)
@@ -76,6 +79,11 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
     public var isWired: Bool { connection == "usb" }
     /// An iOS simulator, controlled in-process through CoreSimulator rather than a device link.
     public var isSimulator: Bool { platform == .ios && connection == "simulator" }
+    public var canStartSimulator: Bool {
+        isSimulator && state == .disconnected && ["Shutdown", "Booting"].contains(simulatorState ?? "")
+    }
+    /// Installed simulators remain available in the sidebar while powered off.
+    public var isAvailable: Bool { isAttached || (isSimulator && simulatorState != nil) }
     public var connectionDescription: String {
         switch connection {
         case "usb": "USB"
@@ -151,10 +159,10 @@ public enum HardwareButton: String, CaseIterable, Sendable {
         }
     }
 
-    /// iOS reads the side button's hold time: a short tap does not sleep the device or start Siri.
+    /// iOS interprets a 500 ms Power hold as Siri. Lock uses a short press instead.
     var defaultHold: Duration {
         switch self {
-        case .lock: .milliseconds(500)
+        case .lock: .milliseconds(100)
         case .siri: .seconds(1)
         default: .milliseconds(60)
         }

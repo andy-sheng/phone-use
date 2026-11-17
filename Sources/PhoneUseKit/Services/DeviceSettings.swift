@@ -17,20 +17,36 @@ public struct DeviceSettings: Sendable {
     }
 
     let backend: any DeviceSettingsBackend
+    /// Recording is independent of the settings route; simulators always use simctl.
+    let recordingBackend: (any DeviceSettingsBackend)?
+
+    init(backend: any DeviceSettingsBackend, recordingBackend: (any DeviceSettingsBackend)? = nil) {
+        self.backend = backend
+        self.recordingBackend = recordingBackend
+    }
     public var source: Source { backend.source }
     public var identifier: String { backend.identifier }
     /// Whether this route can record the screen.
-    public var canRecord: Bool { backend.canRecord }
+    public var canRecord: Bool { (recordingBackend ?? backend).canRecord }
 
     /// Picks the route for a device, probing `devicectl` once per device. Nil for Android.
     public static func resolve(for device: DeviceSummary) async -> DeviceSettings? {
         guard !device.isAndroid else { return nil }
         let identifier = device.deviceIdentifier
         if await DeviceCtl.offersDeviceSettings {
-            let xcode = DeviceCtlSettings(identifier: identifier)
+            var xcode = DeviceCtlSettings(identifier: identifier)
             // CoreDevice may not know a device that only the daemon has paired.
-            if device.isSimulator { return DeviceSettings(backend: xcode) }
-            if (try? await xcode.appearance()) != nil { return DeviceSettings(backend: xcode) }
+            if device.isSimulator {
+                return DeviceSettings(backend: xcode, recordingBackend: SimctlSettings(identifier: identifier))
+            }
+            if (try? await xcode.appearance()) != nil {
+                // Appearance support alone is insufficient (for example, iOS 26.5).
+                // Use the reported capability rather than assuming every iOS 27+ device offers it.
+                if let details = try? await DeviceCtl.run(["device", "info", "details", "--device", identifier]) {
+                    xcode.canRecord = DeviceCtlSettings.supportsRecording(details)
+                }
+                return DeviceSettings(backend: xcode)
+            }
         }
         if device.isSimulator {
             return DeviceSettings(backend: SimctlSettings(identifier: identifier))
@@ -51,7 +67,7 @@ public struct DeviceSettings: Sendable {
     public func simulate(_ location: Location?) async throws { try await backend.simulate(location) }
     /// Starts recording the device's primary display to a video file.
     public func startRecording(to destination: URL) throws -> ScreenRecording {
-        try backend.startRecording(to: destination)
+        try (recordingBackend ?? backend).startRecording(to: destination)
     }
 
     // MARK: Appearance
@@ -195,21 +211,26 @@ extension DeviceSettingsBackend {
     }
 }
 
-/// A screen recording in progress, run by a tool that saves the video when interrupted.
-public final class ScreenRecording: @unchecked Sendable {
+/// A recording from a preview stream or a platform tool.
+public protocol ScreenRecordingSession: AnyObject, Sendable {
+    var destination: URL { get }
+    var isRunning: Bool { get }
+    func stop() async throws -> URL
+}
+
+/// A platform tool that saves the video when interrupted.
+public final class ScreenRecording: ScreenRecordingSession, @unchecked Sendable {
     public let destination: URL
     private let process: Process
     private let errors = Pipe()
-    private let finished: AsyncStream<Void>
+    private let finished: ProcessTermination
 
     init(process: Process, destination: URL) throws {
         self.destination = destination
         self.process = process
         process.standardOutput = FileHandle.nullDevice
         process.standardError = errors
-        var continuation: AsyncStream<Void>.Continuation?
-        finished = AsyncStream { continuation = $0 }
-        process.terminationHandler = { _ in continuation?.finish() }
+        finished = ProcessTermination(process)
         try process.run()
     }
 
@@ -218,7 +239,7 @@ public final class ScreenRecording: @unchecked Sendable {
     /// Interrupts the tool as Ctrl-C would, which makes it write the file, and waits for that.
     public func stop() async throws -> URL {
         if process.isRunning { process.interrupt() }
-        for await _ in finished {}
+        _ = await finished.wait()
         guard FileManager.default.fileExists(atPath: destination.path) else {
             let detail = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)

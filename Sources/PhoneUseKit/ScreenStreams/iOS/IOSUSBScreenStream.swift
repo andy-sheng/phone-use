@@ -43,6 +43,14 @@ final class USBScreenStream: ScreenStream {
     private let name: String
     private let captureSession = AVCaptureSession()
     private let previewLayer: AVCaptureVideoPreviewLayer
+    private let recordingSink = ScreenRecordingSink()
+    private var recordingAvailable = false
+    var canRecord: Bool { recordingAvailable }
+
+    func startRecording(to destination: URL) throws -> any ScreenRecordingSession {
+        guard canRecord else { throw DeviceHubError.capabilityUnavailable("USB screen recording") }
+        return try recordingSink.start(to: destination)
+    }
 
     init(udid: String, name: String) {
         self.udid = udid
@@ -64,6 +72,13 @@ final class USBScreenStream: ScreenStream {
             throw DeviceHubError.capabilityUnavailable("USB screen capture input")
         }
         captureSession.addInput(input)
+        let output = AVCaptureVideoDataOutput()
+        output.alwaysDiscardsLateVideoFrames = true
+        output.setSampleBufferDelegate(recordingSink, queue: DispatchQueue(label: "phoneuse.usb.recording"))
+        if captureSession.canAddOutput(output) {
+            captureSession.addOutput(output)
+            recordingAvailable = true
+        }
         captureSession.commitConfiguration()
         let session = captureSession
         await Task.detached { session.startRunning() }.value

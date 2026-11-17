@@ -23,6 +23,8 @@ public protocol ScreenStream: AnyObject {
     var statusMessage: String? { get }
     var onFrame: ((Double) -> Void)? { get set }
     var onError: ((String) -> Void)? { get set }
+    var canRecord: Bool { get }
+    func startRecording(to destination: URL) throws -> any ScreenRecordingSession
     func start() async throws
     func stop()
 }
@@ -30,6 +32,10 @@ public protocol ScreenStream: AnyObject {
 public extension ScreenStream {
     var recoveryPolicy: ScreenStreamRecoveryPolicy { .none }
     var statusMessage: String? { nil }
+    var canRecord: Bool { false }
+    func startRecording(to destination: URL) throws -> any ScreenRecordingSession {
+        throw DeviceHubError.capabilityUnavailable("Recording this screen stream")
+    }
 }
 
 @MainActor

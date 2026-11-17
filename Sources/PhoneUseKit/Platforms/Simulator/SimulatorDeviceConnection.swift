@@ -53,15 +53,18 @@ enum SimulatorInput {
 }
 
 /// Simulator control runs in this process through CoreSimulator; it never uses a daemon worker,
-/// Apple device services or ADB. Coordinates are normalized to the portrait framebuffer.
+/// Apple device services or ADB. Coordinates follow the displayed screen orientation.
 actor SimulatorDeviceConnection: DeviceConnection {
     nonisolated let touchPolicy = TouchQueuePolicy(coalescesMoves: true, suppressesFailedGestures: false,
                                                    dropsPendingOnClose: true)
     nonisolated let display: SimulatorDisplay
+    nonisolated let canRotate: Bool
     private let bridge: CoreSimulatorBridge
     private let identifier: String
     private var hid: AnyObject?
     private var modernInput: SimulatorHIDChannel?
+    private var vendorInput: SimulatorHIDChannel?
+    private var isChangingGeometry = false
     private var heldPoint: CGPoint?
     private var lastMove = ContinuousClock.now
 
@@ -70,26 +73,82 @@ actor SimulatorDeviceConnection: DeviceConnection {
         let simulator = try bridge.bootedDevice(device.deviceIdentifier)
         let modernInput = try await bridge.modernInput(for: simulator)
         let hid = try modernInput == nil ? bridge.hidClient(for: simulator) : nil
-        let display = SimulatorDisplay(descriptor: try bridge.mainDisplay(of: simulator))
+        let display = SimulatorDisplay(panels: try bridge.mainDisplays(of: simulator))
+        let orientation = try? await DeviceCtl.run(["device", "orientation", "get", "--device", device.deviceIdentifier])
+        let parsedOrientation = orientation.flatMap(SimulatorOrientation.parse)
+        if let parsedOrientation { display.setOrientation(parsedOrientation) }
         let size = try display.pixelSize()
         let info = DisplayInfo(pixelWidth: Double(size.width), pixelHeight: Double(size.height),
                                pointScale: bridge.pointScale(of: simulator))
         let connection = SimulatorDeviceConnection(bridge: bridge, identifier: device.deviceIdentifier,
-                                                   hid: hid, modernInput: modernInput, display: display)
+                                                   hid: hid, modernInput: modernInput, display: display,
+                                                   canRotate: parsedOrientation != nil)
         return (connection, info)
     }
 
-    private init(bridge: CoreSimulatorBridge, identifier: String, hid: AnyObject?, modernInput: SimulatorHIDChannel?, display: SimulatorDisplay) {
+    private init(bridge: CoreSimulatorBridge, identifier: String, hid: AnyObject?, modernInput: SimulatorHIDChannel?, display: SimulatorDisplay, canRotate: Bool) {
         self.bridge = bridge
         self.identifier = identifier
         self.hid = hid
         self.modernInput = modernInput
         self.display = display
+        self.canRotate = canRotate
+    }
+
+    nonisolated var canFold: Bool { display.isFoldable }
+
+    func rotate(_ direction: DeviceRotationDirection) async throws {
+        guard canRotate else { throw DeviceHubError.capabilityUnavailable("rotation on this simulator") }
+        guard !isChangingGeometry else { throw DeviceHubError.deviceNotReady("The simulator is moving") }
+        isChangingGeometry = true
+        defer { isChangingGeometry = false }
+        if let held = heldPoint {
+            heldPoint = nil
+            try await sendTouchMessage(.ended, at: held)
+        }
+        let orientation: SimulatorOrientation
+        if canFold {
+            orientation = display.orientation.rotated(direction)
+            if vendorInput == nil {
+                vendorInput = try await SimulatorHIDChannel.open(bridge.bootedDevice(identifier),
+                                                                service: SimulatorHIDChannel.vendorService)
+            }
+            try await vendorInput?.setOrientation(orientation)
+        } else {
+            let result = try await DeviceCtl.run(["device", "orientation", "rotate", "--device", identifier, direction.rawValue])
+            guard let parsed = SimulatorOrientation.parse(result) else {
+                throw DeviceHubError.serviceFailed("The simulator did not report its new orientation")
+            }
+            orientation = parsed
+        }
+        display.setOrientation(orientation)
+        // Let the guest finish relayout before accepting the next gesture.
+        try await Task.sleep(for: .milliseconds(500))
+    }
+
+    func setPosture(_ posture: SimulatorPosture) async throws {
+        guard canFold else { throw DeviceHubError.capabilityUnavailable("folding on this simulator") }
+        guard !isChangingGeometry else { throw DeviceHubError.deviceNotReady("The simulator is moving") }
+        isChangingGeometry = true
+        defer { isChangingGeometry = false }
+        if let held = heldPoint {
+            heldPoint = nil
+            try await sendTouchMessage(.ended, at: held)
+        }
+        if vendorInput == nil {
+            vendorInput = try await SimulatorHIDChannel.open(bridge.bootedDevice(identifier),
+                                                            service: SimulatorHIDChannel.vendorService)
+        }
+        try await vendorInput?.setPosture(posture)
+        // SpringBoard suppresses interaction until the hinge settles and moves the scene to its panel.
+        try await Task.sleep(for: .milliseconds(1200))
+        display.select(posture)
     }
 
     // MARK: Touch
 
     func sendTouch(_ phase: TouchPhase, x: Double, y: Double) async throws {
+        guard !isChangingGeometry else { throw DeviceHubError.deviceNotReady("The simulator is moving") }
         let point = CGPoint(x: try SimulatorInput.coordinate(x), y: try SimulatorInput.coordinate(y))
         if phase == .moved {
             guard heldPoint != nil else { return }
@@ -131,12 +190,12 @@ actor SimulatorDeviceConnection: DeviceConnection {
     }
 
     private func sendTouchMessage(_ phase: TouchPhase, at point: CGPoint) async throws {
+        var point = display.framebufferOrientation.nativePoint(point)
         if let modernInput {
-            try await modernInput.touch(phase, x: point.x, y: point.y)
+            try await modernInput.touch(phase, x: point.x, y: point.y, target: display.digitizerTarget)
             if phase == .ended { try await modernInput.drain() }
             return
         }
-        var point = point
         // With a unit size, SimulatorKit's ratio is the normalized coordinate itself.
         guard let message = bridge.mouseMessage(&point, nil, SimulatorInput.touchTarget,
                                                 SimulatorInput.eventType(for: phase),
@@ -227,7 +286,7 @@ actor SimulatorDeviceConnection: DeviceConnection {
         let file = FileManager.default.temporaryDirectory
             .appendingPathComponent("phoneusekit-simulator-\(UUID().uuidString).png")
         defer { try? FileManager.default.removeItem(at: file) }
-        try await SimulatorTools.simctl(["io", identifier, "screenshot", "--type=png", file.path],
+        try await SimulatorTools.simctl(["io", identifier, "screenshot", "--type=png", "--display", display.identifier, file.path],
                                         developerDirectory: bridge.developerDirectory)
         // Decode now: an image source reads lazily, and the file is removed on return.
         guard let data = try? Data(contentsOf: file),
@@ -235,7 +294,7 @@ actor SimulatorDeviceConnection: DeviceConnection {
               let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else {
             throw DeviceHubError.serviceFailed("simctl returned an unreadable screenshot")
         }
-        return image
+        return try display.framebufferOrientation.image(image)
     }
 
     func launchApp(bundleID: String) async throws {
@@ -251,6 +310,8 @@ actor SimulatorDeviceConnection: DeviceConnection {
             heldPoint = nil
             try? await sendTouchMessage(.ended, at: held)
         }
+        vendorInput?.close()
+        vendorInput = nil
         hid = nil
         modernInput?.close()
         display.close()

@@ -7,12 +7,88 @@ import XCTest
 final class ScreenConnectionTests: XCTestCase {
     private enum Failure: Error { case unavailable }
 
-    private func device(_ id: String = "first", state: String = "ready", connection: String = "network") throws -> DeviceSummary {
+    private func device(_ id: String = "first", state: String = "ready", connection: String = "network",
+                        simulatorState: String = "") throws -> DeviceSummary {
         let data = try JSONSerialization.data(withJSONObject: [
             "udid": id, "connection": connection, "name": "Test Device",
             "productVersion": "27.2", "state": state, "session": "closed",
+            "simulatorState": simulatorState,
         ])
         return try JSONDecoder().decode(DeviceSummary.self, from: data)
+    }
+
+    func testSimulatorStartsOnlyAfterClickAndContinuesToConnection() async throws {
+        var actions: [String] = []
+        let model = ScreenModel(prepareSession: { _ in actions.append("prepare") }, openSession: { _ in
+            actions.append("open")
+            throw Failure.unavailable
+        }, startSimulator: { _ in actions.append("start") }, connectionAttempts: 1)
+        let target = try device(state: "disconnected", connection: "simulator", simulatorState: "Shutdown")
+        await model.run(device: target)
+        XCTAssertTrue(actions.isEmpty)
+        model.requestConnection(to: target)
+        await model.run(device: target)
+        XCTAssertEqual(actions, ["start", "prepare", "open"])
+    }
+
+    func testSimulatorBootFailureIsRetryableWithoutOpeningSession() async throws {
+        var starts = 0
+        let model = ScreenModel(openSession: { _ in
+            XCTFail("Failed boot must not open a session")
+            throw Failure.unavailable
+        }, startSimulator: { _ in starts += 1; throw Failure.unavailable })
+        let target = try device(state: "disconnected", connection: "simulator", simulatorState: "Shutdown")
+        for _ in 0..<2 {
+            model.requestConnection(to: target)
+            await model.run(device: target)
+            XCTAssertNotNil(model.connectionError)
+            XCTAssertFalse(model.isConnecting)
+            XCTAssertNil(model.status)
+        }
+        XCTAssertEqual(starts, 2)
+    }
+
+    func testSimulatorShutdownDoesNotAutomaticallyBootAnExistingConnectionRequest() async throws {
+        let model = ScreenModel(prepareSession: { _ in }, openSession: { _ in throw Failure.unavailable },
+                                startSimulator: { _ in XCTFail("Shutdown requires a new Start click") }, connectionAttempts: 1)
+        let ready = try device(connection: "simulator", simulatorState: "Booted")
+        model.requestConnection(to: ready)
+        await model.run(device: ready)
+        await model.run(device: try device(state: "disconnected", connection: "simulator", simulatorState: "Shutdown"))
+        XCTAssertFalse(model.isConnecting)
+    }
+
+    func testCancelOrSwitchDuringBootIgnoresLateCompletion() async throws {
+        for switchDevice in [false, true] {
+            var resumeBoot: CheckedContinuation<Void, Never>?
+            let started = expectation(description: "Booting simulator")
+            let model = ScreenModel(openSession: { _ in
+                XCTFail("Cancelled boot must not open a session")
+                throw Failure.unavailable
+            }, startSimulator: { _ in
+                await withCheckedContinuation { resumeBoot = $0; started.fulfill() }
+            })
+            let target = try device(state: "disconnected", connection: "simulator", simulatorState: "Shutdown")
+            model.requestConnection(to: target)
+            let task = Task { await model.run(device: target) }
+            await fulfillment(of: [started], timeout: 1)
+            XCTAssertTrue(model.isConnecting)
+            let generation = model.reconnectGeneration
+            model.requestConnection(to: target)
+            XCTAssertEqual(model.reconnectGeneration, generation)
+            if switchDevice {
+                model.selectionChanged(to: "second")
+                await model.run(device: try device("second"))
+            } else {
+                model.cancelConnection()
+                await model.run(device: target)
+            }
+            resumeBoot?.resume()
+            await task.value
+            XCTAssertNil(model.requestedDeviceID)
+            XCTAssertNil(model.connectionError)
+            XCTAssertFalse(model.isConnecting)
+        }
     }
 
     func testSelectionAndDiscoveryUpdatesNeverPrepareOrOpenAnUnrequestedDevice() async throws {

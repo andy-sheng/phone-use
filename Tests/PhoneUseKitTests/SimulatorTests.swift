@@ -3,6 +3,29 @@ import XCTest
 @testable import PhoneUseKit
 
 final class SimulatorTests: XCTestCase {
+    func testShutdownSimulatorIsAvailableButRequiresAnExplicitStart() throws {
+        let shutdown = try decodeDevice(["state": "disconnected", "simulatorState": "Shutdown"])
+        XCTAssertFalse(shutdown.isReady)
+        XCTAssertFalse(shutdown.isAttached)
+        XCTAssertTrue(shutdown.isAvailable)
+        XCTAssertTrue(shutdown.canStartSimulator)
+        XCTAssertTrue(try decodeDevice(["state": "disconnected", "simulatorState": "Booting"]).canStartSimulator)
+        XCTAssertFalse(try decodeDevice(["state": "disconnected", "simulatorState": "Shutting Down"]).canStartSimulator)
+        let missing = try decodeDevice(["state": "disconnected"])
+        XCTAssertFalse(missing.isAvailable)
+        XCTAssertFalse(missing.canStartSimulator)
+        XCTAssertFalse(try decodeDevice(["connection": "usb", "state": "disconnected", "simulatorState": "Shutdown"]).canStartSimulator)
+    }
+
+    func testStartRejectsPhysicalDevicesAndInvalidIdentifiers() async throws {
+        for device in [try decodeDevice(["connection": "usb"]), try decodeDevice(["udid": "simulator:booted"])] {
+            do {
+                try await SimulatorLifecycle.start(device)
+                XCTFail("Must reject invalid targets before running simctl")
+            } catch DeviceHubError.capabilityUnavailable { }
+        }
+    }
+
     func testSimulatorSummaryIsAppleButNotAPhysicalLink() throws {
         let device = try decodeDevice()
         XCTAssertEqual(device.platform, .ios)
