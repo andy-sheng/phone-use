@@ -28,11 +28,11 @@ final class MCPHost {
     }
 
     /// Starts serving; `prepare` runs before each tool call to make sure the daemon is up.
-    func start(prepare: @escaping @MainActor @Sendable () async throws -> Void) {
+    func start(workspace: MCPWorkspaceAccess, prepare: @escaping @MainActor @Sendable () async throws -> Void) {
         let server = MCPSocketServer(
             handler: { [activity] line in
                 await activity.handle(line: line) { line in
-                    await MCPServer.handle(line: line, prepare: prepare)
+                    await MCPServer.handle(line: line, prepare: prepare, workspace: workspace)
                 }
             },
             onConnectionCountChange: { [weak self] count in

@@ -32,7 +32,7 @@ enum MCPGesture: String, CaseIterable {
 /// Decode once before opening a device. Invalid input must never turn into a default action.
 struct MCPCommand {
     enum Action {
-        case listDevices, screenshot
+        case listDevices, selectDevice, connectDevice, screenshot
         case describeUI(json: Bool)
         case activate(UISelector)
         case typeText(String, UISelector?)
@@ -103,6 +103,10 @@ struct MCPCommand {
         }
         switch name {
         case "list_devices": action = .listDevices
+        case "select_device":
+            guard device != nil else { throw ToolFailure(message: "select_device requires a device identifier or name.") }
+            action = .selectDevice
+        case "connect_device": action = .connectDevice
         case "screenshot": action = .screenshot
         case "describe_ui":
             let format = try Self.string(arguments, "format", optional: true) ?? "outline"

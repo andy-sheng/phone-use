@@ -4,14 +4,74 @@ import Foundation
 @MainActor
 public final class DeviceListModel: ObservableObject {
     @Published public private(set) var devices: [DeviceSummary] = []
-    @Published public var selection: DeviceSummary.ID?
+    @Published public var selection: DeviceSummary.ID? {
+        didSet {
+            if selection != oldValue {
+                selectionGeneration = UUID()
+                previewRequest = nil
+            }
+        }
+    }
+    /// Consumed by a workspace when visible; retained while the app has no window.
+    @Published private(set) var previewRequest: DeviceSummary.ID?
+    private var selectionGeneration = UUID()
+    private var connections: [String: (id: UUID, task: Task<Void, Error>)] = [:]
+    private let connectSession: @MainActor (DeviceSummary) async throws -> Void
     @Published public private(set) var errorMessage: String?
     @Published private(set) var actionInProgress: String?
     @Published var actionError: String?
 
     public let launcher = DaemonLauncher()
 
-    public init() {}
+    public convenience init() {
+        self.init(connectSession: { device in
+            await prepareScreenSession(for: device)
+            _ = try await DeviceHub.shared.session(for: device.udid)
+        })
+    }
+
+    init(connectSession: @escaping @MainActor (DeviceSummary) async throws -> Void) {
+        self.connectSession = connectSession
+    }
+
+    /// Select without opening a session, even if the device needs onboarding.
+    public func selectDevice(_ device: DeviceSummary) {
+        if let index = devices.firstIndex(where: { $0.id == device.id }) { devices[index] = device }
+        else { devices.append(device) }
+        selection = device.id
+    }
+
+    /// Explicit connection shared by app integrations. A successful open requests the UI preview;
+    /// changing selection while connecting must not switch the user back when the open finishes.
+    public func connectDevice(_ device: DeviceSummary) async throws {
+        guard device.isReady else {
+            throw DeviceHubError.deviceNotReady("\(device.name) is not ready (\(device.state.rawValue))")
+        }
+        selectDevice(device)
+        let generation = selectionGeneration
+        let connection: (id: UUID, task: Task<Void, Error>)
+        if let current = connections[device.id] { connection = current }
+        else {
+            connection = (UUID(), Task { try await connectSession(device) })
+            connections[device.id] = connection
+        }
+        defer {
+            if connections[device.id]?.id == connection.id { connections[device.id] = nil }
+        }
+        try await connection.task.value
+        try Task.checkCancellation()
+        guard generation == selectionGeneration, selection == device.id else {
+            throw DeviceHubError.deviceNotReady("Selection changed while connecting to \(device.name); select the device and connect again.")
+        }
+        previewRequest = device.id
+    }
+
+    func consumePreviewRequest() -> DeviceSummary? {
+        defer { previewRequest = nil }
+        guard let previewRequest, selection == previewRequest,
+              let device = selectedDevice, device.isReady else { return nil }
+        return device
+    }
 
     public var selectedDevice: DeviceSummary? {
         devices.first { $0.id == selection }
@@ -37,9 +97,11 @@ public final class DeviceListModel: ObservableObject {
         }
     }
 
-    private func apply(_ update: [DeviceSummary]) {
+    func apply(_ update: [DeviceSummary]) {
         devices = update.sorted { ($0.isAttached ? 0 : 1, $0.name) < ($1.isAttached ? 0 : 1, $1.name) }
-        if selection == nil || selectedDevice == nil {
+        // Keep an existing target through discovery gaps. MCP must not silently operate on a
+        // different device after the selected one disappears.
+        if selection == nil {
             selection = devices.first(where: \.isReady)?.id ?? devices.first(where: \.isAttached)?.id ?? devices.first?.id
         }
     }

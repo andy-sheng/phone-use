@@ -138,6 +138,8 @@ Claude Desktop、Cursor 等使用 JSON 配置的客户端，在 MCP 配置中加
 
 `DEVICEHUB_APP` 可指定要启动的 `.app` 或 `phone-use-app` 可执行文件；SwiftPM 构建中默认使用同目录的 `phone-use-app`。命令行 `phone-use` 仍直接连接守护进程，需要应用已在运行。
 
+MCP 也可通过 `list_devices` → `select_device` → `connect_device` 完成界面的选中与连接流程；选择与界面同步，连接成功后请求预览。省略 `device` 时使用当前选择，并发 agent 应显式指定设备。
+
 工具定义、模拟器 UI 树与文本输入、手势、坐标单位及旧调用兼容见 [MCP 操作约定](Documentation/MCP.md)。
 
 ## 自动更新与发布

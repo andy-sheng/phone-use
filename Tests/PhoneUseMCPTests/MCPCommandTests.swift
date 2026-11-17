@@ -4,9 +4,9 @@ import XCTest
 @testable import PhoneUseMCP
 import PhoneUseKit
 
-private func testDevice(_ id: String = "simulator:one", name: String = "iPhone", platform: String = "ios", connection: String = "simulator", version: String = "") throws -> DeviceSummary {
+private func testDevice(_ id: String = "simulator:one", name: String = "iPhone", platform: String = "ios", connection: String = "simulator", version: String = "", state: String = "ready") throws -> DeviceSummary {
     try JSONDecoder().decode(DeviceSummary.self, from: JSONSerialization.data(withJSONObject: [
-        "productVersion": version, "udid": id, "name": name, "platform": platform, "connection": connection, "state": "ready", "session": "open",
+        "productVersion": version, "udid": id, "name": name, "platform": platform, "connection": connection, "state": state, "session": "open",
     ]))
 }
 
@@ -62,7 +62,7 @@ final class MCPCommandTests: XCTestCase {
         let reply = MCPServer.localReply(to: ["id": 1, "method": "tools/list"])!
         let tools = (reply["result"] as! [String: Any])["tools"] as! [[String: Any]]
         let names = Set(tools.compactMap { $0["name"] as? String })
-        XCTAssertEqual(names, ["list_devices", "screenshot", "describe_ui", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "type_text"])
+        XCTAssertEqual(names, ["select_device", "connect_device", "list_devices", "screenshot", "describe_ui", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "type_text"])
         XCTAssertNotNil(MCPServer.encode(reply), "every schema must remain JSON serializable")
         for name in ["get_screen", "press_button", "ui", "snapshot_ui"] {
             XCTAssertNoThrow(try MCPCommand(name: name, arguments: name == "press_button" ? ["button": "home"] : [:]))
@@ -72,6 +72,7 @@ final class MCPCommandTests: XCTestCase {
     func testInvalidArgumentsAreRejectedBeforePreparingOrOpeningDevices() async throws {
         let session = try TestSession()
         let invalid: [(String, [String: Any])] = [
+            ("select_device", [:]), ("connect_device", ["device": 7]),
             ("tap", ["x": true, "y": 20]), ("tap", ["x": Double.nan, "y": 20]),
             ("tap", ["x": "2", "y": 20]), ("tap", ["x": 2, "y": 20, "device": 7]),
             ("tap", ["x": 2, "y": 20, "return_screen": 1]),
@@ -183,5 +184,91 @@ final class MCPCommandTests: XCTestCase {
         XCTAssertEqual((output["structuredContent"] as? [String: Any])?["input_sent"] as? Bool, true)
         XCTAssertNotNil((output["structuredContent"] as? [String: Any])?["screenshot_error"])
         XCTAssertEqual(session.calls, ["tap 0.05,0.0375", "screenshot"])
+    }
+}
+
+
+private actor WorkspaceProbe {
+    var selected: String?
+    var events: [String] = []
+    let failsConnection: Bool
+    init(selected: String? = nil, failsConnection: Bool = false) {
+        self.selected = selected
+        self.failsConnection = failsConnection
+    }
+    func select(_ device: DeviceSummary) { selected = device.udid; events.append("select " + device.udid) }
+    func connect(_ device: DeviceSummary) throws {
+        events.append("connect " + device.udid)
+        if failsConnection { throw DeviceHubError.serviceFailed("connection failed") }
+        selected = device.udid
+    }
+    nonisolated var access: MCPWorkspaceAccess {
+        MCPWorkspaceAccess(selectedDevice: { await self.selected },
+                           select: { await self.select($0) }, connect: { try await self.connect($0) })
+    }
+}
+
+extension MCPCommandTests {
+    func testSelectThenConnectAndImplicitActionUseSharedSelection() async throws {
+        let first = try TestSession(device: testDevice("one"))
+        let second = try TestSession(device: testDevice("two"))
+        let devices = [first.device, second.device]
+        let access = MCPDeviceAccess(devices: { devices }, session: { $0 == "one" ? first : second })
+        let workspace = WorkspaceProbe()
+        let selected = await MCPServer.handle(request("select_device", ["device": "two"]), access: access, workspace: workspace.access)
+        XCTAssertNil((selected?["result"] as? [String: Any])?["isError"])
+        XCTAssertTrue(first.calls.isEmpty && second.calls.isEmpty)
+        let connected = await MCPServer.handle(request("connect_device", [:]), access: access, workspace: workspace.access)
+        let data = (connected?["result"] as? [String: Any])?["structuredContent"] as? [String: Any]
+        XCTAssertEqual(data?["session_connected"] as? Bool, true)
+        XCTAssertEqual(data?["first_frame_verified"] as? Bool, false)
+        let events = await workspace.events
+        XCTAssertEqual(events, ["select two", "connect two"])
+        _ = await MCPServer.handle(request("tap", ["x": 10, "y": 20]), access: access, workspace: workspace.access)
+        XCTAssertTrue(first.calls.isEmpty)
+        XCTAssertEqual(second.calls.count, 1)
+        _ = await MCPServer.handle(request("tap", ["device": "one", "x": 10, "y": 20]), access: access, workspace: workspace.access)
+        XCTAssertEqual(first.calls.count, 1)
+        let selection = await workspace.selected
+        XCTAssertEqual(selection, "two", "An explicit action target must not change the UI selection")
+        let list = await MCPServer.handle(request("list_devices", [:]), access: access, workspace: workspace.access)
+        let rows = ((list?["result"] as? [String: Any])?["structuredContent"] as? [String: Any])?["devices"] as? [[String: Any]]
+        XCTAssertEqual(rows?.map { $0["selected"] as? Bool }, [false, true])
+    }
+
+    func testSelectUnreadyDeviceButRejectConnectionAndDoNotFallback() async throws {
+        let unavailable = try testDevice("locked", state: "untrusted")
+        let ready = try testDevice("ready")
+        let access = MCPDeviceAccess(devices: { [unavailable, ready] }, session: { _ in
+            XCTFail("Must not open another device"); throw DeviceHubError.connectionClosed
+        })
+        let workspace = WorkspaceProbe()
+        let selection = await MCPServer.handle(request("select_device", ["device": "locked"]), access: access, workspace: workspace.access)
+        XCTAssertNil((selection?["result"] as? [String: Any])?["isError"])
+        for tool in ["connect_device", "screenshot"] {
+            let reply = await MCPServer.handle(request(tool, [:]), access: access, workspace: workspace.access)
+            XCTAssertEqual((reply?["result"] as? [String: Any])?["isError"] as? Bool, true)
+        }
+        let events = await workspace.events
+        XCTAssertEqual(events, ["select locked"])
+    }
+
+    func testConnectReportsFailureAndAmbiguityWithoutSuccess() async throws {
+        let device = try testDevice("one")
+        let other = try testDevice("two")
+        let access = MCPDeviceAccess(devices: { [device, other] }, session: { _ in
+            XCTFail("Explicit connection uses the workspace"); throw DeviceHubError.connectionClosed
+        })
+        let workspace = WorkspaceProbe(failsConnection: true)
+        let ambiguous = await MCPServer.handle(request("connect_device", [:]), access: access, workspace: workspace.access)
+        XCTAssertEqual((ambiguous?["result"] as? [String: Any])?["isError"] as? Bool, true)
+        let initialEvents = await workspace.events
+        XCTAssertTrue(initialEvents.isEmpty)
+        let failure = await MCPServer.handle(request("connect_device", ["device": "two"]), access: access, workspace: workspace.access)
+        let result = failure?["result"] as? [String: Any]
+        XCTAssertEqual(result?["isError"] as? Bool, true)
+        XCTAssertNil(result?["structuredContent"])
+        let missingHost = await MCPServer.handle(request("select_device", ["device": "one"]), access: access)
+        XCTAssertEqual((missingHost?["result"] as? [String: Any])?["isError"] as? Bool, true)
     }
 }

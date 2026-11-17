@@ -28,7 +28,7 @@ struct MCPDeviceAccess: Sendable {
 }
 
 extension MCPCommand {
-    static func resolve(_ query: String?, in devices: [DeviceSummary]) throws -> DeviceSummary {
+    static func resolve(_ query: String?, in devices: [DeviceSummary], requiresReady: Bool = true) throws -> DeviceSummary {
         let candidates: [DeviceSummary]
         if let query {
             let needle = query.lowercased()
@@ -44,25 +44,41 @@ extension MCPCommand {
         guard candidates.count == 1 else {
             throw ToolFailure(message: "More than one device matches. Call list_devices and pass an explicit device identifier: \(candidates.map(\.udid).joined(separator: ", ")).")
         }
-        guard candidates[0].isReady else { throw DeviceHubError.deviceNotReady("\(candidates[0].name) is not ready (\(candidates[0].state.rawValue))") }
+        guard !requiresReady || candidates[0].isReady else { throw DeviceHubError.deviceNotReady("\(candidates[0].name) is not ready (\(candidates[0].state.rawValue))") }
         return candidates[0]
     }
 
-    func execute(access: MCPDeviceAccess) async throws -> [String: Any] {
+    func execute(access: MCPDeviceAccess, workspace: MCPWorkspaceAccess? = nil) async throws -> [String: Any] {
         let devices = try await access.devices()
+        let selection = await workspace?.selectedDevice()
         if case .listDevices = action {
             let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(devices)) as? [[String: Any]] ?? []
             let rows = zip(devices, encoded).map { device, row in
                 var capabilities = ["screenshot", "tap", "long_press", "swipe", "gesture", "button", "launch_app"]
                 if !device.isAndroid { capabilities += ["describe_ui", "element_targeting"] }
                 if device.isSimulator || !device.isAndroid && device.osMajorVersion >= 27 { capabilities.append("type_text") }
-                return row.merging(["capabilities": capabilities,
+                return row.merging(["capabilities": capabilities, "selected": device.udid == selection,
                     "ui_scope": device.isAndroid ? "unavailable" : device.isSimulator ? "accessibility" : "development-signed foreground app (get-task-allow=true); no element geometry",
                     "coordinate_unit": device.isAndroid ? "pixels" : "points"]) { _, new in new }
             }
             return ["content": [mcpText(try json(rows))], "structuredContent": ["devices": rows]]
         }
-        let selected = try Self.resolve(device, in: devices)
+        let query = device ?? selection
+        if case .selectDevice = action {
+            let selected = try Self.resolve(device, in: devices, requiresReady: false)
+            guard let workspace else { throw ToolFailure(message: "Device selection requires the PhoneUse app host.") }
+            try await workspace.select(selected)
+            return ["content": [mcpText("Selected \(selected.name). Call connect_device to connect.")],
+                    "structuredContent": ["device": selected.udid, "selected": true, "state": selected.state.rawValue]]
+        }
+        let selected = try Self.resolve(query, in: devices)
+        if case .connectDevice = action {
+            guard let workspace else { throw ToolFailure(message: "Explicit device connection requires the PhoneUse app host.") }
+            try await workspace.connect(selected)
+            return ["content": [mcpText("Connected to \(selected.name). Preview requested; first frame is not yet verified.")],
+                    "structuredContent": ["device": selected.udid, "selected": true, "session_connected": true,
+                                          "preview_requested": true, "first_frame_verified": false]]
+        }
         let session = try await access.session(selected.udid)
         let width = selected.isAndroid ? session.display.pixelWidth : session.display.pointWidth.rounded()
         let height = selected.isAndroid ? session.display.pixelHeight : session.display.pointHeight.rounded()

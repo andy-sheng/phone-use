@@ -7,7 +7,7 @@ enum MCPToolCatalog {
 
     static let definitions: [[String: Any]] = {
         let device: [String: Any] = ["type": "string", "minLength": 1,
-            "description": "Device name, UDID or identifier from list_devices. May be omitted only when one ready device is connected. Use an explicit identifier when several devices match."]
+            "description": "Device name, UDID or identifier from list_devices. May be omitted when a device is selected in PhoneUse, or only one ready device exists. Selection is shared by all clients and the UI; use explicit identifiers for concurrent agents."]
         let duration: [String: Any] = ["type": "number", "exclusiveMinimum": 0, "maximum": 10,
             "description": "Duration in seconds, greater than 0 and at most 10. Do not combine with legacy duration_ms."]
         let delay: [String: Any] = ["type": "number", "minimum": 0, "maximum": 10,
@@ -39,7 +39,9 @@ enum MCPToolCatalog {
         func fields(_ extra: [String: Any]) -> [String: Any] { common.merging(extra) { _, new in new } }
 
         return [
-            tool("list_devices", "List attached iOS/Android devices and booted iOS simulators (connection: simulator). Only state: ready devices can be controlled. Multiple ready devices require an explicit device argument.", [:], action: false),
+            tool("list_devices", "List attached iOS/Android devices and booted iOS simulators (connection: simulator). Only state: ready devices can be controlled. Use select_device to choose a device, then connect_device to connect it and request its UI preview.", [:], action: false),
+            tool("select_device", "Select a discovered device in PhoneUse, like clicking its sidebar row. Does not connect. May select a device that still needs setup. Selection is shared with the UI and all MCP clients; subsequent calls without device use this selection.", ["device": device], required: ["device"]),
+            tool("connect_device", "Connect the specified or currently selected ready device and request its PhoneUse preview, like the UI Connect button. Waits for the device session to open, not for the first video frame. Reuses a session when available. Does not pair, trust or enable Developer Mode. Without a selection, only one ready device may be chosen.", ["device": device]),
             tool("screenshot", "Capture a JPEG image and coordinate metadata. One image pixel corresponds to one input coordinate: iOS points or Android pixels. iOS uses native portrait coordinates, not orientation-calibrated UI coordinates.", ["device": device], action: false),
             tool("describe_ui", "Read the foreground app's accessibility tree (iOS; physical devices require an unlocked, development-signed foreground app with get-task-allow=true; system/App Store/TestFlight apps are unsupported). Physical trees omit frames and may omit enabled status. Prefer id, then label selectors from this result. Frames use accessibility UI points; use screenshot for native coordinate taps. Not all custom-rendered controls expose accessibility; use screenshot for visual checks. Run again after each action.",
                  ["device": device, "format": ["type": "string", "enum": ["outline", "json"], "default": "outline"]], action: false),

@@ -1,5 +1,6 @@
 import AppKit
 import PhoneUseKit
+import PhoneUseMCP
 import PhoneUseUI
 import SwiftUI
 
@@ -13,7 +14,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Launched as a bare SwiftPM executable, so opt into a Dock icon and focus explicitly.
         NSApp.setActivationPolicy(.regular)
         if !MCPHost.launchedInBackground { NSApp.activate() }
-        mcp.start { [model] in try await model.launcher.start() }
+        mcp.start(workspace: MCPWorkspaceAccess(
+            selectedDevice: { [model] in await model.selection },
+            select: { [model] device in await model.selectDevice(device) },
+            connect: { [model] device in try await model.connectDevice(device) }
+        )) { [model] in try await model.launcher.start() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

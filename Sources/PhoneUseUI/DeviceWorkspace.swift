@@ -130,6 +130,12 @@ public struct DeviceWorkspace<Panel: View>: View {
             screen.selectionChanged(to: selectedID)
             zoom = nil
         }
+        .onChange(of: model.previewRequest, initial: true) { _, _ in
+            if let device = model.consumePreviewRequest() {
+                screen.selectionChanged(to: device.id)
+                screen.requestConnection(to: device)
+            }
+        }
         .sheet(isPresented: $showingPairing) { WirelessPairingSheet() }
         .onChange(of: allowsInput) { _, enabled in
             if !enabled { showingLaunch = false }

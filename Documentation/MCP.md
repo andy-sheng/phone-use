@@ -7,7 +7,11 @@ PhoneUseKit 的共享设备会话执行；无需另装 sim-use、idb、XcodeBuil
 ## 发现、观察、操作、验证
 
 1. 调用 `list_devices`，查看设备状态及 `capabilities`。只有 `ready` 设备可操作。
-2. 多台设备就绪时必须传 `device`，优先使用返回的完整标识；名称匹配不唯一时也会报错。
+2. 调用 `select_device` 选择设备，再调用 `connect_device` 建立连接并请求预览，对应界面的选中与连接。
+   `select_device` 不连接设备，也可选择尚需配对等准备的设备；`connect_device` 只连接 `ready` 设备。
+   省略 `device` 时使用 PhoneUse 当前选中设备；没有选中设备时，只能自动选取唯一的就绪设备。
+   当前选择与界面、所有 MCP 客户端共享，并发 agent 应显式传入完整标识。名称匹配不唯一会报错。
+   当前选中设备不可用时不会静默换到另一台设备。
 3. iOS 模拟器和真机中的开发签名应用优先用 `describe_ui` 读取界面，并用 `id`、`label` 或 `label_contains` 定位。
    真机中的系统/App Store/TestFlight 应用、Android 或自绘控件使用 `screenshot`，根据返回图像的坐标操作。
 4. 操作后再次读取 UI 树或截图验证。返回 `input_sent: true` 仅表示输入已发送，
@@ -33,6 +37,8 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
 | 工具 | 主要参数 | 支持范围与含义 |
 | --- | --- | --- |
 | `list_devices` | 无 | iOS/Android 真机与已启动的 iOS 模拟器；返回每台设备的能力 |
+| `select_device` | `device` | 切换 PhoneUse 界面选中设备，不建立连接 |
+| `connect_device` | `device?` | 连接指定或当前选中设备，成功后请求界面预览 |
 | `screenshot` | `device?` | JPEG 图像、尺寸、平台、坐标单位与原点 |
 | `describe_ui` | `device?`, `format?: outline/json` | iOS 模拟器或真机开发签名应用的 UI 树；默认简洁文本，不附加原始私有对象 |
 | `tap` | `x, y` 或一个元素选择器；`duration?` | 坐标点击支持可选按住时长；元素点击使用实时无障碍激活 |
@@ -43,7 +49,13 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
 | `launch_app` | `bundle_id` | iOS bundle ID 或 Android 包名/activity，启动或重新启动已安装的应用 |
 | `type_text` | `text`，可选元素选择器 | iOS 模拟器及 iOS 27+ 真机 HID 键盘输入；指定选择器时先激活文本框 |
 
-输入操作共同支持 `device`、`pre_delay`、`post_delay` 和 `return_screen`。
+`connect_device` 等待设备会话打开后返回 `session_connected: true` 和 `preview_requested: true`；
+这不代表已收到视频首帧（`first_frame_verified: false`）。窗口可见时启动预览，后台无窗口时保留请求，
+打开窗口后开始预览；不会主动弹出窗口。已有会话会被复用。连接期间若用户切换选择，旧请求不会切回设备，
+并报告选择已改变。配对、信任和开发者模式仍由设备与应用设置完成。
+旧的直接调用方式仍可用：`screenshot`、`tap` 等会按需建立共享会话，无须强制先执行这两个新工具。
+
+输入操作（不含选择与连接）共同支持 `device`、`pre_delay`、`post_delay` 和 `return_screen`。
 新参数 `duration`、`pre_delay`、`post_delay` 均以**秒**为单位；时长须大于 0 且不超过
 10 秒，延迟允许 0–10 秒。`return_screen: true` 在操作及 `post_delay` 后再等待 0.6 秒截图。
 截图失败会明确报告“操作已发送、截图失败”，不会将它伪装成输入失败或自动重发输入。
@@ -92,6 +104,9 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
 示例 `tools/call` 参数：
 
 ```json
+{"name": "list_devices", "arguments": {}}
+{"name": "select_device", "arguments": {"device": "simulator:<UDID>"}}
+{"name": "connect_device", "arguments": {}}
 {"name": "describe_ui", "arguments": {"device": "simulator:<UDID>"}}
 {"name": "tap", "arguments": {"device": "simulator:<UDID>", "id": "login.submit"}}
 {"name": "type_text", "arguments": {"device": "simulator:<UDID>", "id": "login.email", "text": "user@example.com"}}

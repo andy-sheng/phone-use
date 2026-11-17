@@ -22,7 +22,7 @@ public enum MCPServer {
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": [String: Any]()],
                 "serverInfo": ["name": name, "version": version],
-                "instructions": "Call list_devices, choose an explicit device when multiple are ready, then observe with describe_ui (iOS; physical devices require a development-signed foreground app) or screenshot. Prefer fresh id/label selectors for iOS element taps. Verify the resulting UI after every action; input delivery is not proof of a UI change. Coordinates are iOS native portrait points or Android display pixels; durations and delays are seconds. Physical UI trees and selectors require get-task-allow=true and omit geometry. Physical US-keyboard type_text requires iOS 27+ (500 characters per call); simulator typing accepts 10000 characters.",
+                "instructions": "Call list_devices, select_device, then connect_device to open a session and request the UI preview. Selection is shared with the UI and all clients; pass device explicitly when agents run concurrently. Then observe with describe_ui (iOS; physical devices require a development-signed foreground app) or screenshot. Prefer fresh id/label selectors for iOS element taps. Verify the resulting UI after every action; input delivery is not proof of a UI change. Coordinates are iOS native portrait points or Android display pixels; durations and delays are seconds. Physical UI trees and selectors require get-task-allow=true and omit geometry. Physical US-keyboard type_text requires iOS 27+ (500 characters per call); simulator typing accepts 10000 characters.",
             ])
         case "ping":
             return result(id, [:])
@@ -38,12 +38,13 @@ public enum MCPServer {
     /// Handles one request, running tools against `DeviceHub.shared` after `prepare` (which the
     /// app uses to make sure its daemon is up). Returns nil for notifications.
     public static func handle(_ message: [String: Any],
-                              prepare: @Sendable () async throws -> Void = {}) async -> [String: Any]? {
-        await handle(message, prepare: prepare, access: .live)
+                              prepare: @Sendable () async throws -> Void = {},
+                              workspace: MCPWorkspaceAccess? = nil) async -> [String: Any]? {
+        await handle(message, prepare: prepare, access: .live, workspace: workspace)
     }
 
     static func handle(_ message: [String: Any], prepare: @Sendable () async throws -> Void = {},
-                       access: MCPDeviceAccess) async -> [String: Any]? {
+                       access: MCPDeviceAccess, workspace: MCPWorkspaceAccess? = nil) async -> [String: Any]? {
         guard let id = message["id"] else { return nil }
         guard message["method"] as? String == "tools/call" else { return localReply(to: message) }
         let params = message["params"] as? [String: Any] ?? [:]
@@ -54,7 +55,7 @@ public enum MCPServer {
             }
             let command = try MCPCommand(name: name, arguments: params["arguments"] as? [String: Any] ?? [:])
             try await prepare()
-            return result(id, try await command.execute(access: access))
+            return result(id, try await command.execute(access: access, workspace: workspace))
         } catch let failure as ToolFailure {
             return toolError(id: id, failure.message)
         } catch {
@@ -79,8 +80,9 @@ public enum MCPServer {
     }
 
     /// Handles one encoded line; nil when there is nothing to send back.
-    public static func handle(line: Data, prepare: @Sendable () async throws -> Void = {}) async -> Data? {
-        guard let message = decode(line), let reply = await handle(message, prepare: prepare) else { return nil }
+    public static func handle(line: Data, prepare: @Sendable () async throws -> Void = {},
+                              workspace: MCPWorkspaceAccess? = nil) async -> Data? {
+        guard let message = decode(line), let reply = await handle(message, prepare: prepare, workspace: workspace) else { return nil }
         return encode(reply)
     }
 
