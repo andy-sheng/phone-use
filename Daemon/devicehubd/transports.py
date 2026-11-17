@@ -252,7 +252,7 @@ async def _network_tunnel_provider(serial: Optional[str], autopair: bool, remote
     try:
         devices = await list_devices()
     except Exception as error:
-        logger.debug("system Wi-Fi discovery failed while opening a tunnel: %r", error)
+        logger.warning("system Wi-Fi discovery failed while opening a tunnel: %r", error)
         devices = []
     if any(device.serial == serial and device.connection_type == "Network" for device in devices):
         lockdown = await create_using_usbmux(serial=serial, autopair=False, connection_type="Network")
@@ -284,10 +284,11 @@ async def _remote_pairing_service(udid: Optional[str]) -> Any:
 
     async def attempt(host: str, port: int) -> Any:
         tried.add((host, port))
+        logger.info("RemotePairing connection attempt host=%s port=%s", host, port)
         try:
             return await create_core_device_tunnel_service_using_remotepairing(udid, host, port)
         except (ConnectionTerminatedError, asyncio.IncompleteReadError, asyncio.TimeoutError, OSError) as e:
-            logger.debug("RemotePairing %s@%s:%s failed: %r", udid, host, port, e)
+            logger.warning("RemotePairing connection failed host=%s port=%s error=%r", host, port, e)
             return None
 
     for host, port in _known_endpoints():

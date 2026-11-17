@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        Diagnostics.record("process.stop")
         automation.stop()
         model.stop()
     }
@@ -35,6 +36,7 @@ struct AutomationMacApp: App {
 
     init() {
         PhoneUseConfiguration.current = .automation
+        Diagnostics.startup()
     }
 
     var body: some Scene {
@@ -43,5 +45,6 @@ struct AutomationMacApp: App {
                 .environmentObject(appDelegate.model)
         }
         .defaultSize(width: 1280, height: 920)
+        .commands { DiagnosticCommands { appDelegate.automation.diagnosticRunDirectories } }
     }
 }

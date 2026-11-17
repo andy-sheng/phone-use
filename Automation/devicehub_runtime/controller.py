@@ -3,6 +3,7 @@ import json
 import queue
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +11,7 @@ from maa.controller import CustomController
 from maa.define import MaaControllerFeatureEnum
 
 from .images import decode_png
+from .diagnostics import BridgeTrace
 
 
 class Bridge:
@@ -27,6 +29,8 @@ class Bridge:
             args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             text=True, encoding="utf-8", bufsize=1,
         )
+        self.trace = BridgeTrace()
+        self.trace.record("bridge.start", child_pid=self.process.pid)
         self._responses = queue.Queue()
         self._lock = threading.Lock()
         self._serial = 0
@@ -47,21 +51,32 @@ class Bridge:
             if self._closed or self.process.poll() is not None:
                 raise ConnectionError("automation-bridge is closed")
             self._serial += 1
-            self.process.stdin.write(json.dumps({"id": self._serial, "method": method, "params": params}) + "\n")
-            self.process.stdin.flush()
+            started = time.monotonic()
+            context = {"request": self._serial, "method": method, "child_pid": self.process.pid,
+                       "timeout_ms": 30000}
+            self.trace.record("request.begin", **context)
             try:
-                reply = self._responses.get(timeout=30)
-            except queue.Empty as error:
-                self.process.stdin.close()
-                self._closed = True
-                raise TimeoutError(f"automation-bridge {method} timed out; run stopped") from error
-            if isinstance(reply, Exception):
-                raise reply
-            if reply.get("id") != self._serial:
-                raise ConnectionError("automation-bridge response ID mismatch")
-            if "error" in reply:
-                raise RuntimeError(reply["error"])
-            return reply["result"]
+                self.process.stdin.write(json.dumps({"id": self._serial, "method": method, "params": params}) + "\n")
+                self.process.stdin.flush()
+                try:
+                    reply = self._responses.get(timeout=30)
+                except queue.Empty as error:
+                    self._closed = True
+                    self.process.stdin.close()
+                    raise TimeoutError(f"automation-bridge {method} timed out; run stopped") from error
+                if isinstance(reply, Exception):
+                    raise reply
+                if reply.get("id") != self._serial:
+                    raise ConnectionError("automation-bridge response ID mismatch")
+                if "error" in reply:
+                    raise RuntimeError(reply["error"])
+                result = reply["result"]
+            except Exception as error:
+                self.trace.record("request.failed", **context, elapsed_ms=round((time.monotonic() - started) * 1000),
+                                  error_type=type(error).__name__, child_exit=self.process.poll())
+                raise
+            self.trace.record("request.ok", **context, elapsed_ms=round((time.monotonic() - started) * 1000))
+            return result
 
     def close(self):
         if not self._closed:
@@ -80,6 +95,8 @@ class Bridge:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait()
+        self.trace.record("bridge.exit", child_exit=self.process.poll())
+        self.trace.close()
 
 
 class DeviceController(CustomController):

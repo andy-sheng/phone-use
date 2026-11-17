@@ -460,7 +460,10 @@ final class AutomationModel: ObservableObject {
                 let config = try JSONEncoder().encode(configuration(for: task))
                 child.arguments! += ["--config", String(decoding: config, as: UTF8.self)]
             }
-            child.environment = Self.environment(runtime)
+            var environment = Self.environment(runtime)
+            environment["DEVICEHUB_RUN_ID"] = id.uuidString
+            child.environment = environment
+            Diagnostics.record("automation.start", ["run": id.uuidString, "device": Diagnostics.deviceID(device.udid), "probe": String(probe)])
             child.currentDirectoryURL = directory
             let input = Pipe()
             child.standardInput = input
@@ -500,6 +503,7 @@ final class AutomationModel: ObservableObject {
             diagnosticFile = nil
             isRunning = false
             outcome = "failed"
+            Diagnostics.record("automation.start.failed", ["error": String(describing: error)])
             message = "任务无法启动：\(error.localizedDescription)"
             appendLog(message, level: .error)
         }
@@ -518,6 +522,17 @@ final class AutomationModel: ObservableObject {
             guard process.isRunning else { return }
             Darwin.kill(process.processIdentifier, SIGKILL)
         }
+    }
+
+    var diagnosticRunDirectories: [URL] {
+        let root = AutomationTask.supportDirectory.appendingPathComponent("Automation")
+        let files = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey])) ?? []
+        return Array(files.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+            .sorted { a, b in
+                let left = (try? a.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                let right = (try? b.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                return left > right
+            }.prefix(3))
     }
 
     func clearVisibleLogs() { logs = [] }
@@ -559,6 +574,7 @@ final class AutomationModel: ObservableObject {
     }
 
     private func finished(exitCode: Int32) {
+        Diagnostics.record("automation.exit", ["run": runID.uuidString, "status": String(exitCode)])
         stdout?.fileHandleForReading.readabilityHandler = nil
         stdout = nil
         try? stdin?.fileHandleForWriting.close()

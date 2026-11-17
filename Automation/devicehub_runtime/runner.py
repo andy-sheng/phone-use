@@ -216,6 +216,8 @@ def execute(args, packages, emit, stop, bridge_factory=None, android_factory=Non
 
 def run(args, packages, output_stream=None):
     args.output.mkdir(parents=True, exist_ok=True)
+    os.environ["DEVICEHUB_RUN_LOG_DIR"] = str(args.output.resolve())
+    os.environ.setdefault("DEVICEHUB_RUN_ID", args.output.name)
     output_lock = threading.Lock()
     event_file = (args.output / "events.jsonl").open("w", encoding="utf-8")
 

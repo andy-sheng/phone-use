@@ -24,6 +24,14 @@ public final class DeviceSession: @unchecked Sendable {
     }
 
     static func open(_ initialDevice: DeviceSummary, daemon: DaemonClient) async throws -> DeviceSession {
+        try await Diagnostics.operation("device.open", ["device": Diagnostics.deviceID(initialDevice.udid),
+            "platform": initialDevice.platform.rawValue, "connection": initialDevice.connection,
+            "os": initialDevice.productVersion ?? "unknown"]) {
+            try await openConnection(initialDevice, daemon: daemon)
+        }
+    }
+
+    private static func openConnection(_ initialDevice: DeviceSummary, daemon: DaemonClient) async throws -> DeviceSession {
         if initialDevice.isSimulator {
             // The daemon only lists simulators; control and display stay in this process.
             let (connection, display) = try await SimulatorDeviceConnection.open(initialDevice)
@@ -66,7 +74,7 @@ public final class DeviceSession: @unchecked Sendable {
             var delivery = QueuedTouchDelivery(suppressFailedGestures: policy.suppressesFailedGestures) { event in
                 try await connection.sendTouch(event.phase, x: event.x, y: event.y)
             } reportError: { message in
-                FileHandle.standardError.write(Data("touch failed: \(message)\n".utf8))
+                Diagnostics.record("touch.failed", ["error": message])
                 touchErrors.report(message)
             }
             for await _ in touches.notifications {
@@ -113,7 +121,9 @@ public final class DeviceSession: @unchecked Sendable {
     }
 
     public func screenshot() async throws -> CGImage {
-        try await connection.screenshot()
+        try await Diagnostics.operation("screenshot", ["device": Diagnostics.deviceID(device.udid), "connection": device.connection]) {
+            try await connection.screenshot()
+        }
     }
 
     public func launchApp(bundleID: String) async throws {
@@ -144,6 +154,7 @@ public final class DeviceSession: @unchecked Sendable {
     }
 
     public func close() async {
+        Diagnostics.record("device.close", ["device": Diagnostics.deviceID(device.udid)])
         if connection.touchPolicy.dropsPendingOnClose {
             touches.finish()
             touchTask.cancel()

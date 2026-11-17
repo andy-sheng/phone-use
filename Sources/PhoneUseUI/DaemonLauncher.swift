@@ -36,25 +36,37 @@ public final class DaemonLauncher {
 
     /// Starts the daemon unless one already answers on the socket, and waits until it does.
     public func start() async throws {
+        let started = ProcessInfo.processInfo.systemUptime
         stopping = false
-        if await DaemonClient.isReachable() { return }
+        if await DaemonClient.isReachable() {
+            Diagnostics.record("daemon.ready")
+            return
+        }
         // The daemon we launched may still be starting or restarting; never run two side by side,
         // because the extra one would only exit with the app.
         if process?.isRunning != true {
-            guard let runtime = Self.locateRuntime() else { throw LaunchError.runtimeMissing }
+            guard let runtime = Self.locateRuntime() else {
+                Diagnostics.record("daemon.runtime.missing")
+                throw LaunchError.runtimeMissing
+            }
             try spawn(runtime)
         }
         for _ in 0..<60 {
             try await Task.sleep(for: .milliseconds(250))
-            if await DaemonClient.isReachable() { return }
+            if await DaemonClient.isReachable() {
+                Diagnostics.record("daemon.ready", ["elapsed_ms": Diagnostics.elapsed(since: started)])
+                return
+            }
             if process?.isRunning == false { break }
         }
         // Alive but unreachable: stop it so the next attempt starts a fresh one.
         if let process, process.isRunning { process.terminate() }
+        Diagnostics.record("daemon.start.unavailable", ["elapsed_ms": Diagnostics.elapsed(since: started), "timeout_ms": "15000"])
         throw LaunchError.didNotStart
     }
 
     public func stop() {
+        Diagnostics.record("daemon.stop")
         stopping = true
         try? stdin?.fileHandleForWriting.close()
         process = nil
@@ -81,13 +93,27 @@ public final class DaemonLauncher {
         process.environment = environment
         let pipe = Pipe()
         process.standardInput = pipe
-        process.standardOutput = FileHandle.standardError
-        process.standardError = FileHandle.standardError
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+        output.fileHandleForReading.readabilityHandler = { [output] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { output.fileHandleForReading.readabilityHandler = nil; return }
+            Diagnostics.output(data)
+        }
         process.terminationHandler = { [weak self] exited in
+            // The read handler drains through EOF independently; do not block restart waiting
+            // for a worker that inherited stderr, or race a second read against that handler.
+            Diagnostics.record("daemon.exit", ["pid_child": String(exited.processIdentifier), "status": String(exited.terminationStatus)])
             let id = ObjectIdentifier(exited)
             Task { @MainActor in self?.daemonExited(id, runtime) }
         }
-        try process.run()
+        Diagnostics.record("daemon.start", ["bundled": String(runtime.bundled)])
+        do { try process.run() } catch {
+            output.fileHandleForReading.readabilityHandler = nil
+            Diagnostics.record("daemon.start.failed", ["error": String(describing: error)])
+            throw error
+        }
         self.process = process
         stdin = pipe
     }
@@ -98,7 +124,7 @@ public final class DaemonLauncher {
         let now = Date()
         recentExits = recentExits.filter { now.timeIntervalSince($0) < 60 } + [now]
         guard recentExits.count <= 5 else {
-            FileHandle.standardError.write(Data("devicehubd keeps exiting; not restarting it again\n".utf8))
+            Diagnostics.record("daemon.restart.exhausted")
             return
         }
         Task {

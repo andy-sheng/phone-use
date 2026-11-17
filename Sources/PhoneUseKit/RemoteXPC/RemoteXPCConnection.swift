@@ -75,6 +75,7 @@ actor RemoteXPCConnection {
         try check()
         let timeoutTask = Task { [weak self] in
             try await Task.sleep(for: timeout)
+            Diagnostics.record("xpc.reply.timeout", ["port": String(self?.port ?? 0), "timeout": String(describing: timeout)])
             await self?.fail(DeviceHubError.timeout("waiting for a reply on port \(self?.port ?? 0)"))
         }
         defer { timeoutTask.cancel() }

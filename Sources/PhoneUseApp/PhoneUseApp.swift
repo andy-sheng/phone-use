@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        Diagnostics.record("process.stop")
         mcp.stop()
         model.stop()
     }
@@ -55,6 +56,7 @@ struct PhoneUseMacApp: App {
 
     init() {
         PhoneUseConfiguration.current = .phoneUse
+        Diagnostics.startup()
     }
 
     var body: some Scene {
@@ -69,6 +71,7 @@ struct PhoneUseMacApp: App {
         .restorationBehavior(MCPHost.launchedInBackground ? .disabled : .automatic)
         .commands {
             MainWindowCommands()
+            DiagnosticCommands()
             MCPSetupCommands()
             CommandGroup(after: .appInfo) {
                 Button("检查更新…", action: updater.checkForUpdates)

@@ -96,7 +96,9 @@ actor ServiceChannels {
     }
 
     func request(_ service: String, _ message: XPCDictionary) async throws -> XPCDictionary {
-        try await withConnection(service) { try await $0.request(message) }
+        try await Diagnostics.operation("ios.request", ["service": service, "device": Diagnostics.deviceID(udid), "attempt_timeout_ms": "20000", "max_attempts": "2"]) {
+            try await withConnection(service) { try await $0.request(message) }
+        }
     }
 
     func sendTouch(_ phase: TouchPhase, x: Double, y: Double) async throws {
@@ -119,6 +121,7 @@ actor ServiceChannels {
         do {
             return try await body(try await connection(for: service))
         } catch {
+            Diagnostics.record("ios.channel.retry", ["device": Diagnostics.deviceID(udid), "service": service, "error": String(describing: error)])
             // A dead channel fails its first use; open a fresh one once before giving up.
             await connections.removeValue(forKey: service)?.close()
             touchAuthenticated = false
@@ -140,7 +143,9 @@ actor ServiceChannels {
             port = try await daemon.openService(udid, service: service)
         }
         let connection = RemoteXPCConnection(port: port)
-        try await connection.connect()
+        try await Diagnostics.operation("ios.channel.connect", ["device": Diagnostics.deviceID(udid), "service": service, "port": String(port)]) {
+            try await connection.connect()
+        }
         connections[service] = connection
         return connection
     }

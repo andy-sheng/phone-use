@@ -110,6 +110,7 @@ public final class ScreenModel: ObservableObject {
                 break
             } catch {
                 guard isCurrentRequest(device.id, generation: generation) else { return }
+                Diagnostics.record("preview.connect.failed", ["device": Diagnostics.deviceID(device.udid), "attempt": String(attempt), "error": String(describing: error)])
                 lastError = String(describing: error)
                 if attempt < connectionAttempts {
                     status = "Waiting for \(device.name)…"
@@ -168,6 +169,7 @@ public final class ScreenModel: ObservableObject {
     }
 
     private func attach(_ stream: any ScreenStream) {
+        Diagnostics.record("preview.stream", ["kind": String(describing: stream.kind), "fallback": stream.statusMessage ?? ""])
         // Error callbacks may replay a failure that happened just after startup.
         self.stream = stream
         framesPerSecond = nil
@@ -180,6 +182,7 @@ public final class ScreenModel: ObservableObject {
         }
         stream.onError = { [weak self, weak stream] message in
             guard let self, let stream, self.stream === stream, self.streamError != message else { return }
+            Diagnostics.record("preview.stream.failed", ["error": message])
             self.streamError = message
             self.framesPerSecond = nil
             self.show(message)

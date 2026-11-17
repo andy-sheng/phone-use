@@ -34,6 +34,14 @@ Android 复用现有屏幕面板、任务区和日志界面，支持原生尺寸
 
 旧 `devicehub.task.v1` 记录会重新交由对应插件解析为 `devicehub.task.v2`，保留文件名、原始文档和已有标题等元数据。旧参数通过插件声明的 `legacy_key` 迁移。插件缺失或不兼容时保留任务并显示原因；不会删除用户的作业。插件升级后重新校验任务和参数；不兼容的参数阻止运行并提示修改。
 
+## 诊断日志
+
+「帮助 → 导出诊断日志…」会收集 Automation 的共享设备日志，以及 `~/Library/Application Support/DeviceHub/Automation/` 下最近三次运行的 `runtime.log`、`events.jsonl`、`maa.log` 和新增的 `bridge.jsonl`（含轮转文件）。保留原有运行记录路径，已有任务与插件无须迁移。每个导出文件只取末尾 2 MiB，不包含识图截图或任务文档；完整的原有运行记录仍可从运行面板的「打开日志文件夹」查看。
+
+`bridge.jsonl` 每次请求记录运行 ID、请求编号、方法、桥接进程 PID、等待上限、耗时、成功或异常类型。写入后立即刷新，每个文件约 2 MiB、保留一份轮转记录，不记录参数和截图回复。Swift 辅助进程继承 `DEVICEHUB_RUN_ID`，可以按运行 ID 和桥接 PID 联查同一请求的设备会话、截图服务、重试及超时。即使桥接被终止，已写出的请求起点仍会留下。
+
+例如 `request.failed` 的 `TimeoutError` 表示外层桥接等待超时；联查 `ios.channel.retry`、`xpc.reply.timeout` 和未完成的 `ios.channel.connect.begin`，可进一步区分设备服务响应超时与通道握手卡住。日志改动不改变原有 30 秒外层等待或底层重试策略。此功能无法补回旧版本已经丢失的日志，也不代表真机 Wi-Fi 超时已修复。
+
 ## 开发与运行
 
 ```sh

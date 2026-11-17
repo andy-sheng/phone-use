@@ -146,6 +146,20 @@ Claude Desktop、Cursor 等使用 JSON 配置的客户端，在 MCP 配置中加
 
 项目由 DeviceHub 改名为 phone-use，应用名为 PhoneUse，应用标识为 `cn.andysheng.phoneuse`（原 `dev.devicehub.app`，改标识后需重新授予摄像头等系统权限）。为延续现有设备记录，`~/Library/Application Support/DeviceHub`、日志目录和 `DEVICEHUB_*` 环境变量保持兼容。Swift framework 改名为 `PhoneUseKit`；Python 模块沿用原名。
 
+## 连接故障与诊断日志
+
+PhoneUse 和 Automation 默认保存诊断日志。发生连接、截图或任务超时后，在出现问题的应用中选择 **帮助 → 导出诊断日志…**，保存 ZIP，并说明发生时间、USB / Wi-Fi 连接方式及操作步骤。无需连接开发机，也无需提前开启调试模式。只有安装包含此功能的版本之后发生的问题才会有这些记录。
+
+- PhoneUse：`~/Library/Logs/DeviceHub/`。
+- Automation：`~/Library/Logs/cn.andysheng.automation/`。
+- 「帮助 → 打开诊断日志文件夹」可直接查看原始文件；`DEVICEHUB_HOME` / `DEVICEHUB_LOG_DIR` 自定义身份仍生效。
+
+结构化 JSONL 记录应用版本、macOS 版本、UTC 时间、进程与会话 ID，以及设备连接类型、设备系统版本、截图起止、服务重连、底层超时、预览错误和守护进程输出。设备 ID 在新增的结构化字段中用摘要表示。请求不记录参数或图像内容；日志不写入 CLI、MCP 或桥接协议的 stdout。守护进程和 worker 的 stderr 由应用持续收集，关闭应用后仍可查看。
+
+每个 Swift 进程日志文件上限约 2 MiB，保留一个轮转文件；同一应用目录最多保留 40 个该类日志文件（约 80 MiB，创建/轮转时清理）。导出至多包含这 40 个文件；每个文件只取末尾 2 MiB，截断情况和读取失败会写入 `manifest.json`。Automation 另外收集最近三次运行的文本日志，详情见 [Automation 文档](Automation/README.md#诊断日志)。磁盘不可写时诊断功能降级，不阻止设备操作。
+
+诊断包不收集截图、配对凭据、插件资源、任务文件或环境变量。原有守护进程及插件的文本消息仍可能包含设备名称、网络地址、路径及用户内容，分享前可解压检查。导出不会自动发送任何数据。
+
 插件与任务功能已移至 Automation 应用（`cn.andysheng.automation`）。它继续读取原有的插件目录 `~/Library/Application Support/DeviceHub/Plugins` 和任务库，插件格式不变；守护进程状态放在 `~/Library/Application Support/cn.andysheng.automation`。
 
 详见[插件自动化](Automation/README.md)和[平台隔离与视频流](Documentation/DevicePlatforms.md)。

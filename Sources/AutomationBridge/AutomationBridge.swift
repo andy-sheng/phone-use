@@ -61,8 +61,15 @@ func runAutomationBridge(deviceQuery: String?) async {
             }
             let id = request["id"] ?? NSNull()
             let params = request["params"] as? [String: Any] ?? [:]
+            let started = ProcessInfo.processInfo.systemUptime
+            let method = request["method"] as? String ?? ""
+            var trace = ["request": String(describing: id), "method": method]
+            Diagnostics.record("bridge.request.begin", trace)
+            defer {
+                trace["elapsed_ms"] = Diagnostics.elapsed(since: started)
+                Diagnostics.record("bridge.request.end", trace)
+            }
             do {
-                let method = request["method"] as? String ?? ""
                 if method == "release" {
                     try await release()
                     reply(["id": id, "result": [:]])
@@ -133,6 +140,8 @@ func runAutomationBridge(deviceQuery: String?) async {
                 }
                 reply(["id": id, "result": result])
             } catch {
+                trace["error"] = String(describing: error)
+                Diagnostics.record("bridge.request.failed", trace)
                 try? await release()
                 reply(["id": id, "error": String(describing: error)])
             }

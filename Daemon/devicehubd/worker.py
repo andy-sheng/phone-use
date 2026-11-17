@@ -13,6 +13,7 @@ import logging
 import os
 import socket
 import sys
+import time
 from typing import Any, Optional
 
 from packaging.version import Version
@@ -107,7 +108,11 @@ class Worker:
         return sorted((self.rsd.peer_info or {}).get("Services", {}).keys())
 
     async def start(self) -> None:
+        started = time.monotonic()
+        logger.info("tunnel.open.begin connection=%s", self.connection)
         self._rsd = await self._tunnel.open()
+        logger.info("tunnel.open.ok connection=%s elapsed_ms=%.0f os=%s", self.connection,
+                    (time.monotonic() - started) * 1000, self._rsd.product_version)
         if DDI_MARKER_SERVICE not in self.services():
             # iOS 27 installs the image as a cryptex, which needs the tunnel; older systems were
             # already mounted over lockdown by the supervisor.
@@ -329,6 +334,7 @@ async def run(udid: str, connection: str, out: Any) -> int:
     try:
         await worker.start()
     except RpcError as e:
+        logger.warning("worker.start.failed connection=%s code=%s error=%s", connection, e.code, e)
         await worker.emit({"event": "failed", "error": e.to_json()})
         return 1
     except Exception as e:
@@ -357,6 +363,7 @@ async def run(udid: str, connection: str, out: Any) -> int:
     # The supervisor escalates to SIGKILL on its own; this covers a supervisor that is already gone.
     exit_after(WORKER_EXIT_DEADLINE)
     if tunnel_task in done:
+        logger.warning("tunnel.closed connection=%s", connection)
         await worker.emit({"event": "closed", "error": {"code": "disconnected", "message": "The device tunnel closed"}})
     command_task.cancel()
     tunnel_task.cancel()
@@ -369,7 +376,7 @@ def main() -> None:
     parser.add_argument("--udid", required=True)
     parser.add_argument("--connection", default="usb")
     args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO, format=f"[worker {args.udid[-6:]}] %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, format=f"%(asctime)s [worker {args.udid[-6:]} pid=%(process)d] %(levelname)s %(name)s: %(message)s")
 
     # Library code may print; keep the protocol stream on a private copy of stdout.
     out = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)

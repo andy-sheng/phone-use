@@ -87,7 +87,7 @@ def main() -> None:
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
-        format="[devicehubd] %(levelname)s %(name)s: %(message)s",
+        format="%(asctime)s [devicehubd pid=%(process)d] %(levelname)s %(name)s: %(message)s",
     )
     logging.getLogger("pymobiledevice3").setLevel(logging.WARNING)
     # Not closing the runner skips asyncio.run teardown, which waits for leftover library tasks

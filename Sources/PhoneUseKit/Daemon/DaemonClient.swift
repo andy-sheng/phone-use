@@ -22,6 +22,7 @@ public actor DaemonClient {
         let path: String
     }
 
+    private let diagnosticID = UUID().uuidString
     private let stream: ByteStream
     private var nextID = 1
     private var pending: [Int: CheckedContinuation<Data, Error>] = [:]
@@ -210,13 +211,15 @@ public actor DaemonClient {
         nextID += 1
         var line = try JSONSerialization.data(withJSONObject: ["id": id, "method": method, "params": params])
         line.append(0x0A)
-        return try await withCheckedThrowingContinuation { continuation in
-            pending[id] = continuation
-            Task {
-                do {
-                    try await stream.write(line)
-                } catch {
-                    self.fail(error)
+        return try await Diagnostics.operation("daemon.rpc", ["client": diagnosticID, "request": String(id), "method": method]) {
+            try await withCheckedThrowingContinuation { continuation in
+                pending[id] = continuation
+                Task {
+                    do {
+                        try await stream.write(line)
+                    } catch {
+                        self.fail(error)
+                    }
                 }
             }
         }

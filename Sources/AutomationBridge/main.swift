@@ -23,4 +23,5 @@ guard arguments.isEmpty else {
     exit(64)
 }
 
+Diagnostics.startup()
 await runAutomationBridge(deviceQuery: deviceQuery)
