@@ -91,7 +91,7 @@ final class MCPBridgeTests: XCTestCase {
         let info = (messages[0]["result"] as? [String: Any])?["serverInfo"] as? [String: Any]
         XCTAssertEqual(info?["name"] as? String, "phone-use")
         let tools = (messages[1]["result"] as? [String: Any])?["tools"] as? [[String: Any]]
-        XCTAssertTrue(tools?.contains { $0["name"] as? String == "get_screen" } == true)
+        XCTAssertTrue(tools?.contains { $0["name"] as? String == "screenshot" } == true)
         XCTAssertEqual(messages[2]["id"] as? Int, 3)
         XCTAssertEqual(launches.count, 0)
     }

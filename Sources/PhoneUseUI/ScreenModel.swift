@@ -65,6 +65,14 @@ public final class ScreenModel: ObservableObject {
         currentDeviceID == deviceID
     }
 
+    /// Read through the preview's existing shared session; selecting a device alone never opens one.
+    func uiTree(for deviceID: String) async throws -> UITree? {
+        guard currentDeviceID == deviceID, let session, session.device.id == deviceID else { return nil }
+        let tree = try await session.uiTree()
+        guard currentDeviceID == deviceID, self.session === session else { return nil }
+        return tree
+    }
+
     private func isCurrentRequest(_ deviceID: String, generation: UUID) -> Bool {
         runGeneration == generation && requestedDeviceID == deviceID && !Task.isCancelled
     }
@@ -177,8 +185,11 @@ public final class ScreenModel: ObservableObject {
         fallbackMessage = stream.statusMessage
         stream.onFrame = { [weak self, weak stream] fps in
             guard let self, let stream, self.stream === stream else { return }
-            self.framesPerSecond = fps
-            self.streamError = nil
+            // Streams report every frame; publish only what the UI shows, so the window is not
+            // re-rendered for each frame.
+            let shown = fps.rounded()
+            if self.framesPerSecond != shown { self.framesPerSecond = shown }
+            if self.streamError != nil { self.streamError = nil }
         }
         stream.onError = { [weak self, weak stream] message in
             guard let self, let stream, self.stream === stream, self.streamError != message else { return }

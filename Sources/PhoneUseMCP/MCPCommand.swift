@@ -1,0 +1,174 @@
+import CoreFoundation
+import Foundation
+import PhoneUseKit
+
+struct ToolFailure: Error {
+    let message: String
+}
+
+enum MCPGesture: String, CaseIterable {
+    case scrollUp = "scroll-up", scrollDown = "scroll-down"
+    case scrollLeft = "scroll-left", scrollRight = "scroll-right"
+    case leftEdge = "swipe-from-left-edge", rightEdge = "swipe-from-right-edge"
+    case topEdge = "swipe-from-top-edge", bottomEdge = "swipe-from-bottom-edge"
+
+    var isScroll: Bool { rawValue.hasPrefix("scroll-") }
+
+    /// Normalized, native-framebuffer single-finger strokes. No assumed phone resolution.
+    var stroke: (fromX: Double, fromY: Double, toX: Double, toY: Double) {
+        switch self {
+        case .scrollUp: (0.5, 0.8, 0.5, 0.2)
+        case .scrollDown: (0.5, 0.2, 0.5, 0.8)
+        case .scrollLeft: (0.8, 0.5, 0.2, 0.5)
+        case .scrollRight: (0.2, 0.5, 0.8, 0.5)
+        case .leftEdge: (0, 0.5, 0.7, 0.5)
+        case .rightEdge: (1, 0.5, 0.3, 0.5)
+        case .topEdge: (0.5, 0, 0.5, 0.7)
+        case .bottomEdge: (0.5, 1, 0.5, 0.3)
+        }
+    }
+}
+
+/// Decode once before opening a device. Invalid input must never turn into a default action.
+struct MCPCommand {
+    enum Action {
+        case listDevices, screenshot
+        case describeUI(json: Bool)
+        case activate(UISelector)
+        case typeText(String, UISelector?)
+        case tap(Double, Double, Duration?)
+        case longPress(Double, Double, Duration)
+        case swipe(Double, Double, Double, Double, Duration)
+        case gesture(MCPGesture, Duration)
+        case button(HardwareButton, Duration?)
+        case launchApp(String)
+    }
+
+    let action: Action
+    let device: String?
+    let preDelay: Duration
+    let postDelay: Duration
+    let returnScreen: Bool
+
+    init(name: String, arguments: [String: Any]) throws {
+        let name = MCPToolCatalog.aliases[name] ?? name
+        guard let definition = MCPToolCatalog.definitions.first(where: { $0["name"] as? String == name }),
+              let schema = definition["inputSchema"] as? [String: Any],
+              let properties = schema["properties"] as? [String: Any] else {
+            throw ToolFailure(message: "Unknown tool '\(name)'. Call tools/list for supported operations.")
+        }
+        let unknown = Set(arguments.keys).subtracting(properties.keys)
+        guard unknown.isEmpty else {
+            throw ToolFailure(message: "Unsupported arguments: \(unknown.sorted().joined(separator: ", ")). Call tools/list for this tool's schema.")
+        }
+        device = try Self.string(arguments, "device", optional: true)
+        preDelay = .seconds(try Self.optionalNumber(arguments, "pre_delay", range: 0...10) ?? 0)
+        postDelay = .seconds(try Self.optionalNumber(arguments, "post_delay", range: 0...10) ?? 0)
+        if let value = arguments["return_screen"] {
+            guard let boolean = value as? NSNumber, CFGetTypeID(boolean) == CFBooleanGetTypeID() else {
+                throw ToolFailure(message: "'return_screen' must be a boolean.")
+            }
+            returnScreen = boolean.boolValue
+        } else { returnScreen = false }
+
+        func point(_ key: String) throws -> Double {
+            let number = try Self.number(arguments, key)
+            guard number >= 0 else { throw ToolFailure(message: "'\(key)' must be non-negative.") }
+            return number
+        }
+        func duration(default value: Double? = nil) throws -> Duration? {
+            guard arguments["duration"] == nil || arguments["duration_ms"] == nil else {
+                throw ToolFailure(message: "Use duration (seconds) or duration_ms (legacy milliseconds), not both.")
+            }
+            if arguments["duration_ms"] != nil {
+                let ms = try Self.number(arguments, "duration_ms")
+                guard ms.rounded() == ms, (1...10000).contains(ms) else {
+                    throw ToolFailure(message: "'duration_ms' must be an integer from 1 to 10000.")
+                }
+                return .seconds(ms / 1000)
+            }
+            if let seconds = try Self.optionalNumber(arguments, "duration", range: 0...10) {
+                guard seconds > 0 else { throw ToolFailure(message: "'duration' must be greater than 0 seconds.") }
+                return .seconds(seconds)
+            }
+            return value.map { .seconds($0) }
+        }
+        func target() throws -> UISelector? {
+            let id = try Self.string(arguments, "id", optional: true)
+            let label = try Self.string(arguments, "label", optional: true)
+            let contains = try Self.string(arguments, "label_contains", optional: true)
+            let type = try Self.string(arguments, "element_type", optional: true)
+            if [id, label, contains, type].allSatisfy({ $0 == nil }) { return nil }
+            return try UISelector(id: id, label: label, labelContains: contains, elementType: type)
+        }
+        switch name {
+        case "list_devices": action = .listDevices
+        case "screenshot": action = .screenshot
+        case "describe_ui":
+            let format = try Self.string(arguments, "format", optional: true) ?? "outline"
+            guard ["outline", "json"].contains(format) else { throw ToolFailure(message: "'format' must be outline or json.") }
+            action = .describeUI(json: format == "json")
+        case "tap":
+            if let selector = try target() {
+                guard arguments["x"] == nil, arguments["y"] == nil, arguments["duration"] == nil else {
+                    throw ToolFailure(message: "Selectors cannot be combined with coordinates or duration. Use a coordinate tap for timed holds.")
+                }
+                action = .activate(selector)
+            } else { action = .tap(try point("x"), try point("y"), try duration()) }
+        case "long_press": action = .longPress(try point("x"), try point("y"), try duration(default: 0.8)!)
+        case "swipe":
+            let canonical = ["start_x", "start_y", "end_x", "end_y"]
+            let legacy = ["from_x", "from_y", "to_x", "to_y"]
+            guard !canonical.contains(where: { arguments[$0] != nil }) || !legacy.contains(where: { arguments[$0] != nil }) else {
+                throw ToolFailure(message: "Use start_x/start_y/end_x/end_y or legacy from_x/from_y/to_x/to_y, not both.")
+            }
+            let keys = legacy.contains(where: { arguments[$0] != nil }) ? legacy : canonical
+            action = .swipe(try point(keys[0]), try point(keys[1]), try point(keys[2]), try point(keys[3]), try duration(default: 0.3)!)
+        case "gesture":
+            let raw = try Self.string(arguments, "preset")!
+            guard let preset = MCPGesture(rawValue: raw) else {
+                throw ToolFailure(message: "Unsupported gesture '\(raw)'. Use a single-finger preset from tools/list; pinch and rotation are not available.")
+            }
+            action = .gesture(preset, try duration(default: preset.isScroll ? 0.5 : 0.3)!)
+        case "button":
+            let raw = try Self.string(arguments, "button")!
+            let aliases = ["recents": "app_switch", "side-button": "lock", "volume-up": "volume_up", "volume-down": "volume_down"]
+            guard let button = HardwareButton(rawValue: aliases[raw] ?? raw) else {
+                throw ToolFailure(message: "Unknown button '\(raw)'. See button in tools/list.")
+            }
+            action = .button(button, try duration())
+        case "launch_app": action = .launchApp(try Self.string(arguments, "bundle_id")!)
+        case "type_text":
+            guard let text = arguments["text"] as? String, !text.isEmpty else {
+                throw ToolFailure(message: "'text' must be a non-empty string.")
+            }
+            guard text.count <= 10000, text.allSatisfy({ $0.asciiValue.map { (32...126).contains($0) || $0 == 10 || $0 == 9 } == true }) else {
+                throw ToolFailure(message: "type_text supports at most 10000 US keyboard characters, newline and tab. No text was sent. Use the on-screen input method for Unicode.")
+            }
+            action = .typeText(text, try target())
+        default: throw ToolFailure(message: "Unknown tool '\(name)'")
+        }
+    }
+
+    private static func number(_ arguments: [String: Any], _ key: String) throws -> Double {
+        guard let value = arguments[key] as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(), value.doubleValue.isFinite else {
+            throw ToolFailure(message: "'\(key)' must be a finite number.")
+        }
+        return value.doubleValue
+    }
+
+    private static func optionalNumber(_ arguments: [String: Any], _ key: String, range: ClosedRange<Double>) throws -> Double? {
+        guard arguments[key] != nil else { return nil }
+        let value = try number(arguments, key)
+        guard range.contains(value) else { throw ToolFailure(message: "'\(key)' must be between \(range.lowerBound) and \(range.upperBound) seconds.") }
+        return value
+    }
+
+    private static func string(_ arguments: [String: Any], _ key: String, optional: Bool = false) throws -> String? {
+        if optional, arguments[key] == nil { return nil }
+        guard let value = arguments[key] as? String, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ToolFailure(message: "'\(key)' must be a non-empty string.")
+        }
+        return value
+    }
+}

@@ -1,0 +1,166 @@
+import CoreGraphics
+import Foundation
+import PhoneUseKit
+
+/// Test seam at the existing shared-session boundary; production still uses DeviceHub.shared.
+protocol MCPDeviceSession: Sendable {
+    var device: DeviceSummary { get }
+    var display: DisplayInfo { get }
+    func screenshot() async throws -> CGImage
+    func tap(x: Double, y: Double) async throws
+    func longPress(x: Double, y: Double, duration: Duration) async throws
+    func swipe(fromX: Double, fromY: Double, toX: Double, toY: Double, duration: Duration) async throws
+    func press(_ button: HardwareButton, duration: Duration?) async throws
+    func launchApp(bundleID: String) async throws
+    func uiTree() async throws -> UITree
+    func activate(_ selector: UISelector) async throws
+    func typeText(_ text: String, target: UISelector?) async throws
+}
+
+extension DeviceSession: MCPDeviceSession {}
+
+struct MCPDeviceAccess: Sendable {
+    let devices: @Sendable () async throws -> [DeviceSummary]
+    let session: @Sendable (String) async throws -> any MCPDeviceSession
+
+    static let live = MCPDeviceAccess(devices: { try await DeviceHub.shared.devices() },
+                                     session: { try await DeviceHub.shared.session(for: $0) })
+}
+
+extension MCPCommand {
+    static func resolve(_ query: String?, in devices: [DeviceSummary]) throws -> DeviceSummary {
+        let candidates: [DeviceSummary]
+        if let query {
+            let needle = query.lowercased()
+            let exact = devices.filter { $0.udid.lowercased() == needle || $0.deviceIdentifier.lowercased() == needle || $0.name.lowercased() == needle }
+            candidates = exact.isEmpty ? devices.filter { $0.name.lowercased().contains(needle) } : exact
+        } else {
+            candidates = devices.filter(\.isReady)
+            if candidates.isEmpty, let attached = devices.first(where: \.isAttached) {
+                throw DeviceHubError.deviceNotReady("\(attached.name) is not ready (\(attached.state.rawValue))")
+            }
+        }
+        guard !candidates.isEmpty else { throw DeviceHubError.deviceNotFound(query ?? "<any ready device>") }
+        guard candidates.count == 1 else {
+            throw ToolFailure(message: "More than one device matches. Call list_devices and pass an explicit device identifier: \(candidates.map(\.udid).joined(separator: ", ")).")
+        }
+        guard candidates[0].isReady else { throw DeviceHubError.deviceNotReady("\(candidates[0].name) is not ready (\(candidates[0].state.rawValue))") }
+        return candidates[0]
+    }
+
+    func execute(access: MCPDeviceAccess) async throws -> [String: Any] {
+        let devices = try await access.devices()
+        if case .listDevices = action {
+            let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(devices)) as? [[String: Any]] ?? []
+            let rows = zip(devices, encoded).map { device, row in
+                row.merging(["capabilities": device.isSimulator
+                    ? ["screenshot", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "describe_ui", "element_targeting", "type_text"]
+                    : ["screenshot", "tap", "long_press", "swipe", "gesture", "button", "launch_app"],
+                    "coordinate_unit": device.isAndroid ? "pixels" : "points"]) { _, new in new }
+            }
+            return ["content": [mcpText(try json(rows))], "structuredContent": ["devices": rows]]
+        }
+        let selected = try Self.resolve(device, in: devices)
+        let session = try await access.session(selected.udid)
+        let width = selected.isAndroid ? session.display.pixelWidth : session.display.pointWidth.rounded()
+        let height = selected.isAndroid ? session.display.pixelHeight : session.display.pointHeight.rounded()
+        guard width.isFinite, height.isFinite, width > 0, height > 0, width <= 32768, height <= 32768 else {
+            throw ToolFailure(message: "Invalid display geometry. Reconnect the device before sending input.")
+        }
+        let unit = selected.isAndroid ? "pixels" : "points"
+        let metadata: [String: Any] = ["device": selected.udid, "platform": selected.platform.rawValue,
+            "connection": selected.connection, "width": width, "height": height, "unit": unit,
+            "origin": "top-left", "coordinate_space": selected.isAndroid ? "display" : "native-portrait"]
+
+        func point(_ x: Double, _ y: Double) throws -> (Double, Double) {
+            guard (0...width).contains(x), (0...height).contains(y) else {
+                throw ToolFailure(message: "Point (\(x), \(y)) is outside \(width)x\(height) \(unit). Capture screenshot again before retrying.")
+            }
+            return (x / width, y / height)
+        }
+        func screen() async throws -> [[String: Any]] {
+            let image = try await session.screenshot()
+            guard let scaled = ImageEncoding.resized(image, width: Int(width), height: Int(height)),
+                  let jpeg = ImageEncoding.jpeg(scaled) else { throw ToolFailure(message: "Failed to encode screenshot") }
+            return [["type": "image", "data": jpeg.base64EncodedString(), "mimeType": "image/jpeg"],
+                    mcpText("Screen of \(selected.name): \(Int(width))x\(Int(height)) \(unit), origin top-left, \(metadata["coordinate_space"]!).")]
+        }
+
+        // Validate both endpoints and platform limits before delays or the first input event.
+        switch action {
+        case .tap(let x, let y, _), .longPress(let x, let y, _): _ = try point(x, y)
+        case .swipe(let x1, let y1, let x2, let y2, _): _ = try point(x1, y1); _ = try point(x2, y2)
+        case .button(let button, _):
+            if selected.isAndroid && button == .siri || !selected.isAndroid && (button == .back || button == .appSwitch) {
+                throw ToolFailure(message: "Button \(button.rawValue) is unavailable on \(selected.platform.rawValue). back/recents are Android-only; siri is iOS-only.")
+            }
+        case .describeUI, .activate, .typeText:
+            guard selected.isSimulator else {
+                throw ToolFailure(message: "UI trees, element targeting and direct text input are currently supported on iOS simulators only. Use screenshot, coordinate tap and the on-screen keyboard for this device.")
+            }
+        default: break
+        }
+        if case .screenshot = action { return ["content": try await screen(), "structuredContent": metadata] }
+        if case .describeUI(let useJSON) = action {
+            let tree = try await session.uiTree()
+            let treeData = try JSONEncoder().encode(tree)
+            let value = try JSONSerialization.jsonObject(with: treeData)
+            return ["content": [mcpText(useJSON ? String(decoding: treeData, as: UTF8.self) : tree.outline)],
+                    "structuredContent": ["device": selected.udid, "tree": value]]
+        }
+
+        if preDelay > .zero { try await Task.sleep(for: preDelay) }
+        let summary: String
+        switch action {
+        case .tap(let x, let y, let duration):
+            let (nx, ny) = try point(x, y)
+            if let duration { try await session.longPress(x: nx, y: ny, duration: duration) }
+            else { try await session.tap(x: nx, y: ny) }
+            summary = "Tap input sent at (\(x), \(y))."
+        case .longPress(let x, let y, let duration):
+            let (nx, ny) = try point(x, y)
+            try await session.longPress(x: nx, y: ny, duration: duration)
+            summary = "Long-press input sent at (\(x), \(y))."
+        case .swipe(let x1, let y1, let x2, let y2, let duration):
+            let from = try point(x1, y1), to = try point(x2, y2)
+            try await session.swipe(fromX: from.0, fromY: from.1, toX: to.0, toY: to.1, duration: duration)
+            summary = "Swipe input sent from (\(x1), \(y1)) to (\(x2), \(y2))."
+        case .gesture(let preset, let duration):
+            let s = preset.stroke
+            try await session.swipe(fromX: s.fromX, fromY: s.fromY, toX: s.toX, toY: s.toY, duration: duration)
+            summary = "Gesture input sent: \(preset.rawValue)."
+        case .button(let button, let duration):
+            try await session.press(button, duration: duration)
+            summary = "Button input sent: \(button.rawValue)."
+        case .launchApp(let bundleID):
+            try await session.launchApp(bundleID: bundleID)
+            summary = "Launch request sent for \(bundleID)."
+        case .activate(let selector):
+            try await session.activate(selector)
+            summary = "Element activation sent."
+        case .typeText(let text, let target):
+            try await session.typeText(text, target: target)
+            summary = "Text input sent (\(text.count) characters)."
+        default: throw ToolFailure(message: "Unsupported action")
+        }
+        if postDelay > .zero { try await Task.sleep(for: postDelay) }
+        var content = [mcpText(summary + " Verify the resulting UI with describe_ui (simulator) or screenshot before the next action.")]
+        var output: [String: Any] = ["device": selected.udid, "input_sent": true, "ui_change_verified": false]
+        if returnScreen {
+            do {
+                try await Task.sleep(for: .milliseconds(600))
+                content += try await screen()
+                output["screen"] = metadata
+            } catch {
+                // A tool-level failure here would invite duplicate taps or partially typed text.
+                content.append(mcpText("The action was sent, but the follow-up screenshot failed: \(error). Inspect the screen before retrying; do not repeat the action automatically."))
+                output["screenshot_error"] = String(describing: error)
+            }
+        }
+        return ["content": content, "structuredContent": output]
+    }
+}
+
+private func json(_ value: Any) throws -> String {
+    String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
+}

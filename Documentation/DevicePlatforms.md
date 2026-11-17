@@ -127,8 +127,11 @@ device services, mirroring and Android RPC for simulator identifiers.
 `DeviceSession` drives a simulator in its own process through
 `Platforms/Simulator`. `CoreSimulatorBridge` loads Xcode's CoreSimulator and SimulatorKit at
 runtime (from `DEVELOPER_DIR`, `xcode-select -p`, or `/Applications/Xcode.app`) and is the
-only code that touches their private interfaces. Touches and buttons go through
-`SimDeviceLegacyHIDClient` with the Indigo messages Simulator.app builds: single-finger mouse
+only code that touches their private interfaces. On CoreSimulator 1155.4 and later, touches,
+buttons and keyboard events use a persistent XPC connection to the simulator's DTUHID digitizer
+service, with a bounded liveness round trip before accepting input. A lookup or send callback
+alone is insufficient: modern guests can silently drop the legacy Indigo channel. Older
+CoreSimulator versions use `SimDeviceLegacyHIDClient` with the Indigo messages Simulator.app builds: single-finger mouse
 events on the touchscreen target, Home and side-button event sources, and consumer-page usages
 for volume and Siri. Back and app switch remain Android-only. Apps launch with
 `simctl launch --terminate-running-process`.
@@ -139,6 +142,14 @@ type encoding, so the damage block takes an object. A headless simulator may not
 surface while nobody observes it; screenshots read the surface only after the session's own
 registration has seen a redraw, and otherwise capture with `simctl io screenshot`.
 Coordinates are normalized to the portrait framebuffer, as on physical iOS devices.
+
+`DeviceSession.uiTree`, `activate` and `typeText` provide simulator accessibility and US-keyboard
+input. The AXP translator runs on a serial background queue with bounded callbacks and traversal;
+selectors are resolved fresh and ambiguous matches fail. AX frames are UI points, distinct from
+the native portrait screenshot coordinates. Element activation uses AX rather than guessing a
+rotation transform. Text input validates the complete string before activation, releases keys on
+failure and never replays partial input. Physical iOS and Android adapters currently report these
+capabilities as unavailable. The MCP contract and compatibility details are in [MCP.md](MCP.md).
 
 Release builds keep library validation; both frameworks are signed by Apple (`anchor apple`).
 Offline tests cover discovery parsing, supervisor routing and input mapping;

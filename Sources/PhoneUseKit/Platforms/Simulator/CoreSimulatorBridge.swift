@@ -1,7 +1,9 @@
 import CoreGraphics
+import AppKit
 import Foundation
 import IOSurface
 import ObjectiveC
+import XPC
 
 /// Xcode's simulator frameworks, loaded at runtime so phone-use still starts on Macs without Xcode.
 ///
@@ -12,11 +14,13 @@ final class CoreSimulatorBridge: @unchecked Sendable {
                                              CGSize, UInt32) -> UnsafeMutableRawPointer?
     typealias ButtonMessage = @convention(c) (UInt32, UInt32, UInt32) -> UnsafeMutableRawPointer?
     typealias ArbitraryMessage = @convention(c) (UInt32, UInt32, UInt32, UInt32) -> UnsafeMutableRawPointer?
+    typealias KeyboardMessage = @convention(c) (UInt32, UInt32) -> UnsafeMutableRawPointer?
 
     let developerDirectory: String
     let mouseMessage: MouseMessage
     let buttonMessage: ButtonMessage
     let arbitraryMessage: ArbitraryMessage
+    let keyboardMessage: KeyboardMessage?
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var loaded: CoreSimulatorBridge?
@@ -52,6 +56,7 @@ final class CoreSimulatorBridge: @unchecked Sendable {
         mouseMessage = unsafeBitCast(mouse, to: MouseMessage.self)
         buttonMessage = unsafeBitCast(button, to: ButtonMessage.self)
         arbitraryMessage = unsafeBitCast(arbitrary, to: ArbitraryMessage.self)
+        keyboardMessage = dlsym(simulatorKit, "IndigoHIDMessageForKeyboardArbitrary").map { unsafeBitCast($0, to: KeyboardMessage.self) }
     }
 
     /// The booted `SimDevice` with this CoreSimulator UDID.
@@ -113,6 +118,13 @@ final class CoreSimulatorBridge: @unchecked Sendable {
         return scale.isFinite && scale > 0 ? scale : 1
     }
 
+    func modernInput(for device: AnyObject) async throws -> SimulatorHIDChannel? {
+        let version = (NSClassFromString("SimDevice").map { Bundle(for: $0) })?.infoDictionary?["CFBundleVersion"] as? String
+        Diagnostics.record("simulator.input_transport", ["core_simulator": version ?? "unknown", "transport": SimulatorInput.requiresModernHID(version: version) ? "dtuhid" : "indigo"])
+        guard SimulatorInput.requiresModernHID(version: version) else { return nil }
+        return try await SimulatorHIDChannel.open(device)
+    }
+
     /// Sends one message created by a SimulatorKit builder; the client frees it.
     func send(_ message: UnsafeMutableRawPointer, through client: AnyObject) async throws {
         typealias Send = @convention(c) (AnyObject, Selector, UnsafeMutableRawPointer, Bool, DispatchQueue?,
@@ -160,6 +172,279 @@ final class CoreSimulatorBridge: @unchecked Sendable {
         default: target.perform(selector, with: arguments[0], with: arguments[1])
         }
         return result?.takeUnretainedValue()
+    }
+}
+
+/// Xcode 27's DTUHID service. Legacy Indigo callbacks can succeed while the guest drops the
+/// event, so modern toolchains must establish a live channel instead of falling back silently.
+final class SimulatorHIDChannel: @unchecked Sendable {
+    private static let service = "com.apple.coredevice.feature.remote.hid.digitizer"
+    private let connection: xpc_connection_t
+    private let queue = DispatchQueue(label: "PhoneUseKit.simulator-hid")
+    private let lock = NSLock()
+    private var disconnected = false
+
+    private init(_ connection: xpc_connection_t) {
+        self.connection = connection
+        xpc_connection_set_target_queue(connection, queue)
+        xpc_connection_set_event_handler(connection) { [weak self] event in
+            if xpc_get_type(event) == XPC_TYPE_ERROR { self?.lock.withLock { self?.disconnected = true } }
+        }
+        xpc_connection_resume(connection)
+    }
+
+    static func open(_ device: AnyObject) async throws -> SimulatorHIDChannel {
+        typealias Endpoint = @convention(c) (UInt32, UInt64, UInt64) -> Unmanaged<AnyObject>?
+        typealias Connect = @convention(c) (xpc_object_t) -> Unmanaged<AnyObject>?
+        typealias Enable = @convention(c) (xpc_connection_t) -> Void
+        guard let handle = dlopen(nil, RTLD_NOW),
+              let endpointSymbol = dlsym(handle, "xpc_endpoint_create_mach_port_4sim"),
+              let connectSymbol = dlsym(handle, "xpc_connection_create_from_endpoint"),
+              let enableSymbol = dlsym(handle, "xpc_connection_enable_sim2host_4sim") else {
+            throw DeviceHubError.capabilityUnavailable("CoreSimulator DTUHID connection symbols in this toolchain")
+        }
+        defer { dlclose(handle) }
+        let lookup = NSSelectorFromString("lookup:error:")
+        typealias Lookup = @convention(c) (AnyObject, Selector, NSString, AutoreleasingUnsafeMutablePointer<NSError?>?) -> UInt32
+        guard device.responds(to: lookup) else { throw DeviceHubError.capabilityUnavailable("CoreSimulator service lookup") }
+        var error: NSError?
+        let port = unsafeBitCast(device.method(for: lookup), to: Lookup.self)(device, lookup, service as NSString, &error)
+        guard port != 0 else { throw DeviceHubError.serviceFailed("Simulator input service is unavailable: \(error?.localizedDescription ?? "service not found"). Wait for boot to finish and reconnect") }
+        guard let endpoint = unsafeBitCast(endpointSymbol, to: Endpoint.self)(port, 0, 0)?.takeRetainedValue() as? xpc_object_t,
+              let connection = unsafeBitCast(connectSymbol, to: Connect.self)(endpoint)?.takeRetainedValue() as? xpc_connection_t else {
+            throw DeviceHubError.serviceFailed("Cannot create the simulator's DTUHID channel")
+        }
+        unsafeBitCast(enableSymbol, to: Enable.self)(connection)
+        let channel = SimulatorHIDChannel(connection)
+        do {
+            try await channel.barrier()
+            try await Task.sleep(for: .milliseconds(200))
+            return channel
+        } catch {
+            channel.close()
+            throw error
+        }
+    }
+
+    private static func message(_ type: String, payload: xpc_object_t, barrier: Bool = false) -> xpc_object_t {
+        let object = xpc_dictionary_create(nil, nil, 0)
+        xpc_dictionary_set_string(object, "messageType", type)
+        xpc_dictionary_set_string(object, "featureIdentifier", service)
+        xpc_dictionary_set_bool(object, "isBarrier", barrier)
+        xpc_dictionary_set_value(object, "payload", payload)
+        return object
+    }
+
+    private func requireConnected() throws {
+        guard !lock.withLock({ disconnected }) else {
+            throw DeviceHubError.serviceFailed("The simulator input channel disconnected. Inspect the current UI and reconnect before retrying; input is not replayed")
+        }
+    }
+
+    private func send(_ type: String, payload: xpc_object_t) async throws {
+        try requireConnected()
+        xpc_connection_send_message(connection, Self.message(type, payload: payload))
+        await withCheckedContinuation { continuation in
+            xpc_connection_send_barrier(connection) { continuation.resume() }
+        }
+        try requireConnected()
+    }
+
+    private final class Reply: @unchecked Sendable {
+        let lock = NSLock()
+        var continuation: CheckedContinuation<Void, Error>?
+        init(_ continuation: CheckedContinuation<Void, Error>) { self.continuation = continuation }
+        func finish(_ result: Result<Void, Error>) {
+            let pending = lock.withLock { let value = continuation; continuation = nil; return value }
+            pending?.resume(with: result)
+        }
+    }
+
+    /// A no-key event that demands a reply: service lookup alone does not prove dtuhidd is alive.
+    private func barrier() async throws {
+        let payload = xpc_dictionary_create(nil, nil, 0)
+        xpc_dictionary_set_uint64(payload, "usageCode", 0)
+        xpc_dictionary_set_uint64(payload, "state", 2)
+        let message = Self.message("IndigoKeyboardButtonEvent", payload: payload, barrier: true)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let answer = Reply(continuation)
+            queue.asyncAfter(deadline: .now() + 4) {
+                answer.finish(.failure(DeviceHubError.timeout("waiting for the simulator input service; reconnect once boot completes")))
+            }
+            xpc_connection_send_message_with_reply(connection, message, queue) { reply in
+                if xpc_get_type(reply) == XPC_TYPE_ERROR {
+                    answer.finish(.failure(DeviceHubError.serviceFailed("The simulator input service did not accept its connection")))
+                } else { answer.finish(.success(())) }
+            }
+        }
+    }
+
+    func key(_ code: UInt32, down: Bool) async throws {
+        let payload = xpc_dictionary_create(nil, nil, 0)
+        xpc_dictionary_set_uint64(payload, "usageCode", UInt64(code))
+        xpc_dictionary_set_uint64(payload, "state", down ? 1 : 2)
+        try await send("IndigoKeyboardButtonEvent", payload: payload)
+    }
+
+    func button(page: UInt64, code: UInt64, down: Bool) async throws {
+        let payload = xpc_dictionary_create(nil, nil, 0)
+        xpc_dictionary_set_uint64(payload, "usagePage", page)
+        xpc_dictionary_set_uint64(payload, "usageCode", code)
+        xpc_dictionary_set_uint64(payload, "state", down ? 1 : 2)
+        try await send("IndigoButtonEvent", payload: payload)
+    }
+
+    func touch(_ phase: TouchPhase, x: Double, y: Double) async throws {
+        let point = xpc_dictionary_create(nil, nil, 0), payload = xpc_dictionary_create(nil, nil, 0)
+        xpc_dictionary_set_double(point, "x", x)
+        xpc_dictionary_set_double(point, "y", y)
+        xpc_dictionary_set_value(payload, "pointOne", point)
+        xpc_dictionary_set_uint64(payload, "eventType", phase == .began ? 0 : phase == .moved ? 1 : 2)
+        xpc_dictionary_set_uint64(payload, "edge", 0)
+        xpc_dictionary_set_uint64(payload, "target", 0)
+        try await send("IndigoDigitizerEvent", payload: payload)
+    }
+
+    func drain() async throws { try await Task.sleep(for: .milliseconds(80)); try requireConnected() }
+    func close() { lock.withLock { disconnected = true }; xpc_connection_cancel(connection) }
+    deinit { xpc_connection_cancel(connection) }
+}
+
+// AccessibilityPlatformTranslation calls back synchronously while CoreSimulator is async.
+// All translator use is serialized off the main thread; its process-wide delegate is never
+// replaced by another device until the complete traversal/action has finished.
+private let simulatorAXQueue = DispatchQueue(label: "PhoneUseKit.simulator-accessibility")
+
+extension CoreSimulatorBridge {
+    func accessibility(_ identifier: String, target: UISelector? = nil, focus: Bool = false) async throws -> UITree {
+        try await withCheckedThrowingContinuation { continuation in
+            simulatorAXQueue.async {
+                do {
+                    guard dlopen("/System/Library/PrivateFrameworks/AccessibilityPlatformTranslation.framework/AccessibilityPlatformTranslation", RTLD_NOW) != nil,
+                          let cls = NSClassFromString("AXPTranslator") as AnyObject?,
+                          let translator = Self.object(cls, "sharedInstance") else {
+                        throw DeviceHubError.capabilityUnavailable("Simulator accessibility translation in this Xcode/macOS version")
+                    }
+                    let delegate = SimulatorAXDelegate(device: try self.bootedDevice(identifier))
+                    Self.invoke(translator, "setBridgeTokenDelegate:", delegate)
+                    Self.invoke(translator, "setBridgeDelegate:", delegate)
+                    defer {
+                        // AXPTranslator's delegates are weak; keep this request's owner alive throughout.
+                        withExtendedLifetime(delegate) {}
+                    }
+                    let selector = NSSelectorFromString("frontmostApplicationWithDisplayId:bridgeDelegateToken:")
+                    typealias Frontmost = @convention(c) (AnyObject, Selector, UInt32, NSString) -> AnyObject?
+                    guard translator.responds(to: selector),
+                          let translation = unsafeBitCast(translator.method(for: selector), to: Frontmost.self)(translator, selector, 0, UUID().uuidString as NSString),
+                          let root = Self.object(translator, "macPlatformElementFromTranslation:", translation) else {
+                        throw DeviceHubError.serviceFailed("The simulator accessibility bridge returned no foreground app. Wait for the app to finish launching, then retry describe_ui. If it persists, ask the user to restart the simulator")
+                    }
+                    var elements: [UIElement] = [], handles: [AnyObject] = []
+                    var seen = Set<ObjectIdentifier>(), truncated = false
+                    func walk(_ element: AnyObject, depth: Int) throws {
+                        try delegate.check()
+                        guard depth <= 32, elements.count < 500 else { truncated = true; return }
+                        guard seen.insert(ObjectIdentifier(element)).inserted else { return }
+                        let role = (Self.object(element, "accessibilityRole") as? String ?? "AXUnknown")
+                        let type = role.hasPrefix("AX") ? String(role.dropFirst(2)) : role
+                        let subrole = Self.object(element, "accessibilitySubrole") as? String ?? ""
+                        let secure = type == "SecureTextField" || subrole.contains("Secure")
+                        let rect = SimulatorAXDelegate.frame(element)
+                        let rawValue = secure ? nil : Self.object(element, "accessibilityValue")
+                        let value = (rawValue as? String) ?? (rawValue as? NSNumber)?.stringValue
+                        elements.append(UIElement(type: type, id: Self.object(element, "accessibilityIdentifier") as? String,
+                            label: Self.object(element, "accessibilityLabel") as? String, value: value,
+                            enabled: SimulatorAXDelegate.boolean(element, "isAccessibilityEnabled", default: true),
+                            frame: .init(x: rect.origin.x, y: rect.origin.y, width: rect.width, height: rect.height), depth: depth))
+                        handles.append(element)
+                        for child in Self.object(element, "accessibilityChildren") as? [AnyObject] ?? [] {
+                            try walk(child, depth: depth + 1)
+                            if elements.count >= 500 { truncated = true; break }
+                        }
+                    }
+                    try walk(root, depth: 0)
+                    try delegate.check()
+                    if let target {
+                        let index = try target.index(in: elements)
+                        let element = handles[index]
+                        if focus {
+                            guard ["TextField", "SecureTextField", "TextArea", "SearchField"].contains(elements[index].type) else {
+                                throw DeviceHubError.serviceFailed("The selected element is not a text field. Run describe_ui and target a TextField/TextArea")
+                            }
+                            // AX focus alone can update the accessibility cursor without making
+                            // UIKit's field first responder. Use the same activation as a real tap.
+                            guard SimulatorAXDelegate.boolean(element, "accessibilityPerformPress", default: false) else {
+                                throw DeviceHubError.serviceFailed("The text field did not accept activation. No text was sent; focus it with tap, then retry type_text")
+                            }
+                        } else {
+                            guard SimulatorAXDelegate.boolean(element, "accessibilityPerformPress", default: false) else {
+                                throw DeviceHubError.serviceFailed("The element did not accept an accessibility press. Inspect describe_ui/screenshot before retrying; coordinate tap is available")
+                            }
+                        }
+                        try delegate.check()
+                    }
+                    continuation.resume(returning: UITree(elements: elements, truncated: truncated, coordinateSpace: "accessibility-ui-points"))
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+}
+
+/// Runtime delegate selectors used by Apple's AXPTranslator (see Meta idb's documented bridge).
+private final class SimulatorAXDelegate: NSObject {
+    private let device: AnyObject
+    private let deadline = Date().addingTimeInterval(10)
+    private var timedOut = false
+    init(device: AnyObject) { self.device = device }
+
+    func check() throws {
+        if timedOut || Date() > deadline { throw DeviceHubError.timeout("reading simulator accessibility; retry describe_ui after the app is responsive") }
+    }
+
+    private final class Response: @unchecked Sendable {
+        let lock = NSLock()
+        var value: AnyObject?
+    }
+
+    private func callback() -> @convention(block) (AnyObject) -> AnyObject? {
+        { [self] request in
+            guard !timedOut, Date() < deadline else { timedOut = true; return nil }
+            let selector = NSSelectorFromString("sendAccessibilityRequestAsync:completionQueue:completionHandler:")
+            guard device.responds(to: selector) else { return nil }
+            typealias Send = @convention(c) (AnyObject, Selector, AnyObject, DispatchQueue, (@convention(block) (AnyObject?) -> Void)?) -> Void
+            let response = Response(), semaphore = DispatchSemaphore(value: 0)
+            unsafeBitCast(device.method(for: selector), to: Send.self)(device, selector, request, DispatchQueue.global(qos: .userInitiated)) { value in
+                response.lock.withLock { response.value = value }
+                semaphore.signal()
+            }
+            if semaphore.wait(timeout: .now() + min(3, max(0, deadline.timeIntervalSinceNow))) == .timedOut {
+                timedOut = true
+                return nil
+            }
+            return response.lock.withLock { response.value }
+        }
+    }
+
+    @objc func accessibilityTranslationDelegateBridgeCallbackWithToken(_ token: NSString) -> @convention(block) (AnyObject) -> AnyObject? { callback() }
+    @objc func accessibilityTranslationDelegateBridgeCallback() -> @convention(block) (AnyObject) -> AnyObject? { callback() }
+    @objc func accessibilityTranslationConvertPlatformFrameToSystem(_ rect: CGRect, withToken token: NSString) -> CGRect { rect }
+    @objc func accessibilityTranslationConvertPlatformFrameToSystem(_ rect: CGRect, withContext context: AnyObject?, postProcess: AnyObject?) -> CGRect { rect }
+    @objc func accessibilityTranslationRootParentWithToken(_ token: NSString) -> AnyObject? { nil }
+    @objc func accessibilityTranslationRootParent() -> AnyObject? { nil }
+
+    static func frame(_ element: AnyObject) -> CGRect {
+        let selector = NSSelectorFromString("accessibilityFrame")
+        guard element.responds(to: selector) else { return .zero }
+        typealias Get = @convention(c) (AnyObject, Selector) -> CGRect
+        let frame = unsafeBitCast(element.method(for: selector), to: Get.self)(element, selector)
+        return [frame.minX, frame.minY, frame.width, frame.height].allSatisfy(\.isFinite) ? frame : .zero
+    }
+
+    static func boolean(_ element: AnyObject, _ name: String, default fallback: Bool) -> Bool {
+        let selector = NSSelectorFromString(name)
+        guard element.responds(to: selector) else { return fallback }
+        typealias Get = @convention(c) (AnyObject, Selector) -> Bool
+        return unsafeBitCast(element.method(for: selector), to: Get.self)(element, selector)
     }
 }
 

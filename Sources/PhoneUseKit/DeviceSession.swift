@@ -130,6 +130,12 @@ public final class DeviceSession: @unchecked Sendable {
         try await connection.launchApp(bundleID: bundleID)
     }
 
+    public func uiTree() async throws -> UITree { try await connection.uiTree() }
+    public func activate(_ selector: UISelector) async throws { try await connection.activate(selector) }
+    public func typeText(_ text: String, target: UISelector? = nil) async throws {
+        try await connection.typeText(text, target: target)
+    }
+
     /// The simulator's framebuffer, shared by its preview stream and screenshots.
     var simulatorDisplay: SimulatorDisplay? {
         (connection as? SimulatorDeviceConnection)?.display

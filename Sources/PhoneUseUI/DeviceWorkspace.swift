@@ -78,6 +78,13 @@ public struct DeviceWorkspace<Panel: View>: View {
 
     private var canControl: Bool { liveStream != nil && allowsInput }
 
+    /// The system, how the device is connected and, while the screen streams, its frame rate.
+    private var windowSubtitle: String {
+        guard let device = model.selectedDevice else { return "" }
+        let frameRate = liveStream == nil ? nil : screen.framesPerSecond.map { String(format: "%.0f fps", $0) }
+        return [device.osDescription, device.connectionDescription, frameRate].compactMap { $0 }.joined(separator: " · ")
+    }
+
     private var isFiltering: Bool { platformFilter != .all || !showsUnavailable }
 
     private func matching(_ devices: [DeviceSummary]) -> [DeviceSummary] {
@@ -199,7 +206,7 @@ public struct DeviceWorkspace<Panel: View>: View {
         // A transparent title bar, so the stage and the device run beneath the toolbar.
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .navigationTitle(model.selectedDevice?.name ?? title)
-        .navigationSubtitle(model.selectedDevice?.osDescription ?? "")
+        .navigationSubtitle(windowSubtitle)
         .toolbar { detailToolbar }
     }
 
@@ -331,7 +338,7 @@ public struct DeviceWorkspace<Panel: View>: View {
         }
         .frame(minWidth: CompactLayout.minimumSize.width, minHeight: CompactLayout.minimumSize.height - 60)
         .navigationTitle(model.selectedDevice?.name ?? title)
-        .navigationSubtitle(model.selectedDevice?.osDescription ?? "")
+        .navigationSubtitle(windowSubtitle)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 compactToggle

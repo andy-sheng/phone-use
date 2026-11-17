@@ -138,6 +138,8 @@ Claude Desktop、Cursor 等使用 JSON 配置的客户端，在 MCP 配置中加
 
 `DEVICEHUB_APP` 可指定要启动的 `.app` 或 `phone-use-app` 可执行文件；SwiftPM 构建中默认使用同目录的 `phone-use-app`。命令行 `phone-use` 仍直接连接守护进程，需要应用已在运行。
 
+工具定义、模拟器 UI 树与文本输入、手势、坐标单位及旧调用兼容见 [MCP 操作约定](Documentation/MCP.md)。
+
 ## 自动更新与发布
 
 正式应用通过 Sparkle 检查并安装更新；安装包由 GitHub Releases 提供，更新清单由 GitHub Pages 托管。推送 `vMAJOR.MINOR.PATCH` 标签可触发 Actions 完成测试、签名、公证和发布。首次配置、密钥管理与验证步骤见 [自动更新与发布](Documentation/AutomaticUpdates.md)。

@@ -4,6 +4,9 @@ import ImageIO
 
 /// How a shared control maps onto Simulator's Indigo HID messages. Pure, so tests can check it.
 enum SimulatorInput {
+    static func requiresModernHID(version: String?) -> Bool {
+        version.map { $0.compare("1155.4", options: .numeric) != .orderedAscending } ?? false
+    }
     enum Button: Equatable {
         /// `IndigoHIDMessageForButton` event source, as Simulator.app sends for Home and the side button.
         case source(UInt32)
@@ -58,26 +61,29 @@ actor SimulatorDeviceConnection: DeviceConnection {
     private let bridge: CoreSimulatorBridge
     private let identifier: String
     private var hid: AnyObject?
+    private var modernInput: SimulatorHIDChannel?
     private var heldPoint: CGPoint?
     private var lastMove = ContinuousClock.now
 
     static func open(_ device: DeviceSummary) async throws -> (SimulatorDeviceConnection, DisplayInfo) {
         let bridge = try CoreSimulatorBridge.shared()
         let simulator = try bridge.bootedDevice(device.deviceIdentifier)
-        let hid = try bridge.hidClient(for: simulator)
+        let modernInput = try await bridge.modernInput(for: simulator)
+        let hid = try modernInput == nil ? bridge.hidClient(for: simulator) : nil
         let display = SimulatorDisplay(descriptor: try bridge.mainDisplay(of: simulator))
         let size = try display.pixelSize()
         let info = DisplayInfo(pixelWidth: Double(size.width), pixelHeight: Double(size.height),
                                pointScale: bridge.pointScale(of: simulator))
         let connection = SimulatorDeviceConnection(bridge: bridge, identifier: device.deviceIdentifier,
-                                                   hid: hid, display: display)
+                                                   hid: hid, modernInput: modernInput, display: display)
         return (connection, info)
     }
 
-    private init(bridge: CoreSimulatorBridge, identifier: String, hid: AnyObject, display: SimulatorDisplay) {
+    private init(bridge: CoreSimulatorBridge, identifier: String, hid: AnyObject?, modernInput: SimulatorHIDChannel?, display: SimulatorDisplay) {
         self.bridge = bridge
         self.identifier = identifier
         self.hid = hid
+        self.modernInput = modernInput
         self.display = display
     }
 
@@ -125,6 +131,11 @@ actor SimulatorDeviceConnection: DeviceConnection {
     }
 
     private func sendTouchMessage(_ phase: TouchPhase, at point: CGPoint) async throws {
+        if let modernInput {
+            try await modernInput.touch(phase, x: point.x, y: point.y)
+            if phase == .ended { try await modernInput.drain() }
+            return
+        }
         var point = point
         // With a unit size, SimulatorKit's ratio is the normalized coordinate itself.
         guard let message = bridge.mouseMessage(&point, nil, SimulatorInput.touchTarget,
@@ -139,6 +150,15 @@ actor SimulatorDeviceConnection: DeviceConnection {
     // MARK: Buttons
 
     func press(_ button: HardwareButton, duration: Duration?) async throws {
+        if let modernInput {
+            guard let usage = button.usage else { throw DeviceHubError.capabilityUnavailable("\(button.rawValue) on iOS") }
+            try await modernInput.button(page: usage.page, code: usage.code, down: true)
+            do { try await Task.sleep(for: duration ?? SimulatorInput.defaultHold(button)) }
+            catch { try? await modernInput.button(page: usage.page, code: usage.code, down: false); throw error }
+            try await modernInput.button(page: usage.page, code: usage.code, down: false)
+            try await modernInput.drain()
+            return
+        }
         guard let route = SimulatorInput.button(button) else {
             throw DeviceHubError.capabilityUnavailable("\(button.rawValue) on iOS")
         }
@@ -164,6 +184,42 @@ actor SimulatorDeviceConnection: DeviceConnection {
     }
 
     // MARK: Screen and apps
+
+    func uiTree() async throws -> UITree { try await bridge.accessibility(identifier) }
+
+    func activate(_ selector: UISelector) async throws {
+        _ = try await bridge.accessibility(identifier, target: selector)
+    }
+
+    func typeText(_ text: String, target: UISelector?) async throws {
+        let keys = try SimulatorKeyboard.keys(for: text)
+        guard !keys.isEmpty else { return }
+        guard modernInput != nil || bridge.keyboardMessage != nil else { throw DeviceHubError.capabilityUnavailable("Simulator keyboard input in this Xcode") }
+        if let target {
+            _ = try await bridge.accessibility(identifier, target: target, focus: true)
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        func key(_ code: UInt32, down: Bool) async throws {
+            if let modernInput { try await modernInput.key(code, down: down); return }
+            guard let message = bridge.keyboardMessage?(code, down ? 1 : 2) else { throw DeviceHubError.serviceFailed("SimulatorKit could not create a keyboard event") }
+            try await send(message)
+        }
+        for keyStroke in keys {
+            do {
+                try Task.checkCancellation()
+                if keyStroke.shift { try await key(225, down: true) }
+                try await key(keyStroke.code, down: true)
+                try await key(keyStroke.code, down: false)
+                if keyStroke.shift { try await key(225, down: false) }
+            } catch {
+                // Release modifiers on partial failures, and never replay partially typed text.
+                try? await key(keyStroke.code, down: false)
+                if keyStroke.shift { try? await key(225, down: false) }
+                throw DeviceHubError.serviceFailed("Text input may have been partially delivered. Inspect describe_ui before retrying. \(error)")
+            }
+        }
+        try await modernInput?.drain()
+    }
 
     func screenshot() async throws -> CGImage {
         if let image = display.liveImage() { return image }
@@ -196,6 +252,7 @@ actor SimulatorDeviceConnection: DeviceConnection {
             try? await sendTouchMessage(.ended, at: held)
         }
         hid = nil
+        modernInput?.close()
         display.close()
     }
 

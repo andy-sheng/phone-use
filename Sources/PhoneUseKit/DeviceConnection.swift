@@ -12,7 +12,16 @@ protocol DeviceConnection: Sendable {
     func press(_ button: HardwareButton, duration: Duration?) async throws
     func screenshot() async throws -> CGImage
     func launchApp(bundleID: String) async throws
+    func uiTree() async throws -> UITree
+    func activate(_ selector: UISelector) async throws
+    func typeText(_ text: String, target: UISelector?) async throws
     func close() async
+}
+
+extension DeviceConnection {
+    func uiTree() async throws -> UITree { throw DeviceHubError.capabilityUnavailable("UI tree on this device; supported on iOS simulators. Use screenshot for this device") }
+    func activate(_ selector: UISelector) async throws { throw DeviceHubError.capabilityUnavailable("Element targeting on this device; supported on iOS simulators. Use screenshot and coordinate tap") }
+    func typeText(_ text: String, target: UISelector?) async throws { throw DeviceHubError.capabilityUnavailable("Direct text input on this device; supported on iOS simulators. Use the on-screen keyboard") }
 }
 
 /// How `DeviceSession` delivers the interactive preview's queued touches to one adapter.
