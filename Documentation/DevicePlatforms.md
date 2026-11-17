@@ -131,12 +131,16 @@ native-resolution operations for preview fallback and automation recognition.
 
 ## iOS Simulator
 
-Available iOS and iPadOS simulators join the shared device list with `platform: ios`,
-`connection: simulator` and a `simulator:<UDID>` identifier, so plugins and automation see
+Active or previously used available iOS and iPadOS simulators join the shared device list
+with `platform: ios`, `connection: simulator` and a `simulator:<UDID>` identifier, so plugins and automation see
 an iOS device. `simulator.py` lists them with `xcrun simctl list devices available -j`, at most
 every three seconds; a few consecutive `simctl` failures are tolerated before simulators are
-detached. Only booted simulators are `ready`; shut-down simulators remain in the sidebar's
-Available section with `state: disconnected` and their `simulatorState`. No pairing,
+removed from the list. Never-used shut-down devices are hidden; usage is detected from
+`lastUsedAt` / `lastBootedAt` in the listing or the device's `device.plist`. Starting one in
+Simulator or Xcode makes it discoverable. Deleted simulators are removed on the next
+successful discovery. Only booted simulators are `ready`; previously used shut-down
+simulators remain in the sidebar's Available section with `state: disconnected` and their
+`simulatorState`. No pairing,
 Developer Mode or disk image applies. The shared window shows a device illustration,
 name, OS version and Start button. Starting runs `simctl bootstatus <UDID> -b` with a
 three-minute deadline and continues into the preview as discovery reports readiness.

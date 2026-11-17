@@ -306,7 +306,7 @@ class Supervisor:
                     self._schedule_probe(udid)
             elif record.state != "ready" and loop.time() - record.probed_at > REPROBE_INTERVAL:
                 self._schedule_probe(udid)
-        for udid, record in self.records.items():
+        for udid, record in list(self.records.items()):
             if record.attached and udid not in seen:
                 record.attached = False
                 record.session = "closed"
@@ -314,6 +314,11 @@ class Supervisor:
                 worker = self.workers.get(udid)
                 if worker is not None:
                     worker.stop()
+            # A simulator absent from the inventory is gone, rather than a phone that may
+            # reconnect later. Do not leave deleted simulators in the disconnected list.
+            if record.is_simulator and udid not in simulators:
+                del self.records[udid]
+                changed = True
         if changed:
             await self.broadcast()
 

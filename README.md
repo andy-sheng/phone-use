@@ -122,7 +122,8 @@ python3.13 scripts/prepare-android-tools.py --archive /path/to/platform-tools_r3
 
 ## iOS 模拟器
 
-本机已启动（Booted）的 iOS / iPadOS 模拟器会自动出现在设备列表中，连接方式显示为「Simulator」，ID 形如 `simulator:<UDID>`。
+本机已启动或有使用记录的 iOS / iPadOS 模拟器会自动出现在设备列表中，连接方式显示为「Simulator」，ID 形如 `simulator:<UDID>`。
+从未使用过的关机模拟器默认不显示；首次在 Simulator / Xcode 中启动后会自动加入。已删除的模拟器会从列表移除。
 需要安装 Xcode，并通过 `xcode-select` 或 `DEVELOPER_DIR` 选中它；无需配对、开发者模式或 USB。
 可以在 Simulator / Xcode 中启动模拟器，也可以运行 `xcrun simctl boot <UDID>`；关机后设备在列表中显示为未连接。
 

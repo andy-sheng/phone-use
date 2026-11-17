@@ -1,17 +1,21 @@
 """iOS Simulator discovery through ``simctl``; importing this module never touches a simulator.
 
-Available iOS/iPadOS simulators are published, including shut-down devices. Their UDIDs carry a ``simulator:``
-prefix so they can never collide with a physical device, and control happens in the client
+Active or previously used iOS/iPadOS simulators are published, including shut-down devices.
+Their UDIDs carry a ``simulator:`` prefix so they can never collide with a physical device, and control happens in the client
 process through CoreSimulator rather than through a daemon worker.
 """
 
 import asyncio
 import json
 import os
+import plistlib
 import re
 import shutil
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Any
+from xml.parsers.expat import ExpatError
 
 SIMULATOR = "simulator"
 PREFIX = "simulator:"
@@ -40,8 +44,25 @@ def product_type(device_type: str | None) -> str | None:
     return " ".join(words) or None
 
 
+def _has_usage_history(entry: dict[str, Any]) -> bool:
+    if entry.get("lastUsedAt") or entry.get("lastBootedAt"):
+        return True
+    # Some Xcode versions expose usage timestamps only in the device metadata.
+    data_path = entry.get("dataPath")
+    if not isinstance(data_path, str) or not data_path:
+        return False
+    try:
+        with (Path(data_path).parent / "device.plist").open("rb") as file:
+            metadata = plistlib.load(file)
+    except (OSError, ValueError, plistlib.InvalidFileException, ExpatError):
+        return False
+    return isinstance(metadata, dict) and any(
+        isinstance(metadata.get(key), datetime) for key in ("lastUsedAt", "lastBootedAt")
+    )
+
+
 def parse_devices(output: str) -> list[SimulatorAttachment]:
-    """Parses available iOS and iPadOS simulators, preserving their power state."""
+    """Lists active or previously used available iOS/iPadOS simulators."""
     devices: dict[str, Any] = json.loads(output).get("devices") or {}
     attached = []
     for runtime, entries in devices.items():
@@ -53,6 +74,8 @@ def parse_devices(output: str) -> list[SimulatorAttachment]:
             if not isinstance(entry, dict) or entry.get("state") not in {"Booted", "Shutdown", "Booting", "Shutting Down"}:
                 continue
             if entry.get("isAvailable") is False or not entry.get("udid"):
+                continue
+            if entry["state"] == "Shutdown" and not _has_usage_history(entry):
                 continue
             attached.append(SimulatorAttachment(
                 identifier=entry["udid"],
