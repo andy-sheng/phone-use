@@ -16,6 +16,8 @@ final class MCPHost {
     /// Launched by LaunchServices the app has no stderr, so state goes to the unified log.
     private static let log = Logger(subsystem: "cn.andysheng.phoneuse", category: "mcp")
 
+    let activity = MCPActivityStore()
+
     private let idleGrace: Duration
     private var server: MCPSocketServer?
     private(set) var connectionCount = 0
@@ -28,7 +30,11 @@ final class MCPHost {
     /// Starts serving; `prepare` runs before each tool call to make sure the daemon is up.
     func start(prepare: @escaping @MainActor @Sendable () async throws -> Void) {
         let server = MCPSocketServer(
-            handler: { line in await MCPServer.handle(line: line, prepare: prepare) },
+            handler: { [activity] line in
+                await activity.handle(line: line) { line in
+                    await MCPServer.handle(line: line, prepare: prepare)
+                }
+            },
             onConnectionCountChange: { [weak self] count in
                 Task { @MainActor in self?.connectionCountChanged(count) }
             })

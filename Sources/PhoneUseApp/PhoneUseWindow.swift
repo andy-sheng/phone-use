@@ -4,16 +4,18 @@ import SwiftUI
 
 /// phone-use's main window: the shared device workspace with developer panels.
 struct PhoneUseWindow: View {
+    @EnvironmentObject private var activity: MCPActivityStore
     @EnvironmentObject private var model: DeviceListModel
     @AppStorage("inspector.visible") private var showsPanel = true
     @AppStorage("inspector.tab") private var selectedTab = Tab.uiTree.rawValue
 
     enum Tab: String, CaseIterable {
-        case uiTree, settings, deviceInfo
+        case uiTree, calls, settings, deviceInfo
 
         var workspaceTab: WorkspaceTab {
             switch self {
             case .uiTree: WorkspaceTab(id: rawValue, title: "界面结构", systemImage: "list.bullet.indent")
+            case .calls: WorkspaceTab(id: rawValue, title: "调用记录", systemImage: "terminal")
             case .settings: WorkspaceTab(id: rawValue, title: "设备设置", systemImage: "slider.horizontal.3")
             case .deviceInfo: WorkspaceTab(id: rawValue, title: "设备信息", systemImage: "info.circle")
             }
@@ -26,6 +28,8 @@ struct PhoneUseWindow: View {
             switch Tab(rawValue: tab.id) ?? .settings {
             case .uiTree:
                 DeviceUIOutlinePanel(device: model.selectedDevice, screen: screen)
+            case .calls:
+                MCPActivityPanel(activity: activity)
             case .settings:
                 DeviceSettingsPanel(device: model.selectedDevice)
             case .deviceInfo:

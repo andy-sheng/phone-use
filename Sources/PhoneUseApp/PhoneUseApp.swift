@@ -63,6 +63,7 @@ struct PhoneUseMacApp: App {
         Window(Self.mainWindowTitle, id: Self.mainWindowID) {
             PhoneUseWindow()
                 .environmentObject(appDelegate.model)
+                .environmentObject(appDelegate.mcp.activity)
         }
         .defaultSize(width: 1280, height: 920)
         // Started by phone-use-mcp: serve without a window until the user opens one. Restoring
