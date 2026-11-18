@@ -5,13 +5,13 @@ import Sparkle
 /// One updater for the lifetime of the packaged app. Bare `swift run` binaries have
 /// no installable bundle and deliberately leave update checks disabled.
 @MainActor
-final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
-    @Published private(set) var canCheckForUpdates = false
+public final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
+    @Published public private(set) var canCheckForUpdates = false
     private var controller: SPUStandardUpdaterController?
     private var taskRunning = false
     private var pendingInstallation: (() -> Void)?
 
-    override init() {
+    public override init() {
         super.init()
         guard Bundle.main.bundleURL.pathExtension == "app",
               Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") is String,
@@ -26,11 +26,11 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         controller.startUpdater()
     }
 
-    func checkForUpdates() {
+    public func checkForUpdates() {
         controller?.checkForUpdates(nil)
     }
 
-    func setTaskRunning(_ running: Bool) {
+    public func setTaskRunning(_ running: Bool) {
         taskRunning = running
         if !running, let install = pendingInstallation {
             pendingInstallation = nil
@@ -44,8 +44,8 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         return true
     }
 
-    func updater(_ updater: SPUUpdater, shouldPostponeRelaunchForUpdate item: SUAppcastItem,
-                 untilInvokingBlock installHandler: @escaping () -> Void) -> Bool {
+    public func updater(_ updater: SPUUpdater, shouldPostponeRelaunchForUpdate item: SUAppcastItem,
+                        untilInvokingBlock installHandler: @escaping () -> Void) -> Bool {
         deferInstallationIfTaskRunning(installHandler)
     }
 }

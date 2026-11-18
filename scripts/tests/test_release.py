@@ -186,6 +186,41 @@ class PublishTests(unittest.TestCase):
                 publisher.publish(self.output)
         self.assertFalse(any("/git/" in path for path in events))
 
+    def test_automation_uses_its_own_tag_and_pages_directory(self):
+        old = self.output / self.assets[0]["name"]
+        archive = old.with_name("automation-0.3.0-arm64.zip")
+        old.rename(archive)
+        old.with_name(old.name + ".sha256").rename(archive.with_name(archive.name + ".sha256"))
+        digest = self.manifest["artifacts"][old.name]
+        self.manifest.update(product="automation", artifacts={archive.name: digest},
+                             feed="https://owner.github.io/releases/automation/appcast.xml")
+        (self.output / "release-manifest.json").write_text(json.dumps(self.manifest))
+        (self.output / "pages/.nojekyll").unlink()
+        events = {}
+
+        def api(path, *, method="GET", data=None, optional=False):
+            events[method, path] = data
+            if path == "repos/owner/releases":
+                return {"private": False, "default_branch": "main"}
+            if "/releases/tags/" in path or "?per_page=" in path:
+                return None if optional else []
+            if path.endswith("/releases") or path.endswith("/releases/1"):
+                return {"id": 1, "draft": True, "assets": [{"name": archive.name, "digest": f"sha256:{digest}"}]}
+            if path.endswith("/git/ref/heads/gh-pages"):
+                return {"object": {"sha": "pages-head"}}
+            if path.endswith("/git/commits/pages-head"):
+                return {"tree": {"sha": "existing-pages-tree"}}
+            return {"sha": "next-pages-object"}
+
+        with patch.object(publisher, "api", side_effect=api), patch.object(publisher, "upload_draft_assets"):
+            publisher.publish(self.output)
+
+        self.assertEqual(events["POST", "repos/owner/releases/releases"]["tag_name"], "automation-v0.3.0")
+        self.assertEqual(events["PATCH", "repos/owner/releases/releases/1"]["make_latest"], "false")
+        tree = events["POST", "repos/owner/releases/git/trees"]
+        self.assertEqual(tree["base_tree"], "existing-pages-tree")
+        self.assertEqual([item["path"] for item in tree["tree"]], ["automation/appcast.xml"])
+
     def test_an_unnotarized_manifest_never_contacts_github(self):
         self.manifest["notarization"]["status"] = "In Progress"
         (self.output / "release-manifest.json").write_text(json.dumps(self.manifest))

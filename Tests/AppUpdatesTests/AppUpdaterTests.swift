@@ -1,5 +1,5 @@
 import XCTest
-@testable import PhoneUseApp
+@testable import AppUpdates
 
 @MainActor
 final class AppUpdaterTests: XCTestCase {

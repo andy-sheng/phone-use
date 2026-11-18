@@ -1,6 +1,6 @@
 # 自动更新与发布
 
-phone-use 使用 Sparkle 2。应用菜单中的「检查更新…」会下载并验证更新，用户确认后替换整个应用并重启。后台自动检查遵循 Sparkle 保存的用户偏好；不启用静默安装。应用内自动任务正在运行时，安装重启延后到任务结束。
+PhoneUse 和 Automation 使用 Sparkle 2。应用菜单中的「检查更新…」会下载并验证更新，用户确认后替换整个应用并重启。后台自动检查遵循 Sparkle 保存的用户偏好，静默安装已关闭。Automation 正在运行任务时，安装重启延后到任务结束。
 
 应用标识为 `cn.andysheng.phoneuse`（原为 `dev.devicehub.app`；标识变更后，应用偏好与摄像头等系统授权需要重新设置）。设备记录、设置、已安装插件和任务保留在应用包外，更新不会将它们作为应用资源替换。外部插件不随发布包附带。
 
@@ -9,7 +9,7 @@ phone-use 使用 Sparkle 2。应用菜单中的「检查更新…」会下载并
 - 源码仓库：`andy-sheng/phone-use`，保持私有。
 - 公开发布仓库：`andy-sheng/phone-use-releases`，只存放发布附件和静态网站。
 - Pages：`https://andy-sheng.github.io/phone-use-releases/`。
-- 更新清单：同一地址下的 `appcast.xml`；`SUFeedURL`、`SUPublicEDKey` 由 `project.yml` 配置。
+- 更新清单：PhoneUse 为 `appcast.xml`，Automation 为 `automation/appcast.xml`。两个应用共用本项目的 Sparkle 签名密钥，`SUFeedURL`、`SUPublicEDKey` 由 `project.yml` 配置。
 - Sparkle 版本与官方工具哈希固定在 `Package.swift`、`project.yml` 和 `scripts/sparkle-assets.json`。
 
 私钥不属于应用资源，也不能提交到 Git。Developer ID 私钥用于 Apple 代码签名；Sparkle 的 Ed25519 私钥用于更新包与清单签名，二者分别管理。本机 Sparkle 密钥使用登录钥匙串中的 `phone-use` account。
@@ -44,7 +44,7 @@ CI 将证书导入临时钥匙串，验证公证凭据，并在 `always()` 清�
 
 ## 发布新版本
 
-版本标签采用 `vMAJOR.MINOR.PATCH`。`CFBundleShortVersionString` 来自标签，`CFBundleVersion` 为 `1000 + GitHub Actions run number`，为本地验证构建预留较低编号；不要重命名发布 workflow 或重置其版本计数。
+PhoneUse 使用 `vMAJOR.MINOR.PATCH` 标签，Automation 使用 `automation-vMAJOR.MINOR.PATCH`。`CFBundleShortVersionString` 来自标签，`CFBundleVersion` 为 `1000 + GitHub Actions run number`。较低的构建编号留给本地验证，请沿用现有发布 workflow 的计数。
 
 先提交经过验证的代码，再创建并推送标签，例如：
 
@@ -53,7 +53,7 @@ git tag v0.3.1
 git push origin v0.3.1
 ```
 
-也可以在 **Actions → Release macOS → Run workflow** 输入 `0.3.1`，从选定的可信分支发布。输入只接受三段数字版本号。每次发布必须使用新的版本号。
+也可以在 **Actions → Release macOS → Run workflow** 选择 `phone-use` 或 `automation`，从选定的可信分支发布。版本输入只接受三段数字，每个应用每次发布使用新的版本号。Automation 的下载页位于 [Automation](https://andy-sheng.github.io/phone-use-releases/automation/)，GitHub Releases 的默认 Latest 下载继续用于 PhoneUse。
 
 流水线依次执行：
 
@@ -84,6 +84,8 @@ python3 scripts/release.py --version 0.3.1 --build-number 1004 \
 ```
 
 该命令只生成和验证 `dist/` 产物，不向 GitHub 发布。确认产物后可运行 `python3 scripts/publish-release.py`；它使用 `gh` 当前身份或 `GH_TOKEN`，先上传 Release，再更新静态分支。
+
+本机发布 Automation 时，为打包命令加上 `--product automation`，并使用 `python3 scripts/publish-release.py --output dist/automation` 发布该应用的产物。
 
 ## 验证边界
 

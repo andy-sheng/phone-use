@@ -30,6 +30,7 @@ let package = Package(
         .library(name: "PhoneUseKit", targets: ["PhoneUseKit"]),
         .library(name: "PhoneUseUI", targets: ["PhoneUseUI"]),
         .library(name: "PhoneUseMCP", targets: ["PhoneUseMCP"]),
+        .library(name: "AppUpdates", targets: ["AppUpdates"]),
         .executable(name: "phone-use", targets: ["PhoneUseCLI"]),
         .executable(name: "phone-use-mcp", targets: ["PhoneUseMCPServer"]),
         .executable(name: "phone-use-app", targets: ["PhoneUseApp"]),
@@ -44,6 +45,9 @@ let package = Package(
         .target(name: "PhoneUseKit"),
         .target(name: "PhoneUseUI", dependencies: ["PhoneUseKit"], resources: [.process("Resources")]),
 
+        // Shared application update support, outside the device framework.
+        .target(name: "AppUpdates", dependencies: [.product(name: "Sparkle", package: "Sparkle")]),
+
         // phone-use
         .target(name: "PhoneUseMCP", dependencies: ["PhoneUseKit"]),
         .executableTarget(name: "PhoneUseCLI", dependencies: ["PhoneUseKit"],
@@ -51,7 +55,7 @@ let package = Package(
         .executableTarget(name: "PhoneUseMCPServer", dependencies: ["PhoneUseKit", "PhoneUseMCP"]),
         .executableTarget(
             name: "PhoneUseApp",
-            dependencies: ["PhoneUseKit", "PhoneUseUI", "PhoneUseMCP", .product(name: "Sparkle", package: "Sparkle")],
+            dependencies: ["PhoneUseKit", "PhoneUseUI", "PhoneUseMCP", "AppUpdates"],
             resources: [.process("Resources")],
             // A bare SwiftPM executable has no bundle, so the camera usage string USB capture
             // needs is embedded straight into the binary. Packaged builds get a real Info.plist.
@@ -61,7 +65,7 @@ let package = Package(
         // automation
         .executableTarget(
             name: "AutomationApp",
-            dependencies: ["PhoneUseKit", "PhoneUseUI"],
+            dependencies: ["PhoneUseKit", "PhoneUseUI", "AppUpdates"],
             linkerSettings: infoPlist("AutomationApp-Info.plist") + modernAppearance
         ),
         .executableTarget(name: "AutomationBridge", dependencies: ["PhoneUseKit"]),
@@ -71,6 +75,7 @@ let package = Package(
         .testTarget(name: "PhoneUseUITests", dependencies: ["PhoneUseUI", "PhoneUseKit"]),
         .testTarget(name: "PhoneUseMCPTests", dependencies: ["PhoneUseMCP", "PhoneUseKit"]),
         .testTarget(name: "PhoneUseAppTests", dependencies: ["PhoneUseApp", "PhoneUseKit"]),
+        .testTarget(name: "AppUpdatesTests", dependencies: ["AppUpdates"]),
     ],
     swiftLanguageModes: [.v5]
 )

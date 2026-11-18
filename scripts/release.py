@@ -17,9 +17,27 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from importlib.util import module_from_spec, spec_from_file_location
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parents[1]
 SPARKLE = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
+
+
+class Product(NamedTuple):
+    app_name: str
+    bundle_id: str
+    tag_prefix: str
+    pages_directory: str
+
+    def feed_url(self, repository):
+        owner, repo = repository.split("/")
+        return f"https://{owner}.github.io/{repo}/{self.pages_directory}appcast.xml"
+
+
+PRODUCTS = {
+    "phone-use": Product("PhoneUse", "cn.andysheng.phoneuse", "v", ""),
+    "automation": Product("Automation", "cn.andysheng.automation", "automation-v", "automation/"),
+}
 
 
 def run(args, *, env=None, allow_failure=False):
@@ -114,8 +132,9 @@ def release(args):
         raise ValueError("Set SIGN_IDENTITY to a Developer ID Application identity")
     if args.build_number < 1:
         raise ValueError("build number must be a positive integer")
-    output = ROOT / "dist"
-    stem = f"phone-use-{args.version}-arm64"
+    product = PRODUCTS[args.product]
+    output = ROOT / "dist" / product.pages_directory
+    stem = f"{args.product}-{args.version}-arm64"
     update = output / f"{stem}.zip"
     image = output / f"{stem}.dmg"
     if update.exists() or image.exists():
@@ -126,20 +145,22 @@ def release(args):
     tools = module.prepare()
     cache = ROOT / ".build/releases"
     cache.mkdir(parents=True, exist_ok=True)
-    work = Path(tempfile.mkdtemp(prefix=f"{args.version}-{args.build_number}-", dir=cache))
+    work = Path(tempfile.mkdtemp(prefix=f"{args.product}-{args.version}-{args.build_number}-", dir=cache))
     print(f"Release workspace: {work}", flush=True)
     feed = work / "feed"
     feed.mkdir()
     # Reject downgrades before performing an expensive build or notarization.
-    expected_feed = f"https://{args.repository.split('/')[0]}.github.io/{args.repository.split('/')[1]}/appcast.xml"
+    expected_feed = product.feed_url(args.repository)
     previous_feed(expected_feed, feed / "appcast.xml", args.build_number, args.version)
     environment = os.environ.copy()
     environment.update(VERSION=args.version, BUILD_NUMBER=str(args.build_number), NOTARY_PROFILE="")
     if not args.skip_build:
         # Keep build output in the existing log; do not hide build failures.
-        subprocess.run([str(ROOT / "scripts/build-app.sh")], env=environment, check=True)
-    app = ROOT / "dist/PhoneUse.app"
+        subprocess.run([str(ROOT / "scripts/build-app.sh"), args.product], env=environment, check=True)
+    app = ROOT / "dist" / f"{product.app_name}.app"
     info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+    if info["CFBundleIdentifier"] != product.bundle_id:
+        raise ValueError("The built app's bundle identifier does not match the requested product")
     if info["CFBundleShortVersionString"] != args.version or info["CFBundleVersion"] != str(args.build_number):
         raise ValueError("The built app's version/build does not match the requested release")
     if len(base64.b64decode(info.get("SUPublicEDKey", ""), validate=True)) != 32:
@@ -153,13 +174,14 @@ def release(args):
     app_submission = notarize(preflight, work, args.notary_profile)
     run(["xcrun", "stapler", "staple", app])
     run(["xcrun", "stapler", "validate", app])
+    output.mkdir(parents=True, exist_ok=True)
     run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", app, update])
     stage = work / "image"
     stage.mkdir()
-    run(["ditto", app, stage / "PhoneUse.app"])
+    run(["ditto", app, stage / app.name])
     (stage / "Applications").symlink_to("/Applications", target_is_directory=True)
-    run(["hdiutil", "create", "-volname", "PhoneUse", "-srcfolder", stage, "-format", "UDZO", "-fs", "HFS+", image])
-    run(["codesign", "--force", "--sign", identity, "--timestamp", "--identifier", "cn.andysheng.phoneuse.dmg", image])
+    run(["hdiutil", "create", "-volname", product.app_name, "-srcfolder", stage, "-format", "UDZO", "-fs", "HFS+", image])
+    run(["codesign", "--force", "--sign", identity, "--timestamp", "--identifier", f"{product.bundle_id}.dmg", image])
     dmg_submission = notarize(image, work, args.notary_profile)
     run(["xcrun", "stapler", "staple", image])
     run(["xcrun", "stapler", "validate", image])
@@ -167,10 +189,10 @@ def release(args):
     run(["spctl", "--assess", "--type", "open", "--context", "context:primary-signature", image])
     run(["syspolicy_check", "distribution", app])
     shutil.copy2(update, feed / update.name)
-    notes = args.release_notes.read_text() if args.release_notes else f"PhoneUse {args.version}"
+    notes = args.release_notes.read_text() if args.release_notes else f"{product.app_name} {args.version}"
     (feed / f"{stem}.html").write_text("<p>" + html.escape(notes).replace("\n", "<br>\n") + "</p>\n")
     signing = (["--ed-key-file", args.sparkle_key] if args.sparkle_key else ["--account", "phone-use"])
-    download = f"https://github.com/{args.repository}/releases/download/v{args.version}/"
+    download = f"https://github.com/{args.repository}/releases/download/{product.tag_prefix}{args.version}/"
     run([tools / "generate_appcast", *signing, "--download-url-prefix", download,
          "--release-notes-url-prefix", feed_url.removesuffix("appcast.xml"),
          "--versions", str(args.build_number), "--maximum-deltas", "0", feed])
@@ -179,18 +201,21 @@ def release(args):
     publish.mkdir(exist_ok=True)
     shutil.copy2(feed / "appcast.xml", publish / "appcast.xml")
     shutil.copy2(feed / f"{stem}.html", publish / f"{stem}.html")
-    (publish / ".nojekyll").touch()
+    if not product.pages_directory:
+        (publish / ".nojekyll").touch()
     (publish / "index.html").write_text(
-        '<!doctype html><meta charset="utf-8"><title>PhoneUse</title><h1>PhoneUse</h1>'
+        f'<!doctype html><meta charset="utf-8"><title>{product.app_name}</title><h1>{product.app_name}</h1>'
         f'<p><a href="{download}{image.name}">下载 macOS Apple Silicon 版本 {args.version}</a></p>'
-        '<p>需要 macOS 15 或更新版本。打开 DMG 后将 PhoneUse 拖入 Applications。</p>'
+        f'<p>需要 macOS 15 或更新版本。打开 DMG 后将 {product.app_name} 拖入 Applications。</p>'
         '<p><a href="appcast.xml">自动更新清单</a></p>\n')
     hashes = {}
     for artifact in [update, image]:
         with artifact.open("rb") as stream:
             hashes[artifact.name] = hashlib.file_digest(stream, "sha256").hexdigest()
         artifact.with_name(artifact.name + ".sha256").write_text(f"{hashes[artifact.name]}  {artifact.name}\n")
-    metadata = {"version": args.version, "build": args.build_number, "artifacts": hashes,
+    source_commit = run(["git", "-C", ROOT, "rev-parse", "HEAD"]).strip()
+    metadata = {"product": args.product, "source_commit": source_commit,
+                "version": args.version, "build": args.build_number, "artifacts": hashes,
                 "notarization": {"app": app_submission, "dmg": dmg_submission, "status": "Accepted"},
                 "feed": feed_url, "repository": args.repository}
     (output / "release-manifest.json").write_text(json.dumps(metadata, indent=2) + "\n")
@@ -199,6 +224,7 @@ def release(args):
 
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
+    result.add_argument("--product", choices=PRODUCTS, default="phone-use")
     result.add_argument("--version", required=True, type=valid_version)
     result.add_argument("--build-number", required=True, type=int)
     result.add_argument("--repository", required=True, type=valid_repository)

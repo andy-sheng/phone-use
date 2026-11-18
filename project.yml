@@ -44,6 +44,8 @@ targets:
         product: PhoneUseUI
       - package: PhoneUsePackage
         product: PhoneUseMCP
+      - package: PhoneUsePackage
+        product: AppUpdates
       - package: Sparkle
         product: Sparkle
       - target: phone-use-mcp
@@ -154,6 +156,10 @@ targets:
         product: PhoneUseKit
       - package: PhoneUsePackage
         product: PhoneUseUI
+      - package: PhoneUsePackage
+        product: AppUpdates
+      - package: Sparkle
+        product: Sparkle
       - target: automation-bridge
         embed: true
         codeSign: true
@@ -169,6 +175,11 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.utilities
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        SUFeedURL: $(SPARKLE_FEED_URL)
+        SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
+        SUVerifyUpdateBeforeExtraction: true
+        SURequireSignedFeed: true
+        SUAllowsAutomaticUpdates: false
         NSCameraUsageDescription: Automation shows USB-connected iPhone screens through the system screen capture device.
         NSLocalNetworkUsageDescription: Automation discovers and pairs iPhone and iPad devices on your local network.
         NSBonjourServices:
@@ -195,6 +206,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: cn.andysheng.automation
         ASSETCATALOG_COMPILER_APPICON_NAME: AutomationIcon
         MARKETING_VERSION: 0.1.0
+        SPARKLE_FEED_URL: https://andy-sheng.github.io/phone-use-releases/automation/appcast.xml
+        SPARKLE_PUBLIC_KEY: c1KqCiZCOZcNqR5JoImkDmcXj1hkr4GAW2//VzWuots=
         # The embed script writes the Python runtime into the bundle.
         ENABLE_USER_SCRIPT_SANDBOXING: NO
       configs:

@@ -3,7 +3,6 @@
 import argparse
 import hashlib
 import json
-import os
 import subprocess
 from pathlib import Path
 
@@ -67,15 +66,21 @@ def publish(output):
     spec.loader.exec_module(helpers)
     helpers.valid_repository(repository)
     version = helpers.valid_version(manifest["version"])
+    product_id = manifest.get("product", "phone-use")
+    if product_id not in helpers.PRODUCTS:
+        raise ValueError("Unknown release product")
+    product = helpers.PRODUCTS[product_id]
+    if manifest["feed"] != product.feed_url(repository):
+        raise ValueError("Unexpected update feed for the release product")
     if manifest["notarization"]["status"] != "Accepted":
         raise ValueError("Refusing to publish an unnotarized release")
     repo = api(f"repos/{repository}")
     if repo["private"]:
         raise ValueError("Update downloads require a public release repository")
-    tag = f"v{version}"
+    tag = f"{product.tag_prefix}{version}"
     artifacts = []
     for name, expected in manifest["artifacts"].items():
-        if Path(name).name != name or not name.startswith(f"phone-use-{version}-arm64."):
+        if Path(name).name != name or not name.startswith(f"{product_id}-{version}-arm64."):
             raise ValueError("Unexpected artifact name")
         path = output / name
         with path.open("rb") as stream:
@@ -86,8 +91,9 @@ def publish(output):
     release = find_release(repository, tag)
     if release is None:
         release = api(f"repos/{repository}/releases", method="POST", data={
-            "tag_name": tag, "target_commitish": repo["default_branch"], "name": f"phone-use {version}",
-            "draft": True, "body": "macOS 15+ · Apple Silicon\n\n已完成 Developer ID 签名和 Apple 公证。打开 DMG，将 phone-use 拖入 Applications 安装。"})
+            "tag_name": tag, "target_commitish": repo["default_branch"], "name": f"{product.app_name} {version}",
+            "draft": True, "body": ("macOS 15+ · Apple Silicon\n\n已完成 Developer ID 签名和 Apple 公证。"
+                                    f"打开 DMG，将 {product.app_name} 拖入 Applications 安装。")})
     if release["draft"]:
         upload_draft_assets(repository, tag, artifacts, release["assets"])
         release = api(f"repos/{repository}/releases/{release['id']}")
@@ -97,11 +103,12 @@ def publish(output):
             raise ValueError("Release asset does not match this build; published releases are never overwritten")
     print("Remote archive checksums verified.", flush=True)
     if release["draft"]:
-        api(f"repos/{repository}/releases/{release['id']}", method="PATCH", data={"draft": False, "make_latest": "true"})
+        api(f"repos/{repository}/releases/{release['id']}", method="PATCH", data={
+            "draft": False, "make_latest": "false" if product.pages_directory else "true"})
     # The download is public before the feed can advertise it. Only static files
     # go to gh-pages, even when the source repository is private.
     branch = api(f"repos/{repository}/git/ref/heads/gh-pages", optional=True)
-    tree_data = {"tree": [{"path": p.name, "mode": "100644", "type": "blob", "content": p.read_text()}
+    tree_data = {"tree": [{"path": product.pages_directory + p.name, "mode": "100644", "type": "blob", "content": p.read_text()}
                            for p in sorted((output / "pages").iterdir()) if p.is_file()]}
     parents = []
     if branch:
@@ -111,7 +118,7 @@ def publish(output):
         parents = [head]
     tree = api(f"repos/{repository}/git/trees", method="POST", data=tree_data)
     commit = api(f"repos/{repository}/git/commits", method="POST", data={
-        "message": f"Publish phone-use {version} update feed", "tree": tree["sha"], "parents": parents})
+        "message": f"Publish {product_id} {version} update feed", "tree": tree["sha"], "parents": parents})
     if branch:
         api(f"repos/{repository}/git/refs/heads/gh-pages", method="PATCH", data={"sha": commit["sha"], "force": False})
     else:

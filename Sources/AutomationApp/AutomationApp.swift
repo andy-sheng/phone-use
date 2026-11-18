@@ -1,4 +1,5 @@
 import AppKit
+import AppUpdates
 import PhoneUseKit
 import PhoneUseUI
 import SwiftUI
@@ -33,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct AutomationMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var updater = AppUpdater()
 
     init() {
         PhoneUseConfiguration.current = .automation
@@ -43,8 +45,15 @@ struct AutomationMacApp: App {
         Window("Automation", id: "automation-main") {
             AutomationWindow(automation: appDelegate.automation)
                 .environmentObject(appDelegate.model)
+                .onReceive(appDelegate.automation.$isRunning, perform: updater.setTaskRunning)
         }
         .defaultSize(width: 1280, height: 920)
-        .commands { DiagnosticCommands { appDelegate.automation.diagnosticRunDirectories } }
+        .commands {
+            DiagnosticCommands { appDelegate.automation.diagnosticRunDirectories }
+            CommandGroup(after: .appInfo) {
+                Button("检查更新…", action: updater.checkForUpdates)
+                    .disabled(!updater.canCheckForUpdates)
+            }
+        }
     }
 }

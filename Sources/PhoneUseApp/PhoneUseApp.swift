@@ -1,4 +1,5 @@
 import AppKit
+import AppUpdates
 import PhoneUseKit
 import PhoneUseMCP
 import PhoneUseUI

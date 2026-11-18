@@ -2,9 +2,15 @@ name: Release macOS
 
 on:
   push:
-    tags: ["v[0-9]*.[0-9]*.[0-9]*"]
+    tags: ["v[0-9]*.[0-9]*.[0-9]*", "automation-v[0-9]*.[0-9]*.[0-9]*"]
   workflow_dispatch:
     inputs:
+      product:
+        description: "App to release"
+        required: true
+        type: choice
+        default: phone-use
+        options: [phone-use, automation]
       version:
         description: "Version to release (MAJOR.MINOR.PATCH)"
         required: true
@@ -23,6 +29,7 @@ jobs:
     timeout-minutes: 90
     env:
       RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
+      RELEASE_PRODUCT: ${{ inputs.product || (startsWith(github.ref_name, 'automation-v') && 'automation') || 'phone-use' }}
       RELEASE_REPOSITORY: ${{ vars.RELEASE_REPOSITORY || github.repository }}
       CLANG_MODULE_CACHE_PATH: ${{ github.workspace }}/.build/clang-module-cache
       SWIFTPM_MODULECACHE_OVERRIDE: ${{ github.workspace }}/.build/swift-module-cache
@@ -36,10 +43,14 @@ jobs:
           python-version: "3.13"
       - name: Validate release metadata
         run: |
-          VERSION="${RELEASE_VERSION#v}"
+          VERSION="${RELEASE_VERSION#automation-}"
+          VERSION="${VERSION#v}"
           python3 -c 'import runpy,sys; runpy.run_path("scripts/release.py")["valid_version"](sys.argv[1])' "$VERSION"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "BUILD_NUMBER=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          OUTPUT=dist
+          if [[ "$RELEASE_PRODUCT" == automation ]]; then OUTPUT=dist/automation; fi
+          echo "RELEASE_OUTPUT=$OUTPUT" >> "$GITHUB_ENV"
           test "$(uname -m)" = arm64
           xcodebuild -version
       - name: Validate release credentials
@@ -91,7 +102,7 @@ jobs:
         run: python3 scripts/ci-signing.py
       - name: Build, notarize and sign updates
         run: |
-          python3 scripts/release.py --version "$VERSION" --build-number "$BUILD_NUMBER" \
+          python3 scripts/release.py --product "$RELEASE_PRODUCT" --version "$VERSION" --build-number "$BUILD_NUMBER" \
             --repository "$RELEASE_REPOSITORY" --notary-profile "$NOTARY_PROFILE" \
             --sparkle-key "$SPARKLE_KEY_FILE"
       - name: Remove private signing material
@@ -104,11 +115,11 @@ jobs:
           retention-days: 7
           include-hidden-files: true
           path: |
-            dist/phone-use-*.dmg
-            dist/phone-use-*.zip
-            dist/phone-use-*.sha256
-            dist/release-manifest.json
-            dist/pages/
+            ${{ env.RELEASE_OUTPUT }}/${{ env.RELEASE_PRODUCT }}-*.dmg
+            ${{ env.RELEASE_OUTPUT }}/${{ env.RELEASE_PRODUCT }}-*.zip
+            ${{ env.RELEASE_OUTPUT }}/${{ env.RELEASE_PRODUCT }}-*.sha256
+            ${{ env.RELEASE_OUTPUT }}/release-manifest.json
+            ${{ env.RELEASE_OUTPUT }}/pages/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
