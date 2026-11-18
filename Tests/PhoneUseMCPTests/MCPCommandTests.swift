@@ -64,6 +64,8 @@ final class MCPCommandTests: XCTestCase {
         let names = Set(tools.compactMap { $0["name"] as? String })
         XCTAssertEqual(names, ["select_device", "connect_device", "get_web_preview", "list_devices", "screenshot", "describe_ui", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "type_text", "list_apps", "list_sandbox_files", "read_sandbox_file", "download_sandbox_file"])
         XCTAssertNotNil(MCPServer.encode(reply), "every schema must remain JSON serializable")
+        let handoffTools = tools.filter { ($0["description"] as? String)?.contains("handoff") == true }
+        XCTAssertEqual(handoffTools.compactMap { $0["name"] as? String }, ["connect_device"])
         for name in ["get_screen", "press_button", "ui", "snapshot_ui"] {
             XCTAssertNoThrow(try MCPCommand(name: name, arguments: name == "press_button" ? ["button": "home"] : [:]))
         }
@@ -209,30 +211,40 @@ private actor WorkspaceProbe {
 }
 
 extension MCPCommandTests {
-    func testBatchedConnectLaunchScreenshotEachReturnVerifiedWebHandoff() async throws {
+    func testOnlyConnectReturnsVerifiedWebHandoffEvenWithBatchedDeviceCalls() async throws {
         let session = try TestSession()
         let probe = WebHandoffProbe()
         let access = MCPDeviceAccess(devices: { [session.device] }, session: { _ in session },
                                      webPreview: { try await probe.url($0, port: $1) })
         let workspace = WorkspaceProbe()
-        // Reproduce the agent's bug: execute the whole batch without reading intermediate results.
         let connected = await MCPServer.handle(request("connect_device", [:]), access: access, workspace: workspace.access)
         let launched = await MCPServer.handle(request("launch_app", ["bundle_id": "example.app"]), access: access)
         let screenshot = await MCPServer.handle(request("screenshot", [:]), access: access)
-        for reply in [connected, launched, screenshot] {
+        let tree = await MCPServer.handle(request("describe_ui", [:]), access: access)
+        let connection = try XCTUnwrap(connected?["result"] as? [String: Any])
+        let output = try XCTUnwrap(connection["structuredContent"] as? [String: Any])
+        let preview = try XCTUnwrap(output["web_preview"] as? [String: Any])
+        let url = "http://127.0.0.1:8765/"
+        XCTAssertEqual(preview["url"] as? String, url)
+        XCTAssertEqual(preview["browser_opened_by_tool"] as? Bool, false)
+        XCTAssertEqual(output["next_required_action"] as? String, "open_url")
+        XCTAssertEqual(output["next_action_target"] as? String, "client_browser")
+        XCTAssertEqual(output["next_action_arguments"] as? [String: String], ["url": url])
+        XCTAssertEqual(output["web_preview_pending"] as? Bool, false)
+        let texts = try XCTUnwrap(connection["content"] as? [[String: Any]]).compactMap { $0["text"] as? String }
+        XCTAssertEqual(texts.filter { $0.contains("built-in web preview") }.count, 1)
+        XCTAssertTrue(texts.contains { $0.contains("preview_open with {\"url\":\"\(url)\",\"open\":true,\"reuseExistingTab\":false}") })
+
+        for reply in [launched, screenshot, tree] {
             let result = try XCTUnwrap(reply?["result"] as? [String: Any])
             XCTAssertNil(result["isError"])
             let output = try XCTUnwrap(result["structuredContent"] as? [String: Any])
-            let preview = try XCTUnwrap(output["web_preview"] as? [String: Any])
-            XCTAssertEqual(preview["url"] as? String, "http://127.0.0.1:8765/")
-            XCTAssertEqual(output["next_required_action"] as? String, "open_url")
-            XCTAssertEqual(output["web_preview_pending"] as? Bool, false)
-            let texts = (result["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String } ?? []
-            XCTAssertTrue(texts.contains { $0.contains("NEXT REQUIRED ACTION") })
+            XCTAssertNil(output["web_preview"])
+            XCTAssertNil(output["next_required_action"])
         }
-        XCTAssertEqual(session.calls, ["launch example.app", "screenshot"])
+        XCTAssertEqual(session.calls, ["launch example.app", "screenshot", "tree"])
         let checks = await probe.calls
-        XCTAssertEqual(checks.count, 1, "The short batch reuses availability, without hiding later handoff reminders")
+        XCTAssertEqual(checks, ["\(session.device.udid):8765"])
         let content = (screenshot?["result"] as? [String: Any])?["content"] as? [[String: Any]]
         XCTAssertTrue(content?.contains { $0["type"] as? String == "image" } == true)
     }
@@ -245,20 +257,22 @@ extension MCPCommandTests {
         let workspace = WorkspaceProbe()
         let connected = await MCPServer.handle(request("connect_device", [:]), access: access, workspace: workspace.access)
         let tapped = await MCPServer.handle(request("tap", ["x": 40, "y": 80]), access: access)
-        for reply in [connected, tapped] {
-            let result = try XCTUnwrap(reply?["result"] as? [String: Any])
-            XCTAssertNil(result["isError"], "Preview errors must not invite replay of successful input")
-            let output = try XCTUnwrap(result["structuredContent"] as? [String: Any])
-            XCTAssertEqual(output["next_required_action"] as? String, "get_web_preview")
-            XCTAssertEqual(output["web_preview_pending"] as? Bool, true)
-            let preview = try XCTUnwrap(output["web_preview"] as? [String: Any])
-            XCTAssertNil(preview["url"])
-            XCTAssertEqual(preview["error"] as? String, "Preview stopped")
-        }
-        let connection = (connected?["result"] as? [String: Any])?["structuredContent"] as? [String: Any]
-        XCTAssertEqual(connection?["session_connected"] as? Bool, true)
-        let input = (tapped?["result"] as? [String: Any])?["structuredContent"] as? [String: Any]
+        let connectedResult = try XCTUnwrap(connected?["result"] as? [String: Any])
+        XCTAssertNil(connectedResult["isError"])
+        let connection = try XCTUnwrap(connectedResult["structuredContent"] as? [String: Any])
+        XCTAssertEqual(connection["session_connected"] as? Bool, true)
+        XCTAssertEqual(connection["web_preview_pending"] as? Bool, true)
+        XCTAssertNil(connection["next_required_action"])
+        let preview = try XCTUnwrap(connection["web_preview"] as? [String: Any])
+        XCTAssertNil(preview["url"])
+        XCTAssertEqual(preview["error"] as? String, "Preview stopped")
+
+        let tappedResult = try XCTUnwrap(tapped?["result"] as? [String: Any])
+        XCTAssertNil(tappedResult["isError"])
+        let input = tappedResult["structuredContent"] as? [String: Any]
         XCTAssertEqual(input?["input_sent"] as? Bool, true)
+        XCTAssertNil(input?["web_preview"])
+        XCTAssertNil(input?["next_required_action"])
         XCTAssertEqual(session.calls.count, 1)
     }
 
@@ -269,17 +283,16 @@ extension MCPCommandTests {
         let access = MCPDeviceAccess(devices: { [first.device, second.device] }, session: { $0 == "one" ? first : second },
                                      webPreview: { try await probe.url($0, port: $1) })
         _ = await MCPServer.handle(request("get_web_preview", ["device": "one", "port": 9001]), access: access)
-        // A lookup by one client must not suppress a subsequent client's browser reminder.
-        let firstScreen = await MCPServer.handle(request("screenshot", ["device": "one"]), access: access)
-        let secondScreen = await MCPServer.handle(request("screenshot", ["device": "two"]), access: access)
-        for (reply, port) in [(firstScreen, 9001), (secondScreen, 8765)] {
+        let workspace = WorkspaceProbe()
+        for (device, port) in [("one", 9001), ("two", 8765)] {
+            let reply = await MCPServer.handle(request("connect_device", ["device": device]), access: access, workspace: workspace.access)
             let output = (reply?["result"] as? [String: Any])?["structuredContent"] as? [String: Any]
             XCTAssertEqual(output?["next_required_action"] as? String, "open_url")
             let preview = output?["web_preview"] as? [String: Any]
             XCTAssertEqual(preview?["port"] as? Int, port)
         }
         let checks = await probe.calls
-        XCTAssertEqual(checks, ["one:9001", "two:8765"])
+        XCTAssertEqual(checks, ["one:9001", "one:9001", "two:8765"])
     }
 
     func testReconnectRechecksAvailabilityAndDiscardsStaleURL() async throws {
@@ -292,7 +305,8 @@ extension MCPCommandTests {
         await probe.stop()
         let reply = await MCPServer.handle(request("connect_device", [:]), access: access, workspace: workspace.access)
         let output = (reply?["result"] as? [String: Any])?["structuredContent"] as? [String: Any]
-        XCTAssertEqual(output?["next_required_action"] as? String, "get_web_preview")
+        XCTAssertEqual(output?["web_preview_pending"] as? Bool, true)
+        XCTAssertNil(output?["next_required_action"])
         XCTAssertNil((output?["web_preview"] as? [String: Any])?["url"])
         let checks = await probe.calls
         XCTAssertEqual(checks.count, 2)

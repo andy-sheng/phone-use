@@ -19,42 +19,28 @@ PhoneUseKit 的共享设备会话执行；无需另装 sim-use、idb、XcodeBuil
 
 ### 引导模型打开实时控制页
 
-Web 预览是连接后的默认步骤，包括编译、启动和测试任务，不再以“需要实时查看时”为条件。
-`initialize.instructions` 要求单独调用 `connect_device`，读取结果后再安排后续工具。
-连接成功后，工具内部会检查 Web 服务：确认服务身份、设备标识和已产出画面，直接在
-`structuredContent.web_preview` 返回可用地址；无需再多调一次 `get_web_preview`。
+读取 `connect_device` 的结果后再安排后续设备操作。连接成功后，工具会检查 Web 服务的身份、设备标识和首帧。
+验证成功时，结果直接提供 URL、打开指引和下一步参数。每次连接只提供一次指引。截图、UI 树、启动应用和输入工具只返回各自的操作结果。
 
-连接、截图、UI 树、启动应用和所有输入工具的成功结果均附带同一组引导字段：
+`connect_device` 的 `structuredContent` 包含以下字段：
 
 | 字段 | 含义 |
 | --- | --- |
 | `web_preview.available`、`web_preview.url` | 服务是否验证成功；只有成功时才附 URL |
-| `web_preview_pending` | URL 验证是否尚未完成；不表示模型是否已经打开浏览器 |
-| `next_required_action` | 有地址时为 `open_url`，无地址时为 `get_web_preview` |
-| `next_action_target`、`next_action_arguments` | 下一步属于客户端浏览器还是 PhoneUse MCP，以及 URL 或设备、端口参数 |
-| `web_preview.browser_opened_by_tool` | 始终为 `false`；PhoneUse 不替客户端打开浏览器 |
+| `web_preview_pending` | 当前未取得已验证的 URL |
+| `next_required_action` | 有已验证的地址时为 `open_url` |
+| `next_action_target`、`next_action_arguments` | `client_browser` 和 `{ "url": "…" }`，供 agent 的内置网页预览使用 |
+| `web_preview.browser_opened_by_tool` | 始终为 `false`，页面由 agent 打开 |
 
-`open_url` 是客户端浏览器步骤，不是新增的 PhoneUse MCP 工具。模型应使用允许的、运行在
-同一台 Mac 上的浏览器工具打开返回地址。若更高优先级的宿主规则禁止主动打开、用户拒绝，
-或没有可用的本机浏览器能力，应遵守限制，展示可点击链接并向用户明确说明原因，不能默默跳过。
-云端浏览器的 `127.0.0.1` 指向云端自身。提示词不能覆盖宿主规则，也不能保证模型一定执行。
+`open_url` 指使用 **agent 自带的网页预览工具** 打开 `web_preview.url`。在 T3 Code 中，先用
+`preview_status` 查看标签页。需要新开标签页时，用 `preview_open` 传入连接结果中的 URL、
+`open: true` 和 `reuseExistingTab: false`。同一 URL 已打开时可复用现有标签页。
+预览工具需能访问 PhoneUse 所在 Mac 的回环地址。若当前工具无法访问，或用户及宿主限制打开页面，
+可分享已验证的链接并继续使用设备工具。
 
-如果模型已经打包执行 `connect_device → launch_app → screenshot`，每个结果都会保留
-`next_required_action`，要求读完批量结果后补做页面打开或链接展示；不得重放已完成的设备操作。
-同一客户端对话已经处理过相同 URL 时无需反复打开。服务器不会用某个客户端的查询来认定
-所有客户端都已打开页面，也不声称能观察客户端浏览器状态。
-
-服务可用性按设备短暂缓存（最多 5 秒），减少连续截图/输入的检查开销；显式 `connect_device`
-和 `get_web_preview` 强制重查。后者指定的自定义端口会用于同一设备的后续检查，不串到其他设备。
-预览检查失败时，连接或输入的原有成功结果仍保留，并附预览错误与下一步；不会将已发送的输入
-伪装成工具失败。文件工具和设备列表不触发预览检查。
-
-`get_web_preview` 仍可单独查询、更换端口和重试，保留顶层 `url`、`available`、
-`browser_opened: false` 和 `same_host_required`，并增加上述下一步字段。
-查询不会打开第二个设备会话，也不会启动服务或浏览器。
-
-先用当前 CLI 启动服务：`phone-use --device <UDID> serve 8765`。服务未启动、版本过旧或
-端口正在展示另一台设备时，预览检查会返回错误及启动提示，不生成“已就绪”的链接。
+Web 服务由 CLI 启动，例如 `phone-use --device <UDID> serve 8765`。检查失败时，`connect_device`
+保留连接成功结果，在 `web_preview.error` 提供原因，截图及输入仍可继续。启动服务后，可用
+`get_web_preview` 重新验证并取得地址。该工具只查询状态和 URL，自定义端口会用于同一设备后续的连接检查。
 更新后需重新启动 PhoneUse 宿主并重连 MCP 客户端，以加载新工具和初始化说明。
 
 ```json
@@ -83,7 +69,7 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
 | `list_devices` | 无 | iOS/Android 真机与已启动的 iOS 模拟器；返回每台设备的能力 |
 | `select_device` | `device` | 切换 PhoneUse 界面选中设备，不建立连接 |
 | `connect_device` | `device?` | 连接设备、请求原生界面预览，并自动校验 Web 地址，返回浏览器下一步 |
-| `get_web_preview` | `device?`, `port?: 8765` | 检查已运行的本地 Web 服务，返回匹配设备的控制页地址和打开指引 |
+| `get_web_preview` | `device?`, `port?: 8765` | 检查已运行的本地 Web 服务，返回匹配设备的控制页地址 |
 | `screenshot` | `device?` | JPEG 图像、尺寸、平台、坐标单位与原点 |
 | `describe_ui` | `device?`, `format?: outline/json` | iOS 模拟器或真机开发签名应用的 UI 树；默认简洁文本，不附加原始私有对象 |
 | `tap` | `x, y` 或一个元素选择器；`duration?` | 坐标点击支持可选按住时长；元素点击使用实时无障碍激活 |

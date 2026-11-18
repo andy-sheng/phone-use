@@ -14,17 +14,12 @@ final class MCPWebPreviewTests: XCTestCase {
         ["id": 1, "method": "tools/call", "params": ["name": "get_web_preview", "arguments": arguments]]
     }
 
-    func testInitializationGuidesModelWithoutClaimingBrowserWasOpened() throws {
+    func testInitializationDirectsAgentToItsOwnPreviewAtConnection() throws {
         let reply = try XCTUnwrap(MCPServer.localReply(to: ["id": 1, "method": "initialize"]))
         let instructions = try XCTUnwrap((reply["result"] as? [String: Any])?["instructions"] as? String)
-        XCTAssertTrue(instructions.contains("get_web_preview"))
-        XCTAssertTrue(instructions.contains("same Mac"))
-        XCTAssertTrue(instructions.contains("clickable link"))
-        XCTAssertTrue(instructions.contains("Do not claim a browser was opened"))
-        XCTAssertTrue(instructions.contains("STANDARD CONNECTION STEP"))
-        XCTAssertTrue(instructions.contains("connect_device separately"))
-        XCTAssertTrue(instructions.contains("higher-priority host rules"))
-        XCTAssertFalse(instructions.contains("For live viewing or manual control"))
+        XCTAssertTrue(instructions.contains("Read the connect_device result before continuing"))
+        XCTAssertTrue(instructions.contains("once at connection"))
+        XCTAssertTrue(instructions.contains("Use only your agent's built-in web preview"))
     }
 
     func testVerifiedPreviewDoesNotOpenDeviceSession() async throws {
@@ -45,9 +40,10 @@ final class MCPWebPreviewTests: XCTestCase {
         XCTAssertEqual(output["browser_opened"] as? Bool, false)
         XCTAssertEqual(output["same_host_required"] as? Bool, true)
         let text = (result["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined(separator: "\n")
-        XCTAssertTrue(text?.contains("browser tool") == true)
-        XCTAssertEqual(output["next_required_action"] as? String, "open_url")
-        XCTAssertEqual(output["next_action_target"] as? String, "client_browser")
+        XCTAssertTrue(text?.contains("http://127.0.0.1:9001/") == true)
+        XCTAssertFalse(text?.contains("preview_open") == true)
+        XCTAssertNil(output["next_required_action"])
+        XCTAssertNil(output["next_action_target"])
     }
 
     func testUnavailablePreviewReturnsErrorWithoutReadyURL() async throws {

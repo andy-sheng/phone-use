@@ -70,9 +70,9 @@ swift build --product phone-use
 并校验来源和 JSON 参数；不同网页的操作不会并发执行。服务重启后需要刷新网页。设备尚未输出视频时页面保持等待，`/health` 的 `frames` 为 0，截图返回 503。
 单独嵌入下方 `<img>` 只显示视频，不包含控制界面。
 
-MCP 模型可调用 `get_web_preview`（`device?`、`port?`，默认 8765）检查当前服务并获取页面地址。
-连接工具会自动校验 Web 地址并返回 `next_required_action`，后续截图、启动和输入结果也会重复引导。
-模型应使用允许的本机浏览器工具打开页面；宿主规则禁止或能力不可用时，展示链接并说明原因。
+MCP 的 `connect_device` 会校验 Web 地址，并仅在连接结果中提示 agent 用自己的内置网页预览打开它。
+例如在 T3 Code 中，先检查 `preview_status`，需要新标签页时把返回的 URL 传给 `preview_open`。
+需要重新查询地址或使用自定义端口时，可调用 `get_web_preview`（`device?`、`port?`，默认 8765）。
 详见 [MCP 页面引导](Documentation/MCP.md#引导模型打开实时控制页)。
 
 ```html

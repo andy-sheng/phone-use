@@ -55,22 +55,6 @@ extension MCPCommand {
     }
 
     func execute(access: MCPDeviceAccess, workspace: MCPWorkspaceAccess? = nil) async throws -> [String: Any] {
-        let result = try await executeDevice(access: access, workspace: workspace)
-        switch action {
-        case .listDevices, .selectDevice, .webPreview, .listApps, .listSandboxFiles, .readSandboxFile, .downloadSandboxFile:
-            return result
-        default: break
-        }
-        guard let output = result["structuredContent"] as? [String: Any], let id = output["device"] as? String else { return result }
-        let force: Bool
-        if case .connectDevice = action { force = true } else { force = false }
-        // This is a best-effort handoff after execution. A preview outage must never convert
-        // delivered input into a tool failure that invites duplicate taps or text entry.
-        let preview = await access.previewWorkflow.lookup(deviceID: id, force: force, probe: access.webPreview)
-        return preview.appending(to: result)
-    }
-
-    private func executeDevice(access: MCPDeviceAccess, workspace: MCPWorkspaceAccess?) async throws -> [String: Any] {
         let devices = try await access.devices()
         let selection = await workspace?.selectedDevice()
         if case .listDevices = action {
@@ -95,19 +79,31 @@ extension MCPCommand {
         }
         let selected = try Self.resolve(query, in: devices)
         if case .webPreview(let port) = action {
-            let preview = await access.previewWorkflow.lookup(deviceID: selected.udid, port: port, force: true, probe: access.webPreview)
+            let preview = await access.previewWorkflow.lookup(deviceID: selected.udid, port: port, probe: access.webPreview)
             guard let url = preview.url else { throw ToolFailure(message: preview.error ?? "Web preview unavailable") }
-            return preview.appending(to: ["content": [mcpText("Live browser control page for \(selected.name): \(url.absoluteString)")],
+            return ["content": [mcpText("Live web preview for \(selected.name) at \(url.absoluteString)")],
                     "structuredContent": ["device": selected.udid, "url": url.absoluteString, "available": true,
-                                          "browser_opened": false, "same_host_required": true]])
+                                          "browser_opened": false, "same_host_required": true,
+                                          "web_preview": preview.status, "web_preview_pending": false]]
         }
         if let result = try await executeFiles(selected: selected, access: access) { return result }
         if case .connectDevice = action {
             guard let workspace else { throw ToolFailure(message: "Explicit device connection requires the PhoneUse app host.") }
             try await workspace.connect(selected)
-            return ["content": [mcpText("Connected to \(selected.name). Native UI preview requested; its first frame is not yet verified. Web preview status and the next client action are included below.")],
-                    "structuredContent": ["device": selected.udid, "selected": true, "session_connected": true,
-                                          "preview_requested": true, "first_frame_verified": false]]
+            let preview = await access.previewWorkflow.lookup(deviceID: selected.udid, probe: access.webPreview)
+            var output: [String: Any] = ["device": selected.udid, "selected": true, "session_connected": true,
+                                        "preview_requested": true, "first_frame_verified": false,
+                                        "web_preview": preview.status, "web_preview_pending": preview.url == nil]
+            var content = [mcpText("Connected to \(selected.name). Requested the native PhoneUse preview.")]
+            if let url = preview.url {
+                output["next_required_action"] = "open_url"
+                output["next_action_target"] = "client_browser"
+                output["next_action_arguments"] = ["url": url.absoluteString]
+                content.append(mcpText(MCPWebPreview.openInstruction(for: url)))
+            } else if let error = preview.error {
+                content.append(mcpText("Web preview unavailable. \(error) You can continue with device tools."))
+            }
+            return ["content": content, "structuredContent": output]
         }
         let session = try await access.session(selected.udid)
         let width = selected.isAndroid ? session.display.pixelWidth : session.display.pointWidth.rounded()
