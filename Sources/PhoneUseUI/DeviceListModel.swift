@@ -106,6 +106,11 @@ public final class DeviceListModel: ObservableObject {
         }
     }
 
+    func didRemoveSimulator(_ id: String) {
+        if selection == id { selection = nil }
+        apply(devices.filter { $0.id != id })
+    }
+
     func selectPairedDevice(_ udid: String?) async {
         guard let udid else { return }
         do {

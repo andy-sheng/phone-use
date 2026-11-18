@@ -92,6 +92,10 @@ public actor DaemonClient {
         try await callIgnoringResult("pair", ["udid": udid])
     }
 
+    func deviceRenamed(_ udid: String, name: String) async throws {
+        try await callIgnoringResult("deviceRenamed", ["udid": udid, "name": name])
+    }
+
     public func startWirelessPairing() async throws -> WirelessPairingStatus {
         try await call("startWirelessPairing", as: WirelessPairingStatus.self)
     }

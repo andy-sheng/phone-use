@@ -228,6 +228,18 @@ integration tests can be enabled with `DEVICEHUB_SANDBOX_DEVICE`, `DEVICEHUB_SAN
 and `DEVICEHUB_SANDBOX_FILE`; they list the app/container and download the chosen file to
 a temporary location, without launching or modifying the app.
 
+## Apple device workspace actions
+
+Select a ready iPhone or iPad and choose **View Screen** to start mirroring. The workspace's
+More menu can stop mirroring, and it adds Xcode actions only when the installed tool and
+the selected device support them. These include restarting, renaming, showing the CoreDevice
+mount in Finder, collecting a sysdiagnose, and removing the device's Xcode pairing. PhoneUse
+also offers its app sandbox browser when CoreDevice can list apps. CarPlay requires the
+standalone CarPlay Simulator app and a USB-connected iPhone.
+
+Simulator power, rename, reset, and removal use Xcode's `simctl`. Show in Finder opens the
+simulator's local directory. Erasing or removing a simulator asks for confirmation first.
+
 ## Apple device settings
 
 The app's settings panel uses `DeviceSettings`, which picks one settings route per

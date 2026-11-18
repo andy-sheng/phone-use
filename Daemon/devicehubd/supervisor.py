@@ -580,6 +580,16 @@ class Supervisor:
                 await lockdown.close()
         await self.probe(udid)
 
+    async def device_renamed(self, udid: str, name: Any) -> None:
+        record = self.records.get(udid)
+        if record is None or record.platform != "ios" or record.is_simulator:
+            raise RpcError("deviceNotFound", "The renamed iPhone or iPad is no longer listed")
+        if not isinstance(name, str) or not name.strip():
+            raise RpcError("invalidParams", "Missing device name")
+        record.name = name
+        self._remember(record)
+        await self.broadcast()
+
     async def reveal_developer_mode(self, udid: str) -> None:
         record = self._ios_record(udid)
         lockdown = await discovery_for(record.connection).lockdown(udid)
@@ -826,6 +836,9 @@ class Supervisor:
             return {}
         if method == "mountDeveloperImage":
             await self.mount_developer_image(udid)
+            return {}
+        if method == "deviceRenamed":
+            await self.device_renamed(udid, params.get("name"))
             return {}
         if method == "openDevice":
             return await self.open_device(udid)

@@ -34,6 +34,10 @@ public struct DeviceWorkspace<Panel: View>: View {
     @State private var fitScale: CGFloat = 1
     @State private var showingLaunch = false
     @State private var bundleID = ""
+    @State private var managementAvailability: (key: String, simulator: Bool, physical: Set<IOSDeviceManagement.Action>)?
+    @State private var managementPrompt: DeviceManagementRequest?
+    @State private var managingDevice: DeviceManagementRequest?
+    @State private var managementError: String?
     /// Shows only the device screen in a window fitted to it.
     @State private var isCompact = false
     @State private var compactWindow = CompactWindowController()
@@ -79,7 +83,16 @@ public struct DeviceWorkspace<Panel: View>: View {
         return screen.stream
     }
 
-    private var canControl: Bool { liveStream != nil && allowsInput && !screen.isChangingGeometry }
+    private var canControl: Bool { liveStream != nil && allowsInput && !screen.isChangingGeometry && !isManagingSelection }
+    private var isManagingSelection: Bool {
+        guard let managingDevice else { return false }
+        return managingDevice.device.id == model.selection
+    }
+
+    private var managementKey: String {
+        guard let device = model.selectedDevice else { return "" }
+        return "\(device.id)|\(device.connection)|\(device.state)|\(device.paired == true)"
+    }
 
     /// The system, how the device is connected and, while the screen streams, its frame rate.
     private var windowSubtitle: String {
@@ -126,6 +139,7 @@ public struct DeviceWorkspace<Panel: View>: View {
             if isCompact { compactWindow.fit(screenAspectRatio: ratio) }
         }
         .task { await model.run() }
+        .task(id: managementKey) { await readManagementAvailability() }
         .task(id: screenKey) {
             await screen.run(device: model.selectedDevice)
         }
@@ -136,10 +150,18 @@ public struct DeviceWorkspace<Panel: View>: View {
         .onChange(of: model.previewRequest, initial: true) { _, _ in
             if let device = model.consumePreviewRequest() {
                 screen.selectionChanged(to: device.id)
-                screen.requestConnection(to: device)
+                requestPreview(device)
             }
         }
         .sheet(isPresented: $showingPairing) { WirelessPairingSheet() }
+        .sheet(item: $managementPrompt) { request in
+            DeviceManagementPrompt(request) { performManagement(request, name: $0) }
+        }
+        .alert("设备操作失败", isPresented: Binding(get: { managementError != nil }, set: { if !$0 { managementError = nil } })) {
+            Button("好") { managementError = nil }
+        } message: {
+            Text(managementError ?? "")
+        }
         .onChange(of: allowsInput) { _, enabled in
             if !enabled { showingLaunch = false }
         }
@@ -222,17 +244,7 @@ public struct DeviceWorkspace<Panel: View>: View {
     @ViewBuilder
     private func deviceStage(compact: Bool) -> some View {
         if let device = model.selectedDevice {
-            if device.canStartSimulator {
-                SimulatorStartView(device: device,
-                                   isStarting: screen.requestedDeviceID == device.id && screen.isConnecting,
-                                   status: screen.isShowingDevice(device.id) ? screen.status : nil,
-                                   error: screen.isShowingDevice(device.id) ? screen.connectionError : nil,
-                                   start: { screen.requestConnection(to: device) },
-                                   cancel: { screen.cancelConnection() })
-            } else if !device.isReady {
-                DeviceSetupView(device: device)
-                    .padding(compact ? 16 : 24)
-            } else if let stream = liveStream {
+            if let stream = liveStream {
                 if compact {
                     DeviceScreenView(screen: screen, stream: stream, allowsInput: allowsInput,
                                      frameStyle: DeviceFrameStyle(device), insets: CompactLayout.screenInsets)
@@ -241,12 +253,25 @@ public struct DeviceWorkspace<Panel: View>: View {
                                      frameStyle: DeviceFrameStyle(device),
                                      zoom: zoom, onFitScale: { fitScale = $0 })
                 }
+            } else if let request = managingDevice, request.device.id == device.id, request.action.interruptsPreview {
+                ProgressView(request.action.title)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if !device.isAndroid && (device.isReady || device.canStartSimulator) {
+                AppleDeviceStandbyView(device: device,
+                                       isConnecting: screen.isShowingDevice(device.id) && screen.isConnecting,
+                                       status: screen.isShowingDevice(device.id) ? screen.status : nil,
+                                       error: screen.isShowingDevice(device.id) ? screen.connectionError : nil,
+                                       connect: { requestPreview(device) },
+                                       cancel: { screen.cancelConnection() })
+            } else if !device.isReady {
+                DeviceSetupView(device: device)
+                    .padding(compact ? 16 : 24)
             } else {
                 DeviceConnectionView(device: device,
                                      isConnecting: screen.isShowingDevice(device.id) && screen.isConnecting,
                                      status: screen.isShowingDevice(device.id) ? screen.status : nil,
                                      error: screen.isShowingDevice(device.id) ? screen.connectionError : nil,
-                                     connect: { screen.requestConnection(to: device) },
+                                     connect: { requestPreview(device) },
                                      cancel: { screen.cancelConnection() })
             }
         } else {
@@ -261,12 +286,12 @@ public struct DeviceWorkspace<Panel: View>: View {
                 Button(action: zoomOut) { Label("缩小", systemImage: "minus.magnifyingglass") }
                     .help("缩小 (⌘-)")
                     .keyboardShortcut("-", modifiers: .command)
-                Button { zoom = 1 } label: { Label("实际大小", systemImage: "1.magnifyingglass") }
-                    .help("实际大小 (⌘1)")
-                    .keyboardShortcut("1", modifiers: .command)
                 Button { zoom = nil } label: { Label("适合窗口", systemImage: "arrow.up.left.and.down.right.magnifyingglass") }
                     .help("适合窗口 (⌘0)")
                     .keyboardShortcut("0", modifiers: .command)
+                Button { zoom = 1 } label: { Label("实际大小", systemImage: "1.magnifyingglass") }
+                    .help("实际大小 (⌘1)")
+                    .keyboardShortcut("1", modifiers: .command)
                 Button(action: zoomIn) { Label("放大", systemImage: "plus.magnifyingglass") }
                     .help("放大 (⌘+)")
                     .keyboardShortcut("=", modifiers: .command)
@@ -303,28 +328,177 @@ public struct DeviceWorkspace<Panel: View>: View {
 
     /// Less frequent device actions, shared by the full and compact toolbars.
     private var moreMenu: some View {
-        let isAndroid = model.selectedDevice?.isAndroid ?? false
-        return Menu {
-            Button("启动应用…") { showingLaunch = true }.disabled(!canControl)
-            if let browseSandbox {
-                Button("应用沙箱…", systemImage: "folder") {
-                    if let device = model.selectedDevice { browseSandbox(device) }
+        Menu {
+            if let device = model.selectedDevice {
+                if device.isAndroid {
+                    launchMenuItem
+                    Divider()
+                    Button("重新连接画面") { Task { await screen.reconnect() } }
+                        .disabled(!canControl || screen.isReconnecting)
+                    Button("断开连接") { screen.cancelConnection() }.disabled(liveStream == nil)
+                } else if device.isSimulator {
+                    simulatorMenu(device)
+                    Divider()
+                    launchMenuItem
+                } else {
+                    physicalDeviceMenu(device)
+                    Divider()
+                    launchMenuItem
                 }
-                .disabled(model.selectedDevice.map { !$0.isReady || $0.isAndroid || $0.isSimulator } ?? true)
             }
-            Divider()
-            if isAndroid {
-                Button("重新连接画面") { Task { await screen.reconnect() } }
-                    .disabled(!canControl || screen.isReconnecting)
-            }
-            Button("断开连接") { screen.cancelConnection() }
-                .disabled(liveStream == nil)
         } label: {
             Label("更多", systemImage: "ellipsis")
         }
         .menuIndicator(.hidden)
         .help("更多设备操作")
+        .disabled(model.selectedDevice == nil)
         .popover(isPresented: $showingLaunch, arrowEdge: .bottom) { launchPopover }
+    }
+
+    private var launchMenuItem: some View {
+        Button("启动应用…") { showingLaunch = true }.disabled(!canControl)
+    }
+
+    @ViewBuilder
+    private func simulatorMenu(_ device: DeviceSummary) -> some View {
+        if managementAvailability?.key == managementKey && managementAvailability?.simulator == true {
+            if device.canStartSimulator {
+                previewMenuItem(device, title: "启动模拟器")
+            } else if device.isReady {
+                managementItem(.shutDown, device: device)
+                Divider()
+                managementItem(.restart, device: device)
+            }
+            if device.simulatorState == "Booted" || device.simulatorState == "Shutdown" {
+                Divider()
+                managementItem(.showInFinder, device: device)
+                managementItem(.rename, device: device, prompts: true)
+                Divider()
+                managementItem(.erase, device: device, prompts: true, destructive: true)
+                Divider()
+                managementItem(.remove, device: device, prompts: true, destructive: true)
+            }
+        }
+        if device.isReady {
+            Divider()
+            previewMenuItem(device)
+        }
+    }
+
+    @ViewBuilder
+    private func physicalDeviceMenu(_ device: DeviceSummary) -> some View {
+        let actions = managementAvailability?.key == managementKey ? managementAvailability?.physical ?? [] : []
+        let carPlay = device.isReady && device.isWired && !device.isPad && carPlayURL != nil
+        if device.isReady { previewMenuItem(device) }
+        if actions.contains(.restart) {
+            Divider()
+            managementItem(.restart, device: device, prompts: true)
+        }
+        if !actions.isDisjoint(with: [.showInFinder, .rename]) || (actions.contains(.browseSandbox) && browseSandbox != nil) {
+            Divider()
+            if actions.contains(.showInFinder) { managementItem(.showInFinder, device: device) }
+            if actions.contains(.rename) { managementItem(.rename, device: device, prompts: true) }
+            if actions.contains(.browseSandbox), let browseSandbox {
+                Button("应用沙箱…", systemImage: "folder") { browseSandbox(device) }
+                    .disabled(isManagingSelection)
+            }
+        }
+        if carPlay || actions.contains(.collectSysdiagnose) {
+            Divider()
+            if carPlay { managementItem(.carPlay, device: device) }
+            if actions.contains(.collectSysdiagnose) { managementItem(.collectSysdiagnose, device: device, ellipsis: true) }
+        }
+        if actions.contains(.unpair) {
+            Divider()
+            managementItem(.unpair, device: device, prompts: true, destructive: true)
+        }
+    }
+
+    private func previewMenuItem(_ device: DeviceSummary, title: String = "查看屏幕") -> some View {
+        let isRequested = screen.requestedDeviceID == device.id && (liveStream != nil || screen.isConnecting)
+        return Button(isRequested ? "停止屏幕共享" : title) {
+            if isRequested { screen.cancelConnection() } else { requestPreview(device) }
+        }
+        .disabled(isManagingSelection)
+    }
+
+    private func requestPreview(_ device: DeviceSummary) {
+        guard managingDevice?.device.id != device.id else { return }
+        screen.requestConnection(to: device)
+    }
+
+    private func managementItem(_ action: DeviceManagementAction, device: DeviceSummary,
+                                prompts: Bool = false, destructive: Bool = false, ellipsis: Bool = false) -> some View {
+        Button(action.title + (prompts || ellipsis ? "…" : ""), role: destructive ? .destructive : nil) {
+            let request = DeviceManagementRequest(action: action, device: device)
+            if prompts { managementPrompt = request } else { performManagement(request) }
+        }
+        .disabled(!allowsInput || managingDevice != nil || screen.isConnecting)
+    }
+
+    private func readManagementAvailability() async {
+        guard let device = model.selectedDevice, !device.isAndroid else { return }
+        let key = managementKey
+        let simulator = device.isSimulator ? await SimulatorLifecycle.isAvailable(for: device) : false
+        let physical = device.isSimulator ? [] : await IOSDeviceManagement.availableActions(for: device)
+        guard !Task.isCancelled else { return }
+        managementAvailability = (key, simulator, physical)
+    }
+
+    private var carPlayURL: URL? {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.CarPlaySimulator")
+    }
+
+    private func performManagement(_ request: DeviceManagementRequest, name: String = "") {
+        guard allowsInput, managingDevice == nil, model.selectedDevice?.id == request.device.id else { return }
+        let device = request.device
+        managingDevice = request
+        Task {
+            defer { managingDevice = nil }
+            if request.action.interruptsPreview {
+                if screen.requestedDeviceID == device.id { screen.cancelConnection() }
+                await DeviceHub.shared.closeSession(for: device.id)
+            }
+            do {
+                switch request.action {
+                case .shutDown: try await SimulatorLifecycle.shutDown(device)
+                case .restart:
+                    if device.isSimulator { try await SimulatorLifecycle.restart(device) }
+                    else { try await IOSDeviceManagement.restart(device) }
+                case .showInFinder:
+                    let folder = try await device.isSimulator ? SimulatorLifecycle.directory(for: device)
+                        : IOSDeviceManagement.directory(for: device)
+                    guard NSWorkspace.shared.open(folder) else {
+                        throw DeviceHubError.serviceFailed("无法在 Finder 中打开设备目录。")
+                    }
+                case .rename:
+                    if device.isSimulator { try await SimulatorLifecycle.rename(device, to: name) }
+                    else { try await IOSDeviceManagement.rename(device, to: name) }
+                case .erase: try await SimulatorLifecycle.erase(device)
+                case .remove:
+                    try await SimulatorLifecycle.remove(device)
+                    model.didRemoveSimulator(device.id)
+                case .unpair:
+                    try await IOSDeviceManagement.unpairFromXcode(device)
+                    await readManagementAvailability()
+                case .collectSysdiagnose:
+                    let panel = NSOpenPanel()
+                    panel.title = "选择 sysdiagnose 保存目录"
+                    panel.canChooseDirectories = true
+                    panel.canChooseFiles = false
+                    panel.canCreateDirectories = true
+                    if await panel.begin() == .OK, let folder = panel.url {
+                        try await IOSDeviceManagement.collectSysdiagnose(device, in: folder)
+                        NSWorkspace.shared.open(folder)
+                    }
+                case .carPlay:
+                    guard let carPlayURL else { throw DeviceHubError.capabilityUnavailable("CarPlay Simulator") }
+                    _ = try await NSWorkspace.shared.openApplication(at: carPlayURL, configuration: .init())
+                }
+            } catch {
+                managementError = "\(request.action.title) · \(device.name)\n\(error)"
+            }
+        }
     }
 
     private func setCompact(_ compact: Bool) {

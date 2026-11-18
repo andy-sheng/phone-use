@@ -147,7 +147,7 @@ public struct DeviceUIOutlinePanel: View {
                                    description: Text("describe_ui 支持 iOS；真机需要开发签名应用。"))
         } else if !isConnected {
             ContentUnavailableView("连接后查看界面结构", systemImage: "link",
-                                   description: Text("点击设备画面中的“连接”后自动开始刷新。"))
+                                   description: Text("开始查看设备屏幕后自动刷新。"))
         } else {
             VStack(spacing: 0) {
                 if let error = model.error {
