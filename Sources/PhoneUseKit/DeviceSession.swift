@@ -1,6 +1,10 @@
 import CoreGraphics
 import Foundation
 
+public enum SimulatorGeometryChange: Sendable {
+    case rotation(DeviceRotationDirection), posture(SimulatorPosture)
+}
+
 /// A shared device facade backed by exactly one platform-specific control adapter.
 ///
 /// Coordinates are normalized to the opened framebuffer (native portrait on physical iOS,

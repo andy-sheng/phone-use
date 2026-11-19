@@ -1,4 +1,5 @@
 import Foundation
+import PhoneUseKit
 
 /// Public names follow sim-use's cross-platform verbs. Older PhoneUse names remain callable.
 enum MCPToolCatalog {
@@ -27,13 +28,13 @@ enum MCPToolCatalog {
         ]
 
         func tool(_ name: String, _ description: String, _ fields: [String: Any],
-                  required: [String] = [], oneOf: [[String]] = [], action: Bool = true) -> [String: Any] {
+                  required: [String] = [], oneOf: [[String]] = [], action: Bool = true, destructive: Bool = false) -> [String: Any] {
             var schema: [String: Any] = ["type": "object", "properties": fields,
                                         "required": required, "additionalProperties": false]
             if !oneOf.isEmpty { schema["oneOf"] = oneOf.map { ["required": $0] } }
             return ["name": name, "description": description,
              "inputSchema": schema,
-             "annotations": ["readOnlyHint": !action, "destructiveHint": false,
+             "annotations": ["readOnlyHint": !action, "destructiveHint": destructive,
                              "idempotentHint": !action, "openWorldHint": true]]
         }
         func fields(_ extra: [String: Any]) -> [String: Any] { common.merging(extra) { _, new in new } }
@@ -42,7 +43,43 @@ enum MCPToolCatalog {
             "path": ["type": "string", "minLength": 1, "description": "Path relative to the app data container. Use '.' for its root; absolute paths and '..' are rejected."]]
         let fileScope = " iOS only, through Xcode/CoreDevice; CoreDevice must know the device. Access depends on app signing and container permissions, not merely a Debug label. No device files are modified. Does not require a screen preview."
 
-        return [
+        let string: [String: Any] = ["type": "string", "minLength": 1]
+        let flag: [String: Any] = ["type": "boolean"]
+        func choices(_ values: [String]) -> [String: Any] { ["type": "string", "enum": values] }
+        let appearance: [String: Any] = [
+            "style": choices(["light", "dark"]), "tinted_glass": flag,
+            "glass_opacity": ["type": "number", "minimum": 0, "maximum": 1],
+            "text_size": choices(DeviceSettings.TextSize.allCases.map(\.rawValue)),
+            "color_filter": choices(["off"] + DeviceSettings.ColorFilter.allCases.map(\.rawValue)),
+            "increase_contrast": flag, "reduce_motion": flag, "reduce_transparency": flag, "show_borders": flag, "voice_over": flag,
+        ]
+        let management = MCPManagement.allCases.map { op in
+            var fields = ["device": device]
+            var required = op.needsIdentifier ? ["device"] : []
+            if op == .rename { fields["name"] = string; required.append("name") }
+            if op == .sysdiagnose { fields["directory"] = string; required.append("directory") }
+            if op.needsIdentifier { fields["device"] = ["type": "string", "description": "Exact device identifier from list_devices."] }
+            return tool(op.rawValue, op.description, fields, required: required, action: op != .available, destructive: op.disruptive)
+        }
+        return management + [
+            tool("rotate_simulator", "Rotate the ready iOS simulator 90 degrees. A geometry change finalizes device recordings. Use a fresh screenshot for new coordinates.",
+                 ["device": device, "direction": choices(["left", "right"])], required: ["direction"]),
+            tool("set_simulator_posture", "Set the hinge of a ready foldable iOS simulator. Finalizes device recordings before changing panels.",
+                 ["device": device, "posture": choices(SimulatorPosture.allCases.map(\.rawValue))], required: ["posture"]),
+            tool("get_device_settings", "Read an Apple device settings group. Appearance includes supported fields, voice_over is independent. Audio includes selectable host routes. Locations lists simulation presets.",
+                 ["device": device, "group": choices(MCPSettingsGroup.allCases.map(\.rawValue))], required: ["group"], action: false),
+            tool("set_appearance", "Set one supported Apple appearance or accessibility setting. Query get_device_settings for availability.",
+                 appearance.merging(["device": device]) { _, new in new }, oneOf: appearance.keys.sorted().map { [$0] }),
+            tool("set_location", "Simulate a listed location by name, supply latitude and longitude, or clear simulation with clear=true.",
+                 ["device": device, "preset": string, "latitude": ["type": "number", "minimum": -90, "maximum": 90],
+                  "longitude": ["type": "number", "minimum": -180, "maximum": 180], "clear": ["const": true]],
+                 oneOf: [["preset"], ["latitude", "longitude"], ["clear"]]),
+            tool("set_audio", "Set volume (0–100) or input/output routing on a supported Apple device. Use systemDefault or a route UID from get_device_settings. Supply at least one field.",
+                 ["device": device, "volume": ["type": "integer", "minimum": 0, "maximum": 100], "input": string, "output": string]),
+            tool("touch_path", "Trace an ordered polyline with one finger, from a single press to release. Equal time per segment over duration seconds; repeat a point to hold. Uses screenshot coordinates.",
+                 fields(["points": ["type": "array", "minItems": 2, "maxItems": 256, "items": [
+                    "type": "object", "properties": ["x": coordinate, "y": coordinate],
+                    "required": ["x", "y"], "additionalProperties": false]], "duration": duration]), required: ["points"]),
             tool("list_apps", "List installed apps with bundle identifiers, versions and containerAccessible when reported. false means sandbox access is unavailable; absent means unknown. Optional search matches name or bundle identifier." + fileScope,
                  ["device": device, "search": ["type": "string", "minLength": 1]], action: false),
             tool("list_sandbox_files", "List one app sandbox directory, with container-relative paths, file kind, size and modification time. Defaults to the root. Non-recursive; use returned directory paths to navigate. Returns total and next_offset for pagination." + fileScope,
@@ -54,12 +91,15 @@ enum MCPToolCatalog {
             tool("download_sandbox_file", "Download one regular file to an absolute path on the Mac running PhoneUse. The parent directory must exist and the destination must not exist. Returns the local path; does not return file contents. Directories and symbolic links are rejected. A live SQLite file alone is not a consistent database backup; WAL/SHM may be required." + fileScope,
                  sandbox.merging(["destination": ["type": "string", "minLength": 1]]) { _, new in new },
                  required: ["bundle_id", "path", "destination"]),
-            tool("list_devices", "List attached iOS/Android devices and booted iOS simulators (connection: simulator). Only state: ready devices can be controlled. Use select_device to choose a device, then connect_device to connect it and request its UI preview.", [:], action: false),
+            tool("list_devices", "List attached iOS/Android devices and active or previously used iOS simulators, including previously booted shut down simulators (connection: simulator). start_simulator can boot one. Use select_device to choose a device, then connect_device to connect it and request its UI preview.", [:], action: false),
             tool("select_device", "Select a discovered device in PhoneUse, like clicking its sidebar row. Does not connect. May select a device that still needs setup. Selection is shared with the UI and all MCP clients; subsequent calls without device use this selection.", ["device": device], required: ["device"]),
             tool("connect_device", "Connect the specified or currently selected ready device and request its PhoneUse preview, like the UI Connect button. Waits for the device session to open and reuses it when available. Pairing, trust and Developer Mode are handled separately. Without a selection, only one ready device may be chosen. Read the result before continuing. It checks the existing web preview and provides the one-time handoff to your agent's built-in web preview when a verified URL is available. The device connection can succeed independently of the web preview.", ["device": device]),
             tool("get_web_preview", "Verify an already running local web preview for this device and return its URL on the PhoneUse Mac. Use this when asked for the preview URL, to recheck after starting the service, or to use a custom port. A verified URL in the connect_device result can be used directly.",
                  ["device": device, "port": ["type": "integer", "minimum": 1, "maximum": 65535, "default": 8765,
                     "description": "Port of the existing phone-use serve process on the Mac running PhoneUse."]], action: false),
+            tool("start_recording", "Start a video-only MP4 on a ready iOS simulator or an iOS device with native, USB or Mirror video capture. Works in the background. Returns recording_id and the destination on the PhoneUse Mac. Call stop_recording to finish the file.", ["device": device]),
+            tool("stop_recording", "Stop a recording by its recording_id, wait for the MP4 to finish saving, and return local_path on the PhoneUse Mac.",
+                 ["recording_id": ["type": "string", "format": "uuid"]], required: ["recording_id"]),
             tool("screenshot", "Capture a JPEG image and coordinate metadata. One image pixel corresponds to one input coordinate: iOS points or Android pixels. iOS uses native portrait coordinates, not orientation-calibrated UI coordinates.", ["device": device], action: false),
             tool("describe_ui", "Read the foreground app's accessibility tree (iOS; physical devices require an unlocked, development-signed foreground app with get-task-allow=true; system/App Store/TestFlight apps are unsupported). Physical trees omit frames and may omit enabled status. Prefer id, then label selectors from this result. Frames use accessibility UI points; use screenshot for native coordinate taps. Not all custom-rendered controls expose accessibility; use screenshot for visual checks. Run again after each action.",
                  ["device": device, "format": ["type": "string", "enum": ["outline", "json"], "default": "outline"]], action: false),

@@ -14,6 +14,21 @@ public final class DeviceListModel: ObservableObject {
     }
     /// Consumed by a workspace when visible; retained while the app has no window.
     @Published private(set) var previewRequest: DeviceSummary.ID?
+    weak var visibleScreen: ScreenModel?
+
+    public func endPreview(for device: DeviceSummary) async {
+        if previewRequest == device.id { previewRequest = nil }
+        guard let screen = visibleScreen, screen.requestedDeviceID == device.id else { return }
+        await screen.endPreview()
+    }
+
+    public func changeGeometry(for device: DeviceSummary, change: SimulatorGeometryChange) async throws -> Bool {
+        guard let screen = visibleScreen, screen.requestedDeviceID == device.id,
+              screen.isShowingDevice(device.id), screen.stream != nil else { return false }
+        try await screen.changeGeometry(change)
+        return true
+    }
+
     private var selectionGeneration = UUID()
     private var connections: [String: (id: UUID, task: Task<Void, Error>)] = [:]
     private let connectSession: @MainActor (DeviceSummary) async throws -> Void

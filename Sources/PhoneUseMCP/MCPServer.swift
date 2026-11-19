@@ -22,7 +22,7 @@ public enum MCPServer {
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": [String: Any]()],
                 "serverInfo": ["name": name, "version": version],
-                "instructions": "Call list_devices, select_device, then connect_device. " + MCPWebPreview.workflowInstructions + " Selection is shared with the UI and all clients; pass device explicitly when agents run concurrently. Observe with describe_ui (iOS; physical devices require a development-signed foreground app) or screenshot. Prefer fresh id/label selectors for iOS element taps. Verify the resulting UI after every action; input delivery is not proof of a UI change. Coordinates are iOS native portrait points or Android display pixels; durations and delays are seconds. Physical UI trees and selectors require get-task-allow=true and omit geometry. Physical US-keyboard type_text requires iOS 27+ (500 characters per call); simulator typing accepts 10000 characters.",
+                "instructions": "Call list_devices. For a shut down simulator, call start_simulator by identifier and wait for ready. Select the device with select_device, then call connect_device. " + MCPWebPreview.workflowInstructions + " Selection is shared with the UI and all clients; pass device explicitly when agents run concurrently. Observe with describe_ui (iOS; physical devices require a development-signed foreground app) or screenshot. Prefer fresh id/label selectors for iOS element taps. Verify the resulting UI after every action; input delivery is not proof of a UI change. Coordinates are iOS native portrait points or Android display pixels; durations and delays are seconds. Physical UI trees and selectors require get-task-allow=true and omit geometry. Physical US-keyboard type_text requires iOS 27+ (500 characters per call); simulator typing accepts 10000 characters.",
             ])
         case "ping":
             return result(id, [:])
@@ -54,6 +54,12 @@ public enum MCPServer {
                 throw ToolFailure(message: "Tool arguments must be an object.")
             }
             let command = try MCPCommand(name: name, arguments: params["arguments"] as? [String: Any] ?? [:])
+            // The capture belongs to the host and can be finalized after a device disconnects.
+            if case .stopRecording(let recordingID) = command.action {
+                let movie = try await access.recordings.stop(recordingID)
+                return result(id, ["content": [mcpText("Saved recording to \(movie.url.path)")],
+                                   "structuredContent": movie.metadata])
+            }
             try await prepare()
             return result(id, try await command.execute(access: access, workspace: workspace))
         } catch let failure as ToolFailure {
@@ -77,6 +83,11 @@ public enum MCPServer {
         default:
             return "\(error)"
         }
+    }
+
+    /// Gives active recording backends time to finalize their files before the app exits.
+    @MainActor public static func finishRecordingsBeforeTermination() -> Task<Void, Never>? {
+        MCPDeviceAccess.live.recordings.finishBeforeTermination()
     }
 
     /// Handles one encoded line; nil when there is nothing to send back.

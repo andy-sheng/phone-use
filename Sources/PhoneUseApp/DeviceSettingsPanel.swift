@@ -1,4 +1,3 @@
-import CoreAudio
 import PhoneUseKit
 import PhoneUseUI
 import SwiftUI
@@ -115,7 +114,7 @@ struct DeviceSettingsPanel: View {
     @State private var textSizeIndex: Double = 3
     @State private var glassOpacity: Double = 0.5
     @State private var volume: Double = 50
-    @StateObject private var hostAudio = HostAudioDevices()
+    @State private var hostAudio: HostAudioDevices?
 
     var body: some View {
         Group {
@@ -157,6 +156,7 @@ struct DeviceSettingsPanel: View {
     }
 
     private func syncSliders() {
+        if model.audio != nil { hostAudio = HostAudioDevices() }
         if let size = model.appearance?.textSize {
             textSizeIndex = Double(DeviceSettings.TextSize.standard.firstIndex(of: size)
                                    ?? DeviceSettings.TextSize.standard.count - 1)
@@ -326,10 +326,10 @@ struct DeviceSettingsPanel: View {
             }
         }
         SettingRow("Output", "headphones") {
-            routePicker("Output", selection: audio.output, devices: hostAudio.outputs) { model.setAudio(output: $0) }
+            routePicker("Output", selection: audio.output, devices: hostAudio?.outputs ?? []) { model.setAudio(output: $0) }
         }
         SettingRow("Input", "mic") {
-            routePicker("Input", selection: audio.input, devices: hostAudio.inputs) { model.setAudio(input: $0) }
+            routePicker("Input", selection: audio.input, devices: hostAudio?.inputs ?? []) { model.setAudio(input: $0) }
         }
     }
 
@@ -379,64 +379,5 @@ private struct SettingRow<Control: View>: View {
                 Image(systemName: systemImage).foregroundStyle(.secondary)
             }
         }
-    }
-}
-
-/// This Mac's audio devices, which a device's sound can be routed to or from.
-@MainActor
-final class HostAudioDevices: ObservableObject {
-    struct Device: Identifiable, Hashable {
-        /// The Core Audio UID.
-        let id: String
-        let name: String
-    }
-
-    @Published private(set) var outputs: [Device] = []
-    @Published private(set) var inputs: [Device] = []
-
-    init() {
-        reload()
-    }
-
-    func reload() {
-        let ids = Self.deviceIDs()
-        outputs = ids.filter { Self.hasStreams($0, scope: kAudioObjectPropertyScopeOutput) }.compactMap(Self.device)
-        inputs = ids.filter { Self.hasStreams($0, scope: kAudioObjectPropertyScopeInput) }.compactMap(Self.device)
-    }
-
-    private static func deviceIDs() -> [AudioObjectID] {
-        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
-                                                 mScope: kAudioObjectPropertyScopeGlobal,
-                                                 mElement: kAudioObjectPropertyElementMain)
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr
-        else { return [] }
-        var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &ids) == noErr
-        else { return [] }
-        return ids
-    }
-
-    private static func hasStreams(_ id: AudioObjectID, scope: AudioObjectPropertyScope) -> Bool {
-        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams, mScope: scope,
-                                                 mElement: kAudioObjectPropertyElementMain)
-        var size: UInt32 = 0
-        return AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr && size > 0
-    }
-
-    private static func device(_ id: AudioObjectID) -> Device? {
-        guard let uid = string(id, kAudioDevicePropertyDeviceUID),
-              let name = string(id, kAudioObjectPropertyName) else { return nil }
-        return Device(id: uid, name: name)
-    }
-
-    private static func string(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector) -> String? {
-        var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
-                                                 mElement: kAudioObjectPropertyElementMain)
-        var value: Unmanaged<CFString>?
-        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value) == noErr,
-              let string = value?.takeRetainedValue() else { return nil }
-        return string as String
     }
 }

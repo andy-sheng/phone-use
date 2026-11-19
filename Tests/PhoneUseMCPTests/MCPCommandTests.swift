@@ -10,6 +10,16 @@ private func testDevice(_ id: String = "simulator:one", name: String = "iPhone",
     ]))
 }
 
+private final class TestRecording: ScreenRecordingSession {
+    let destination: URL
+    var isRunning: Bool { true }
+    init(destination: URL) { self.destination = destination }
+    func stop() async throws -> URL {
+        try Data("finished".utf8).write(to: destination, options: .withoutOverwriting)
+        return destination
+    }
+}
+
 private final class TestSession: MCPDeviceSession, @unchecked Sendable {
     let device: DeviceSummary
     let display: DisplayInfo
@@ -17,6 +27,7 @@ private final class TestSession: MCPDeviceSession, @unchecked Sendable {
     private var events: [String] = []
     var calls: [String] { lock.withLock { events } }
     var failCapture = false
+    var failMove = false
 
     init(device: DeviceSummary? = nil, width: Double = 400, height: Double = 800, scale: Double = 1) throws {
         self.device = try device ?? testDevice()
@@ -25,6 +36,18 @@ private final class TestSession: MCPDeviceSession, @unchecked Sendable {
         ]))
     }
     private func append(_ value: String) { lock.withLock { events.append(value) } }
+    func startScreenRecording(to destination: URL) async throws -> any ScreenRecordingSession {
+        append("record")
+        return TestRecording(destination: destination)
+    }
+    let canRotate = true
+    let canFold = true
+    func rotate(_ direction: DeviceRotationDirection) async throws { append("rotate " + direction.rawValue) }
+    func setPosture(_ posture: SimulatorPosture) async throws { append("posture " + posture.rawValue) }
+    func sendTouch(_ phase: TouchPhase, x: Double, y: Double) async throws {
+        append("\(phase) \(x),\(y)")
+        if phase == .moved && failMove { throw DeviceHubError.connectionClosed }
+    }
     func screenshot() async throws -> CGImage {
         append("screenshot")
         if failCapture { throw DeviceHubError.serviceFailed("capture failed") }
@@ -62,7 +85,7 @@ final class MCPCommandTests: XCTestCase {
         let reply = MCPServer.localReply(to: ["id": 1, "method": "tools/list"])!
         let tools = (reply["result"] as! [String: Any])["tools"] as! [[String: Any]]
         let names = Set(tools.compactMap { $0["name"] as? String })
-        XCTAssertEqual(names, ["select_device", "connect_device", "get_web_preview", "list_devices", "screenshot", "describe_ui", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "type_text", "list_apps", "list_sandbox_files", "read_sandbox_file", "download_sandbox_file"])
+        XCTAssertEqual(names, Set(MCPManagement.allCases.map(\.rawValue)).union(["rotate_simulator", "set_simulator_posture", "touch_path", "get_device_settings", "set_appearance", "set_location", "set_audio", "select_device", "connect_device", "get_web_preview", "list_devices", "start_recording", "stop_recording", "screenshot", "describe_ui", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "type_text", "list_apps", "list_sandbox_files", "read_sandbox_file", "download_sandbox_file"]))
         XCTAssertNotNil(MCPServer.encode(reply), "every schema must remain JSON serializable")
         let handoffTools = tools.filter { ($0["description"] as? String)?.contains("handoff") == true }
         XCTAssertEqual(handoffTools.compactMap { $0["name"] as? String }, ["connect_device"])
@@ -74,6 +97,15 @@ final class MCPCommandTests: XCTestCase {
     func testInvalidArgumentsAreRejectedBeforePreparingOrOpeningDevices() async throws {
         let session = try TestSession()
         let invalid: [(String, [String: Any])] = [
+            ("set_audio", [:]), ("set_audio", ["volume": true]), ("set_audio", ["volume": 42.5]),
+            ("set_location", [:]), ("set_location", ["latitude": 25, "longitude": 190]),
+            ("set_location", ["preset": "Apple", "longitude": 10]), ("set_location", ["clear": false]),
+            ("set_appearance", ["reduce_motion": 1]), ("set_appearance", ["style": "dark", "voice_over": false]),
+            ("set_appearance", ["color_filter": "invalid"]), ("rotate_simulator", ["direction": "up"]),
+            ("set_simulator_posture", ["posture": "left"]), ("collect_sysdiagnose", ["directory": "relative"]),
+            ("touch_path", ["points": [["x": 0, "y": 0], ["x": true, "y": 1]]]),
+            ("touch_path", ["points": [["x": 0, "y": 1]]]),
+            ("stop_recording", [:]), ("stop_recording", ["recording_id": "invalid"]),
             ("select_device", [:]), ("connect_device", ["device": 7]),
             ("tap", ["x": true, "y": 20]), ("tap", ["x": Double.nan, "y": 20]),
             ("tap", ["x": "2", "y": 20]), ("tap", ["x": 2, "y": 20, "device": 7]),
@@ -95,6 +127,89 @@ final class MCPCommandTests: XCTestCase {
             XCTAssertEqual((reply?["result"] as? [String: Any])?["isError"] as? Bool, true, "\(tool) \(args)")
         }
         XCTAssertTrue(session.calls.isEmpty)
+    }
+
+    func testRecordingCanBeFinalizedAfterDiscoveryAndDaemonBecomeUnavailable() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = try TestSession()
+        var live = access(session)
+        live.recordings = MCPRecordings(directory: directory)
+        let start = request("start_recording", ["device": session.device.udid])
+        let reply = await MCPServer.handle(start, access: live)
+        let result = try XCTUnwrap(reply?["result"] as? [String: Any])
+        let metadata = try XCTUnwrap(result["structuredContent"] as? [String: Any])
+        let id = try XCTUnwrap(metadata["recording_id"] as? String)
+        let path = try XCTUnwrap(metadata["local_path"] as? String)
+        XCTAssertEqual(metadata["device"] as? String, session.device.udid)
+        let duplicate = await MCPServer.handle(start, access: live)
+        XCTAssertEqual((duplicate?["result"] as? [String: Any])?["isError"] as? Bool, true)
+        XCTAssertEqual(session.calls, ["record"])
+
+        let offline = MCPDeviceAccess(devices: { throw DeviceHubError.connectionClosed },
+                                      session: { _ in throw DeviceHubError.connectionClosed }, recordings: live.recordings)
+        let stop = request("stop_recording", ["recording_id": id])
+        let saved = await MCPServer.handle(stop, prepare: { throw DeviceHubError.connectionClosed }, access: offline)
+        let savedResult = try XCTUnwrap(saved?["result"] as? [String: Any])
+        XCTAssertEqual((savedResult["structuredContent"] as? [String: Any])?["local_path"] as? String, path)
+        XCTAssertEqual(try String(contentsOfFile: path, encoding: .utf8), "finished")
+        let stale = await MCPServer.handle(stop, access: offline)
+        XCTAssertEqual((stale?["result"] as? [String: Any])?["isError"] as? Bool, true)
+
+        let restarted = await MCPServer.handle(start, access: live)
+        let next = try XCTUnwrap((restarted?["result"] as? [String: Any])?["structuredContent"] as? [String: Any])
+        XCTAssertNotEqual(next["recording_id"] as? String, id)
+        await live.recordings.finishBeforeTermination()?.value
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(next["local_path"] as? String)))
+    }
+
+    func testPathKeepsContactAcrossCornersAndValidatesBeforePress() async throws {
+        let session = try TestSession()
+        let points = [["x": 40, "y": 80], ["x": 200, "y": 80], ["x": 200, "y": 400]]
+        let invalid = try await result("touch_path", ["points": points + [["x": 500, "y": 0]]], session: session)
+        XCTAssertEqual(invalid["isError"] as? Bool, true)
+        XCTAssertTrue(session.calls.isEmpty)
+        let ok = try await result("touch_path", ["points": points, "duration": 0.01], session: session)
+        XCTAssertNil(ok["isError"])
+        XCTAssertEqual(session.calls, ["began 0.1,0.1", "moved 0.5,0.1", "moved 0.5,0.5", "ended 0.5,0.5"])
+
+        session.failMove = true
+        let failed = try await result("touch_path", ["points": points, "duration": 0.01], session: session)
+        XCTAssertEqual(failed["isError"] as? Bool, true)
+        XCTAssertEqual(session.calls.last, "ended 0.1,0.1")
+    }
+
+    func testExclusiveDeviceOperationAllowsOtherTargetsAndReleasesAfterUse() throws {
+        let operations = MCPDeviceOperations()
+        try operations.enter("A", exclusive: false)
+        try operations.enter("A", exclusive: false)
+        operations.leave("A")
+        XCTAssertThrowsError(try operations.enter("A", exclusive: true))
+        operations.leave("A")
+        try operations.enter("A", exclusive: true)
+        XCTAssertThrowsError(try operations.enter("A", exclusive: false))
+        try operations.enter("B", exclusive: true)
+        operations.leave("B")
+        operations.leave("A")
+        try operations.enter("A", exclusive: false)
+        operations.leave("A")
+    }
+
+    func testManagementRequiresExactTargetsAndGeometryUsesSelectedSession() async throws {
+        let session = try TestSession()
+        for tool in ["erase_simulator", "delete_simulator", "unpair_device"] {
+            XCTAssertThrowsError(try MCPCommand(name: tool, arguments: [:]))
+            let bad = try await result(tool, ["device": session.device.name], session: session)
+            XCTAssertEqual(bad["isError"] as? Bool, true)
+        }
+        let changed = try await result("rotate_simulator", ["direction": "right"], session: session)
+        XCTAssertEqual((changed["structuredContent"] as? [String: Any])?["width"] as? Double, 400)
+        _ = try await result("set_simulator_posture", ["posture": "partiallyOpen"], session: session)
+        XCTAssertEqual(session.calls, ["rotate right", "posture partiallyOpen"])
+        let android = try TestSession(device: testDevice("android:one", platform: "android", connection: "usb"))
+        let failure = try await result("rotate_simulator", ["direction": "left"], session: android)
+        XCTAssertEqual(failure["isError"] as? Bool, true)
+        XCTAssertTrue(android.calls.isEmpty)
     }
 
     func testCoordinateConversionsAndLegacyDurations() async throws {

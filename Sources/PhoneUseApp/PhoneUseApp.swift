@@ -18,8 +18,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mcp.start(workspace: MCPWorkspaceAccess(
             selectedDevice: { [model] in await model.selection },
             select: { [model] device in await model.selectDevice(device) },
-            connect: { [model] device in try await model.connectDevice(device) }
+            connect: { [model] device in try await model.connectDevice(device) },
+            endPreview: { [model] device in await model.endPreview(for: device) },
+            changeGeometry: { [model] device, change in try await model.changeGeometry(for: device, change: change) }
         )) { [model] in try await model.launcher.start() }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let finish = MCPServer.finishRecordingsBeforeTermination() else { return .terminateNow }
+        Task {
+            await finish.value
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {

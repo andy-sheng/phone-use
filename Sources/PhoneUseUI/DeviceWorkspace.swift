@@ -138,7 +138,11 @@ public struct DeviceWorkspace<Panel: View>: View {
         .onChange(of: screen.aspectRatio) { _, ratio in
             if isCompact { compactWindow.fit(screenAspectRatio: ratio) }
         }
-        .task { await model.run() }
+        .task {
+            model.visibleScreen = screen
+            defer { if model.visibleScreen === screen { model.visibleScreen = nil } }
+            await model.run()
+        }
         .task(id: managementKey) { await readManagementAvailability() }
         .task(id: screenKey) {
             await screen.run(device: model.selectedDevice)

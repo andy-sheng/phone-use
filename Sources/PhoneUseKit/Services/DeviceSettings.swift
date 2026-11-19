@@ -168,6 +168,11 @@ public struct DeviceSettings: Sendable {
         public let kind: Kind
         public var id: String { name }
 
+        public init(name: String, kind: Kind) {
+            self.name = name
+            self.kind = kind
+        }
+
         /// Fixed places offered where the device has no scenarios of its own.
         public static let presets: [Location] = [
             Location(name: "Apple", kind: .coordinate(latitude: 37.33182, longitude: -122.03118)),

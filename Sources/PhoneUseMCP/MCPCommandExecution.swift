@@ -6,6 +6,12 @@ import PhoneUseKit
 protocol MCPDeviceSession: Sendable {
     var device: DeviceSummary { get }
     var display: DisplayInfo { get }
+    @MainActor func startScreenRecording(to destination: URL) async throws -> any ScreenRecordingSession
+    var canRotate: Bool { get }
+    var canFold: Bool { get }
+    func rotate(_ direction: DeviceRotationDirection) async throws
+    func setPosture(_ posture: SimulatorPosture) async throws
+    func sendTouch(_ phase: TouchPhase, x: Double, y: Double) async throws
     func screenshot() async throws -> CGImage
     func tap(x: Double, y: Double) async throws
     func longPress(x: Double, y: Double, duration: Duration) async throws
@@ -26,6 +32,8 @@ struct MCPDeviceAccess: Sendable {
     var webPreview: @Sendable (String, UInt16) async throws -> URL = { _, _ in
         throw ToolFailure(message: "Web preview discovery is not configured")
     }
+    var operations = MCPDeviceOperations()
+    var recordings = MCPRecordings()
     var previewWorkflow = MCPWebPreviewWorkflow()
 
     static let live = MCPDeviceAccess(devices: { try await DeviceHub.shared.devices() },
@@ -60,8 +68,9 @@ extension MCPCommand {
         if case .listDevices = action {
             let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(devices)) as? [[String: Any]] ?? []
             let rows = zip(devices, encoded).map { device, row in
-                var capabilities = ["screenshot", "tap", "long_press", "swipe", "gesture", "button", "launch_app"]
-                if !device.isAndroid { capabilities += ["describe_ui", "element_targeting"] }
+                var capabilities = ["screenshot", "tap", "long_press", "swipe", "touch_path", "gesture", "button", "launch_app"]
+                if device.isSimulator { capabilities.append("start_recording") }
+                if !device.isAndroid { capabilities += ["describe_ui", "element_targeting", "list_management_actions"] }
                 if device.isSimulator || !device.isAndroid && device.osMajorVersion >= 27 { capabilities.append("type_text") }
                 return row.merging(["capabilities": capabilities, "selected": device.udid == selection,
                     "ui_scope": device.isAndroid ? "unavailable" : device.isSimulator ? "accessibility" : "development-signed foreground app (get-task-allow=true); no element geometry",
@@ -77,7 +86,60 @@ extension MCPCommand {
             return ["content": [mcpText("Selected \(selected.name). Call connect_device to connect.")],
                     "structuredContent": ["device": selected.udid, "selected": true, "state": selected.state.rawValue]]
         }
-        let selected = try Self.resolve(query, in: devices)
+        let management: MCPManagement?
+        if case .management(let op, _, _) = action { management = op } else { management = nil }
+        let selected = try Self.resolve(query, in: devices, requiresReady: management == nil)
+        if management?.needsIdentifier == true {
+            guard let device, [selected.udid, selected.deviceIdentifier].contains(where: { $0.caseInsensitiveCompare(device) == .orderedSame }) else {
+                throw ToolFailure(message: "Pass the exact target device identifier from list_devices.")
+            }
+        }
+        let exclusive: Bool
+        switch action {
+        case .touchPath, .geometry: exclusive = true
+        case .management(let op, _, _): exclusive = op != .available
+        default: exclusive = false
+        }
+        try access.operations.enter(selected.id, exclusive: exclusive)
+        defer { access.operations.leave(selected.id) }
+        switch action {
+        case .management(let op, let name, let directory):
+            return try await op.execute(selected, name: name, directory: directory, recordings: access.recordings, workspace: workspace)
+        case .settings(let command): return try await command.execute(selected)
+        case .geometry(let change):
+            guard selected.isSimulator else { throw DeviceHubError.capabilityUnavailable("Simulator geometry on this device") }
+            let session = try await access.session(selected.udid)
+            switch change {
+            case .rotation where !session.canRotate: throw DeviceHubError.capabilityUnavailable("Rotation on this simulator")
+            case .posture where !session.canFold: throw DeviceHubError.capabilityUnavailable("Folding on this simulator")
+            default: break
+            }
+            var output: [String: Any] = ["device": selected.udid]
+            if let movie = try await access.recordings.finish(for: selected.id) { output["saved_recording"] = movie.metadata }
+            let handled = try await workspace?.changeGeometry(selected, change) ?? false
+            switch change {
+            case .rotation(let direction):
+                if !handled { try await session.rotate(direction) }
+                output["direction"] = direction.rawValue
+            case .posture(let posture):
+                if !handled { try await session.setPosture(posture) }
+                output["posture"] = posture.rawValue
+            }
+            output["width"] = session.display.pointWidth.rounded()
+            output["height"] = session.display.pointHeight.rounded()
+            output["unit"] = "points"
+            return try mcpObject(output)
+        default: break
+        }
+        if case .startRecording = action {
+            guard !selected.isAndroid else { throw DeviceHubError.capabilityUnavailable("Screen recording on Android") }
+            let movie = try await access.recordings.start(device: selected.udid) { url in
+                let session = try await access.session(selected.udid)
+                return try await session.startScreenRecording(to: url)
+            }
+            return ["content": [mcpText("Started recording on \(selected.name). Call stop_recording with recording_id \(movie.id).")],
+                    "structuredContent": movie.metadata]
+        }
         if case .webPreview(let port) = action {
             let preview = await access.previewWorkflow.lookup(deviceID: selected.udid, port: port, probe: access.webPreview)
             guard let url = preview.url else { throw ToolFailure(message: preview.error ?? "Web preview unavailable") }
@@ -130,6 +192,14 @@ extension MCPCommand {
                     mcpText("Screen of \(selected.name): \(Int(width))x\(Int(height)) \(unit), origin top-left, \(metadata["coordinate_space"]!).")]
         }
 
+        let path: [CGPoint]
+        if case .touchPath(let points, _) = action {
+            path = try points.map {
+                let (x, y) = try point($0.x, $0.y)
+                return CGPoint(x: x, y: y)
+            }
+        } else { path = [] }
+
         // Validate both endpoints and platform limits before delays or the first input event.
         switch action {
         case .tap(let x, let y, _), .longPress(let x, let y, _): _ = try point(x, y)
@@ -174,6 +244,9 @@ extension MCPCommand {
             let from = try point(x1, y1), to = try point(x2, y2)
             try await session.swipe(fromX: from.0, fromY: from.1, toX: to.0, toY: to.1, duration: duration)
             summary = "Swipe input sent from (\(x1), \(y1)) to (\(x2), \(y2))."
+        case .touchPath(_, let duration):
+            try await session.trace(path, duration: duration)
+            summary = "Continuous touch sent through \(path.count) points."
         case .gesture(let preset, let duration):
             let s = preset.stroke
             try await session.swipe(fromX: s.fromX, fromY: s.fromY, toX: s.toX, toY: s.toY, duration: duration)

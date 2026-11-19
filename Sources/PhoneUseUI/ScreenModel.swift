@@ -270,48 +270,40 @@ public final class ScreenModel: ObservableObject {
         }
     }
 
-    func setPosture(_ posture: SimulatorPosture) {
-        guard let session, canFold, !isChangingGeometry else { return }
+    func endPreview() async {
+        let saving = finishRecording()
+        cancelConnection()
+        await saving?.value
+    }
+
+    func setPosture(_ posture: SimulatorPosture) { requestGeometry(.posture(posture)) }
+
+    func rotate(_ direction: DeviceRotationDirection) { requestGeometry(.rotation(direction)) }
+
+    private func requestGeometry(_ change: SimulatorGeometryChange) {
         let generation = runGeneration
-        releaseManualTouch()
-        isChangingGeometry = true
-        // simctl recording is bound to a particular panel; finalize before it becomes inactive.
-        let savedRecording = finishRecording()
         Task {
-            defer { if runGeneration == generation { isChangingGeometry = false } }
-            do {
-                await savedRecording?.value
-                guard runGeneration == generation else { return }
-                try await session.setPosture(posture)
-                guard runGeneration == generation else { return }
-                self.posture = posture
-                updateDisplay(session)
-            } catch {
-                guard runGeneration == generation else { return }
-                show(String(describing: error))
-            }
+            guard generation == runGeneration else { return }
+            do { try await changeGeometry(change) }
+            catch { if generation == runGeneration { show(String(describing: error)) } }
         }
     }
 
-    func rotate(_ direction: DeviceRotationDirection) {
-        guard let session, canRotate, !isChangingGeometry else { return }
+    func changeGeometry(_ change: SimulatorGeometryChange) async throws {
+        guard let session, !isChangingGeometry else { throw DeviceHubError.deviceNotReady("Simulator screen is busy.") }
         let generation = runGeneration
         releaseManualTouch()
         isChangingGeometry = true
-        let savedRecording = finishRecording()
-        Task {
-            defer { if runGeneration == generation { isChangingGeometry = false } }
-            do {
-                await savedRecording?.value
-                guard runGeneration == generation else { return }
-                try await session.rotate(direction)
-                guard runGeneration == generation else { return }
-                updateDisplay(session)
-            } catch {
-                guard runGeneration == generation else { return }
-                show(String(describing: error))
-            }
+        defer { if runGeneration == generation { isChangingGeometry = false } }
+        await finishRecording()?.value
+        guard runGeneration == generation else { throw DeviceHubError.connectionClosed }
+        switch change {
+        case .posture(let next):
+            try await session.setPosture(next)
+            if runGeneration == generation { posture = next }
+        case .rotation(let direction): try await session.rotate(direction)
         }
+        if runGeneration == generation { updateDisplay(session) }
     }
 
     func touch(_ phase: TouchPhase, at point: CGPoint) {

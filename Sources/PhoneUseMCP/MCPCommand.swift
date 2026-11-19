@@ -33,6 +33,11 @@ enum MCPGesture: String, CaseIterable {
 struct MCPCommand {
     enum Action {
         case listDevices, selectDevice, connectDevice, screenshot
+        case management(MCPManagement, name: String?, directory: URL?)
+        case settings(MCPSettingsCommand)
+        case geometry(SimulatorGeometryChange)
+        case touchPath([CGPoint], Duration)
+        case startRecording, stopRecording(UUID)
         case webPreview(UInt16)
         case describeUI(json: Bool)
         case activate(UISelector)
@@ -106,7 +111,42 @@ struct MCPCommand {
             if [id, label, contains, type].allSatisfy({ $0 == nil }) { return nil }
             return try UISelector(id: id, label: label, labelContains: contains, elementType: type)
         }
+        if let management = MCPManagement(rawValue: name) {
+            guard !management.needsIdentifier || device != nil else { throw ToolFailure(message: "An explicit device identifier is required.") }
+            let newName = management == .rename ? try Self.string(arguments, "name") : nil
+            var directory: URL?
+            if management == .sysdiagnose {
+                let path = try Self.string(arguments, "directory")!
+                guard path.hasPrefix("/") else { throw ToolFailure(message: "Use an absolute output directory on the Mac.") }
+                directory = URL(fileURLWithPath: path, isDirectory: true)
+            }
+            action = .management(management, name: newName, directory: directory)
+            return
+        }
         switch name {
+        case "get_device_settings", "set_appearance", "set_audio", "set_location":
+            action = .settings(try MCPSettingsCommand(name, arguments))
+        case "rotate_simulator":
+            guard let direction = DeviceRotationDirection(rawValue: try Self.string(arguments, "direction")!) else {
+                throw ToolFailure(message: "direction must be left or right.")
+            }
+            action = .geometry(.rotation(direction))
+        case "set_simulator_posture":
+            guard let posture = SimulatorPosture(rawValue: try Self.string(arguments, "posture")!) else {
+                throw ToolFailure(message: "Unsupported simulator posture.")
+            }
+            action = .geometry(.posture(posture))
+        case "touch_path":
+            guard let points = arguments["points"] as? [[String: Any]], (2...256).contains(points.count) else {
+                throw ToolFailure(message: "Supply 2 to 256 ordered points.")
+            }
+            let path = try points.map { point in
+                guard Set(point.keys) == ["x", "y"] else { throw ToolFailure(message: "Each point requires exactly x and y.") }
+                let x = try Self.number(point, "x"), y = try Self.number(point, "y")
+                guard x >= 0 && y >= 0 else { throw ToolFailure(message: "Path coordinates must be non-negative.") }
+                return CGPoint(x: x, y: y)
+            }
+            action = .touchPath(path, try duration(default: 0.5)!)
         case "get_web_preview":
             let port = try Self.optionalNumber(arguments, "port", range: 1...65535) ?? 8765
             guard port.rounded() == port else { throw ToolFailure(message: "'port' must be an integer from 1 to 65535.") }
@@ -144,6 +184,12 @@ struct MCPCommand {
             guard device != nil else { throw ToolFailure(message: "select_device requires a device identifier or name.") }
             action = .selectDevice
         case "connect_device": action = .connectDevice
+        case "start_recording": action = .startRecording
+        case "stop_recording":
+            guard let id = UUID(uuidString: try Self.string(arguments, "recording_id")!) else {
+                throw ToolFailure(message: "'recording_id' must be the UUID returned by start_recording.")
+            }
+            action = .stopRecording(id)
         case "screenshot": action = .screenshot
         case "describe_ui":
             let format = try Self.string(arguments, "format", optional: true) ?? "outline"
@@ -191,7 +237,7 @@ struct MCPCommand {
         }
     }
 
-    private static func number(_ arguments: [String: Any], _ key: String) throws -> Double {
+    static func number(_ arguments: [String: Any], _ key: String) throws -> Double {
         guard let value = arguments[key] as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(), value.doubleValue.isFinite else {
             throw ToolFailure(message: "'\(key)' must be a finite number.")
         }
@@ -205,9 +251,9 @@ struct MCPCommand {
         return value
     }
 
-    private static func string(_ arguments: [String: Any], _ key: String, optional: Bool = false) throws -> String? {
+    static func string(_ arguments: [String: Any], _ key: String, optional: Bool = false) throws -> String? {
         if optional, arguments[key] == nil { return nil }
-        guard let value = arguments[key] as? String, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard let value = arguments[key] as? String, !value.contains("\0"), !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ToolFailure(message: "'\(key)' must be a non-empty string.")
         }
         return value

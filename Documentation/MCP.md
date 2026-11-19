@@ -6,7 +6,7 @@ PhoneUseKit 的共享设备会话执行；无需另装 sim-use、idb、XcodeBuil
 
 ## 发现、观察、操作、验证
 
-1. 调用 `list_devices`，查看设备状态及 `capabilities`。只有 `ready` 设备可操作。
+1. 调用 `list_devices`，查看设备状态及 `capabilities`。屏幕和输入操作要求设备为 `ready`。处于关机状态且此前用过的模拟器也会列出，可用 `start_simulator` 启动。
 2. 调用 `select_device` 选择设备，再调用 `connect_device` 建立连接并请求预览，对应界面的选中与连接。
    `select_device` 不连接设备，也可选择尚需配对等准备的设备；`connect_device` 只连接 `ready` 设备。
    省略 `device` 时使用 PhoneUse 当前选中设备；没有选中设备时，只能自动选取唯一的就绪设备。
@@ -57,6 +57,12 @@ PhoneUse 右侧“调用记录”页签实时显示 agent 发起的 MCP 工具�
 这里记录的是 MCP `tools/call`，不包括侧栏自动刷新的 UI 树或手动操作；“已完成”表示工具返回成功，
 不代表设备界面变化已经验证。
 
+## 录屏
+
+调用 `start_recording` 后可以继续使用其他工具，完成操作后将返回的 `recording_id` 传给 `stop_recording`。每台设备同时支持一段 MCP 录屏，切换选中设备不会改变这段录屏的目标。录屏可在后台进行，文件保存在运行 PhoneUse 的 Mac 上，默认目录为 `~/Library/Application Support/DeviceHub/Recordings/`。
+
+iOS 模拟器录制开始时的活动屏幕。iOS 真机按连接能力使用原生录屏、USB 视频或 Mirror 视频。仅有截图的连接和 Android 设备当前不支持 MCP 录屏。
+
 ## 工具
 
 PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `describe_ui` 文本。
@@ -66,14 +72,17 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
 
 | 工具 | 主要参数 | 支持范围与含义 |
 | --- | --- | --- |
-| `list_devices` | 无 | iOS/Android 真机与已启动的 iOS 模拟器；返回每台设备的能力 |
+| `list_devices` | 无 | 列出 iOS / Android 真机以及运行中或此前启动过的 iOS 模拟器，返回设备状态和能力 |
 | `select_device` | `device` | 切换 PhoneUse 界面选中设备，不建立连接 |
 | `connect_device` | `device?` | 连接设备、请求原生界面预览，并自动校验 Web 地址，返回浏览器下一步 |
 | `get_web_preview` | `device?`, `port?: 8765` | 检查已运行的本地 Web 服务，返回匹配设备的控制页地址 |
+| `start_recording` | `device?` | 开始录制 MP4，返回 `recording_id`、设备标识和 Mac 上的 `local_path` |
+| `stop_recording` | `recording_id` | 按开始时返回的 ID 停止录制，等待文件写完后返回 `local_path` |
 | `screenshot` | `device?` | JPEG 图像、尺寸、平台、坐标单位与原点 |
 | `describe_ui` | `device?`, `format?: outline/json` | iOS 模拟器或真机开发签名应用的 UI 树；默认简洁文本，不附加原始私有对象 |
 | `tap` | `x, y` 或一个元素选择器；`duration?` | 坐标点击支持可选按住时长；元素点击使用实时无障碍激活 |
 | `long_press` | `x, y, duration?` | 长按，默认 **0.8 秒** |
+| `touch_path` | `points, duration?, return_screen?` | 单指沿多个坐标连续拖动，全程一次按下和抬起 |
 | `swipe` | `start_x, start_y, end_x, end_y, duration?` | 单指拖动，默认 **0.3 秒** |
 | `gesture` | `preset, duration?` | 四个滚动和四个边缘手势；滚动默认 **0.5 秒**，边缘默认 **0.3 秒** |
 | `button` | `button, duration?` | 硬件按钮，可指定按住时长 |
@@ -90,6 +99,39 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
 新参数 `duration`、`pre_delay`、`post_delay` 均以**秒**为单位；时长须大于 0 且不超过
 10 秒，延迟允许 0–10 秒。`return_screen: true` 在操作及 `post_delay` 后再等待 0.6 秒截图。
 截图失败会明确报告“操作已发送、截图失败”，不会将它伪装成输入失败或自动重发输入。
+
+### 设备管理、旋转与折叠
+
+先调用 `list_management_actions` 查询所选设备在当前状态下可用的管理操作。每次执行时会重新检查设备与本机工具链。关机模拟器可从 `list_devices` 取标识后直接传给 `start_simulator`；它会等待启动完成，设备发现列表可能稍后刷新。
+
+| 工具 | 参数与效果 |
+| --- | --- |
+| `start_simulator`、`shutdown_simulator` | 启动或关闭指定的模拟器 |
+| `restart_device`、`rename_device` | 对模拟器或支持该能力的 iPhone / iPad 重启、改名；改名传 `name` |
+| `erase_simulator`、`delete_simulator` | 分别抹掉应用、数据与设置，或删除整台模拟器；均须显式传完整设备标识 `device` |
+| `unpair_device` | 解除与 Xcode 的配对；须显式传完整真机标识 `device` |
+| `show_device_in_finder`、`open_carplay_simulator` | 前者在 Mac 打开设备目录并返回路径；后者为有线 iPhone 打开已安装的 CarPlay Simulator |
+| `collect_sysdiagnose` | 从支持的真机收集诊断，`directory` 为 Mac 上已有目录的绝对路径，调用可能持续数分钟 |
+| `rotate_simulator` | `direction` 为 `left` 或 `right`，每次 90° |
+| `set_simulator_posture` | 支持折叠的模拟器接受 `closed`、`partiallyOpen`、`openFlat` |
+
+旋转和折叠使用当前设备会话；返回的 `width`、`height` 单位为 points。改变屏幕形态前会结束目标设备上的录屏；有 MCP 录屏时，结果的 `saved_recording.local_path` 提供文件路径。下一次触摸前应重新截图。
+
+### 设备设置
+
+`get_device_settings` 的 `group` 可取 `appearance`、`voice_over`、`audio`、`locations`。各组独立读取，并返回当前后端 `source`。外观值和可用选项依赖设备及 Xcode 版本，位置组返回可用的模拟位置预设。
+
+- `set_appearance` 每次写一个字段。支持 `style`、`tinted_glass`、`glass_opacity`、`text_size`、`color_filter`、`reduce_motion`、`increase_contrast`、`reduce_transparency`、`show_borders`、`voice_over`。例如 `{"style":"dark"}` 或 `{"voice_over":true}`。
+- `set_audio` 可设置整数音量 `volume`（0 到 100），以及 `input`、`output`。路由使用音频组列出的设备 UID，或 `systemDefault`。
+- `set_location` 可传 `preset`，也可传一对 `latitude`、`longitude`。传 `{"clear":true}` 恢复真实位置。
+
+### 连续触摸
+
+`touch_path` 在一个调用内保持单指接触，按顺序经过 2 到 256 个点。沿相邻点线性移动，每段平分请求时长，可重复同一点实现停留。默认时长为 0.5 秒，最长 10 秒；实际投递速度受设备影响。所有坐标在按下前完成校验。支持现有输入工具的 `pre_delay`、`post_delay` 和 `return_screen`。
+
+```json
+{"name":"touch_path","arguments":{"points":[{"x":40,"y":160},{"x":120,"y":160},{"x":120,"y":80}],"duration":0.6,"return_screen":true}}
+```
 
 ### 坐标和 UI 树
 
