@@ -51,20 +51,19 @@ struct ScreenSurface: NSViewRepresentable {
             }
         }
 
-        private var scrollOrigin: CGPoint?
+        private var trackpadPan: (center: CGPoint, origin: CGPoint)?
         private var heldPoint: CGPoint?
-        private var scrollOffset = CGVector.zero
 
         func releaseHeldTouch() {
             let point = heldPoint
             heldPoint = nil
-            scrollOrigin = nil
-            scrollOffset = .zero
+            trackpadPan = nil
             if let point { onTouch?(.ended, point) }
         }
 
         override init(frame: NSRect) {
             super.init(frame: frame)
+            allowedTouchTypes = [.indirect]
             wantsLayer = true
             layer?.backgroundColor = NSColor.black.cgColor
         }
@@ -94,48 +93,63 @@ struct ScreenSurface: NSViewRepresentable {
         }
 
         override func mouseDragged(with event: NSEvent) {
-            guard acceptsInput, heldPoint != nil else { return }
+            guard acceptsInput, trackpadPan == nil, heldPoint != nil else { return }
             let point = normalizedLocation(of: event)
             heldPoint = point
             onTouch?(.moved, point)
         }
 
         override func mouseUp(with event: NSEvent) {
-            guard acceptsInput, heldPoint != nil else { return }
+            guard acceptsInput, trackpadPan == nil, heldPoint != nil else { return }
             onTouch?(.ended, normalizedLocation(of: event))
             heldPoint = nil
         }
 
         override func scrollWheel(with event: NSEvent) {
-            guard acceptsInput else { return }
-            // Only phased, precise trackpad gestures become device touches. Mouse wheel
-            // events (including smooth wheels without gesture phases) never control devices.
-            guard event.hasPreciseScrollingDeltas, !event.phase.isEmpty else { return }
-            // iOS derives its own momentum from the finger's release velocity.
-            guard event.momentumPhase.isEmpty else { return }
-            let delta = CGVector(dx: event.scrollingDeltaX / max(bounds.width, 1),
-                                 dy: event.scrollingDeltaY / max(bounds.height, 1))
+            // Even a phased, pixel-precise scroll can come from a mouse thumb wheel.
+        }
 
-            if event.phase.contains(.began) {
+        override func touchesBegan(with event: NSEvent) {
+            guard acceptsInput else { return }
+            if trackpadPan != nil { releaseHeldTouch() }
+            guard heldPoint == nil, let center = twoFingerCenter(in: event) else { return }
+            trackpadPan = (center, normalizedLocation(of: event))
+        }
+
+        override func touchesMoved(with event: NSEvent) {
+            guard let pan = trackpadPan else { return }
+            guard let center = twoFingerCenter(in: event) else {
                 releaseHeldTouch()
-                let origin = normalizedLocation(of: event)
-                scrollOrigin = origin
-                heldPoint = origin
-                scrollOffset = .zero
-                onTouch?(.began, origin)
+                return
             }
-            guard let origin = scrollOrigin else { return }
-            scrollOffset.dx += delta.dx
-            scrollOffset.dy += delta.dy
-            let point = clamped(CGPoint(x: origin.x + scrollOffset.dx, y: origin.y + scrollOffset.dy))
+            let dx = center.x - pan.center.x
+            let dy = pan.center.y - center.y // Trackpad Y increases upward; the preview is flipped.
+            if heldPoint == nil {
+                // A stationary two-finger tap or slight jitter should not tap the device.
+                guard hypot(dx, dy) >= 3 else { return }
+                onTouch?(.began, pan.origin)
+            }
+            let point = clamped(CGPoint(x: pan.origin.x + dx / max(bounds.width, 1),
+                                        y: pan.origin.y + dy / max(bounds.height, 1)))
             heldPoint = point
-            if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
-                onTouch?(.ended, point)
-                scrollOrigin = nil
-                heldPoint = nil
-            } else if event.phase.contains(.changed) {
-                onTouch?(.moved, point)
+            onTouch?(.moved, point)
+        }
+
+        override func touchesEnded(with event: NSEvent) {
+            if trackpadPan != nil { releaseHeldTouch() }
+        }
+
+        override func touchesCancelled(with event: NSEvent) {
+            if trackpadPan != nil { releaseHeldTouch() }
+        }
+
+        private func twoFingerCenter(in event: NSEvent) -> CGPoint? {
+            let touches = event.touches(matching: .touching, in: self)
+            guard touches.count == 2, let first = touches.first else { return nil }
+            let sum = touches.reduce(CGPoint.zero) { sum, touch in
+                CGPoint(x: sum.x + touch.normalizedPosition.x, y: sum.y + touch.normalizedPosition.y)
             }
+            return CGPoint(x: sum.x * first.deviceSize.width / 2, y: sum.y * first.deviceSize.height / 2)
         }
 
         private func normalizedLocation(of event: NSEvent) -> CGPoint {

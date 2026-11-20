@@ -803,8 +803,8 @@ private struct DeviceRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            if device.isSimulator {
-                SimulatorDeviceIcon(device: device)
+            if !device.isAndroid {
+                AppleSidebarDeviceIcon(device: device)
             } else {
                 Image(systemName: device.deviceIcon)
                     .font(.system(size: 14))
