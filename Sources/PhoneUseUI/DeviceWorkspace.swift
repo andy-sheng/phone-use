@@ -268,7 +268,7 @@ public struct DeviceWorkspace<Panel: View>: View {
                                        connect: { requestPreview(device) },
                                        cancel: { screen.cancelConnection() })
             } else if !device.isReady {
-                DeviceSetupView(device: device)
+                DeviceSetupView(device: device, pairWirelessly: { showingPairing = true })
                     .padding(compact ? 16 : 24)
             } else {
                 DeviceConnectionView(device: device,
@@ -863,6 +863,7 @@ private struct DeviceRow: View {
         case .offline: "Offline"
         case .developerModeOff: "Developer Mode off"
         case .developerImageMissing: "Preparing developer services"
+        case .wirelessPairingExpired: "Wi-Fi pairing expired"
         }
     }
 }

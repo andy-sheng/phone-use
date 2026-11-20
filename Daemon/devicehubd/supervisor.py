@@ -4,7 +4,7 @@ Clients (the app, the MCP server, the CLI) connect to a Unix socket and speak th
 `protocol`. Methods:
 
 * ``hello``, ``listDevices``, ``subscribe`` (then ``devicesChanged`` notifications)
-* ``pair``, ``revealDeveloperMode``, ``mountDeveloperImage`` -- onboarding steps
+* ``pair``, ``revealDeveloperMode``, ``mountDeveloperImage``, ``setSystemWifi`` -- onboarding steps
 * ``startWirelessPairing``, ``wirelessPairingStatus``, ``pairNearbyDevice``, ``stopWirelessPairing``
 * ``openDevice`` -> ``{udid, productVersion, services}``; ``closeDevice``
 * ``openService`` -> ``{port}``: a loopback port relaying to that device service
@@ -45,10 +45,14 @@ from devicehubd.transports import (
     DISCOVERIES,
     ENDPOINTS_ENV,
     NETWORK,
+    USB,
+    WIRELESS_REJECTED,
     NetworkDiscovery,
     discovery_for,
+    forget_wireless_pairing,
     has_wireless_pairing,
     pair_wireless,
+    wireless_rejected,
 )
 from devicehubd.wireless_pairing import PairedDevice, WirelessPairing
 
@@ -93,9 +97,16 @@ class DeviceRecord:
     developer_mode: Optional[bool] = None
     developer_image: Optional[bool] = None
     wireless: Optional[bool] = None
+    # Whether macOS itself may reach the device over Wi-Fi (Finder's "Show this iPhone when on
+    # Wi-Fi"), read while it is on USB.
+    system_wifi: Optional[bool] = None
     session: str = "closed"
     error: Optional[str] = None
     probed_at: float = 0.0
+    # A record lives for one attachment, so a replugged device is checked again.
+    wireless_checked: bool = False
+    # The device refused this Mac's RemotePairing record over Wi-Fi.
+    wireless_rejected: bool = False
     platform: str = "ios"
     adb_serial: Optional[str] = None
     adb_state: Optional[str] = None
@@ -117,6 +128,8 @@ class DeviceRecord:
             return {"device": "ready", "unauthorized": "unauthorized", "offline": "offline"}.get(self.adb_state, "probing")
         if self.is_simulator:
             return "ready" if self.simulator_state == "Booted" else "disconnected"
+        if self.wireless_rejected and self.connection == NETWORK:
+            return "wirelessPairingExpired"
         if self.paired is None:
             return "probing"
         if not self.paired:
@@ -144,6 +157,7 @@ class DeviceRecord:
             "developerMode": self.developer_mode,
             "developerImage": self.developer_image,
             "wireless": self.wireless,
+            "systemWifi": self.system_wifi,
             "session": self.session,
             "error": self.error,
         }
@@ -242,7 +256,6 @@ class Supervisor:
         self.subscribers: set[asyncio.StreamWriter] = set()
         self._device_locks: dict[str, asyncio.Lock] = {}
         self._probing: set[str] = set()
-        self._wireless_failed: set[str] = set()
         self._cache: dict[str, dict[str, Any]] = _load_cache()
         self.android = AndroidDiscovery()
         self._android_seen: dict[str, AndroidAttachment] = {}
@@ -420,7 +433,8 @@ class Supervisor:
             if key in CACHED_FIELDS and value is not None:
                 setattr(record, key, value)
         record.paired = True
-        record.wireless = True
+        record.wireless_rejected = wireless_rejected(record.udid)
+        record.wireless = not record.wireless_rejected
         if record.developer_mode is None:
             record.developer_mode = True
         # The worker mounts the image over the tunnel when it is missing.
@@ -446,6 +460,8 @@ class Supervisor:
                     record.wireless = True
                 else:
                     await self._ensure_wireless(record, lockdown)
+                    with contextlib.suppress(Exception):
+                        record.system_wifi = await lockdown.get_enable_wifi_connections()
                 async with MobileImageMounterService(lockdown=lockdown) as mounter:
                     record.developer_mode = bool(await mounter.query_developer_mode_status())
                     if record.developer_mode and not record.image_needs_tunnel:
@@ -461,15 +477,24 @@ class Supervisor:
         self._remember(record)
 
     async def _ensure_wireless(self, record: DeviceRecord, lockdown: Any) -> None:
-        """Pairs for Wi-Fi while the device is on the cable; the device shows no prompt for it."""
-        if record.udid not in self._wireless_failed and not has_wireless_pairing(record.udid):
+        """Checks the Wi-Fi pairing once per cable attachment and pairs again if the device refuses it.
+
+        An existing record is not proof: the device may have forgotten this Mac. Plugging in once
+        repairs it without a prompt on the device.
+        """
+        udid = record.udid
+        if not record.wireless_checked:
+            record.wireless_checked = True
+            reason = "rejectedOverWifi" if wireless_rejected(udid) else "refused" if has_wireless_pairing(udid) else "missing"
             try:
-                await pair_wireless(lockdown)
-                logger.info("paired %s for Wi-Fi", record.udid)
+                if reason == "rejectedOverWifi":
+                    # The cable may still verify a record Wi-Fi refused; only a new pairing helps.
+                    forget_wireless_pairing(udid)
+                if await pair_wireless(lockdown):
+                    logger.info("wireless.repaired udid=%s reason=%s", udid, reason)
             except Exception as e:
-                self._wireless_failed.add(record.udid)
-                logger.warning("Wi-Fi pairing of %s failed: %r", record.udid, e)
-        record.wireless = has_wireless_pairing(record.udid)
+                logger.warning("wireless.repair.failed udid=%s reason=%s error=%r", udid, reason, e)
+        record.wireless = has_wireless_pairing(udid) and not wireless_rejected(udid)
 
     def _remember(self, record: DeviceRecord) -> None:
         entry = {key: getattr(record, key) for key in CACHED_FIELDS}
@@ -588,6 +613,22 @@ class Supervisor:
             raise RpcError("invalidParams", "Missing device name")
         record.name = name
         self._remember(record)
+        await self.broadcast()
+
+    async def set_system_wifi(self, udid: str, enabled: Any) -> None:
+        """What Finder's "Show this iPhone when on Wi-Fi" does; it needs the cable."""
+        if not isinstance(enabled, bool):
+            raise RpcError("invalidParams", "Missing enabled")
+        record = self._ios_record(udid)
+        if record.connection != USB:
+            raise RpcError("needsUsb", "This step needs the device connected to this Mac with a USB cable")
+        lockdown = await discovery_for(USB).lockdown(udid)
+        try:
+            await lockdown.set_enable_wifi_connections(enabled)
+        finally:
+            with contextlib.suppress(Exception):
+                await lockdown.close()
+        record.system_wifi = enabled
         await self.broadcast()
 
     async def reveal_developer_mode(self, udid: str) -> None:
@@ -731,6 +772,9 @@ class Supervisor:
         for future in worker.pending.values():
             if not future.done():
                 future.set_exception(error)
+        if failure and failure.get("code") == WIRELESS_REJECTED and record.connection == NETWORK:
+            record.wireless_rejected = True
+            record.wireless = False
         if self.workers.get(record.udid) is worker:
             del self.workers[record.udid]
             record.session = "failed" if failure and failure.get("code") != "disconnected" else "closed"
@@ -838,6 +882,9 @@ class Supervisor:
             return {}
         if method == "revealDeveloperMode":
             await self.reveal_developer_mode(udid)
+            return {}
+        if method == "setSystemWifi":
+            await self.set_system_wifi(udid, params.get("enabled"))
             return {}
         if method == "mountDeveloperImage":
             await self.mount_developer_image(udid)

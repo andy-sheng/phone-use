@@ -27,6 +27,22 @@ final class WirelessPairingTests: XCTestCase {
         }
     }
 
+    func testExpiredWifiPairingAndSystemWifiDecode() throws {
+        let data = Data(#"""
+        {"udid":"test-device","connection":"usb","name":"Test iPhone","state":"wirelessPairingExpired",
+         "session":"failed","wireless":false,"systemWifi":true}
+        """#.utf8)
+        let device = try JSONDecoder().decode(DeviceSummary.self, from: data)
+        XCTAssertEqual(device.state, .wirelessPairingExpired)
+        XCTAssertFalse(device.isReady)
+        XCTAssertTrue(device.isAttached)
+        XCTAssertEqual(device.systemWifi, true)
+        let older = try JSONDecoder().decode(DeviceSummary.self, from: Data(#"""
+        {"udid":"test-device","connection":"network","name":"Test iPhone","state":"ready","session":"closed"}
+        """#.utf8))
+        XCTAssertNil(older.systemWifi)
+    }
+
     func testFirstWirelessSessionUsesWorkerVersionForMirrorAndHIDPolicy() throws {
         let data = Data(#"""
         {"udid":"test-device","connection":"network","name":"Test iPhone",

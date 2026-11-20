@@ -141,6 +141,19 @@ final class ScreenConnectionTests: XCTestCase {
         XCTAssertNil(model.status)
     }
 
+    func testRefusedWifiPairingIsNotRetried() async throws {
+        var opens = 0
+        let model = ScreenModel(prepareSession: { _ in }, openSession: { _ in
+            opens += 1
+            throw DeviceHubError.daemon(code: "wirelessPairingRejected", message: "Connect it with USB once")
+        }, connectionAttempts: 3, retryDelay: .zero)
+        let target = try device()
+        model.requestConnection(to: target)
+        await model.run(device: target)
+        XCTAssertEqual(opens, 1)
+        XCTAssertEqual(model.connectionError, "Connect it with USB once")
+    }
+
     func testFailedConnectionStopsLoadingAndAnExplicitRetryStartsANewAttempt() async throws {
         var preparations = 0
         var opens = 0

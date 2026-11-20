@@ -40,6 +40,9 @@ public struct DeviceInspector: View {
                     Check("Developer Mode", "hammer", device.developerMode)
                     Check("Developer services", "wrench.and.screwdriver", device.developerImage ?? (device.isReady ? true : nil))
                     Check("Wi-Fi", "wifi", device.wireless)
+                    if device.isWired, let systemWifi = device.systemWifi {
+                        SystemWifiToggle(udid: device.udid, enabled: systemWifi)
+                    }
                 }
                 Row("Session", "link", device.session.capitalized)
             }
@@ -54,6 +57,42 @@ public struct DeviceInspector: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+    }
+}
+
+/// Finder's "Show this iPhone when on Wi-Fi": a second way over Wi-Fi that does not depend on this
+/// app's own Wi-Fi pairing. It can only be changed while the device is on USB.
+private struct SystemWifiToggle: View {
+    let udid: String
+    let enabled: Bool
+    @State private var pending: Bool?
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(isOn: Binding(get: { pending ?? enabled }, set: { change(to: $0) })) {
+                Label("Wi-Fi through macOS", systemImage: "wifi.router")
+            }
+            .disabled(pending != nil)
+            .help("Lets macOS reach this device over Wi-Fi as Finder and Xcode do, as a fallback when this app's own Wi-Fi pairing stops working.")
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.orange)
+            }
+        }
+        .onChange(of: enabled) { _, _ in pending = nil }
+    }
+
+    private func change(to value: Bool) {
+        pending = value
+        error = nil
+        Task {
+            do {
+                try await DeviceHub.shared.setSystemWifi(udid, enabled: value)
+            } catch {
+                self.error = String(describing: error)
+                pending = nil
+            }
+        }
     }
 }
 

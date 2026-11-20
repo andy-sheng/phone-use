@@ -17,22 +17,31 @@ import contextlib
 import json
 import logging
 import os
+import plistlib
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional, Protocol
 
 from pymobiledevice3.bonjour import REMOTEPAIRING_SERVICE_NAME
-from pymobiledevice3.exceptions import ConnectionTerminatedError, InvalidServiceError, RemotePairingCompletedError
+from pymobiledevice3.exceptions import ConnectionTerminatedError, InvalidServiceError
 from pymobiledevice3.lockdown import UsbmuxLockdownClient, create_using_usbmux
-from pymobiledevice3.pair_records import iter_remote_pair_records_by_identifier
+from pymobiledevice3.pair_records import (
+    PAIRING_RECORD_EXT,
+    create_pairing_records_cache_folder,
+    get_remote_pairing_record_filename,
+    iter_remote_pair_records_by_identifier,
+)
 from pymobiledevice3.remote import userspace_tunnel
 from pymobiledevice3.remote.remote_service_discovery import RemoteServiceDiscoveryService
 from pymobiledevice3.remote.tunnel_service import (
     CoreDeviceTunnelProxy,
     PEER_ALT_IRK_KEY,
+    PairingDataComponentTLVBuf,
+    PairingDataComponentType,
     RemotePairingLockdownService,
+    RemotePairingTunnelService,
     _match_remote_pair_record,
-    create_core_device_tunnel_service_using_remotepairing,
 )
 from pymobiledevice3.remote.userspace_tunnel import UserspaceRsdTunnel
 from pymobiledevice3.usbmux import list_devices
@@ -44,6 +53,13 @@ logger = logging.getLogger("devicehubd")
 
 USB = "usb"
 NETWORK = "network"
+
+# The RPC error code for a Wi-Fi pairing the device refused.
+WIRELESS_REJECTED = "wirelessPairingRejected"
+# Kept in the shared RemotePairing record next to pymobiledevice3's own keys.
+REJECTED_AT_KEY = "devicehubRejectedAt"
+# The pairing TLV error a device answers pair-verify with when it does not know the host's key.
+AUTHENTICATION_ERROR = b"\x02"
 
 BROWSE_WINDOW = 3.0
 BROWSE_PAUSE = 2.0
@@ -132,15 +148,35 @@ def has_wireless_pairing(udid: str) -> bool:
     return udid in wireless_identities()
 
 
-async def pair_wireless(lockdown: Any) -> None:
-    """Create the device's RemotePairing record over an already trusted USB lockdown connection."""
+async def pair_wireless(lockdown: Any) -> bool:
+    """Make sure the device accepts this Mac's RemotePairing record, over a trusted USB lockdown.
+
+    A record can exist and still be refused over Wi-Fi: the device forgot this Mac, or this Mac's
+    hostname-derived host identifier changed since pairing. The same pair-verify runs here first;
+    only a refused or missing record is replaced, and pairing over lockdown shows no prompt.
+    Returns whether a new record was written.
+    """
     service = await RemotePairingLockdownService.create(lockdown)
     try:
-        # The device closes the channel as soon as pair-setup completes.
-        with contextlib.suppress(RemotePairingCompletedError):
-            await service.connect(autopair=True)
+        # `connect()` cannot tell a verified record from a refused one without autopair, and with
+        # autopair it pairs under a refused record's identifier, then saves a record without it.
+        own_identifier = service.identifier
+        await service._attempt_pair_verify()
+        if await service._validate_pairing():
+            return False
+        service.identifier = own_identifier
+        await service._pair()
+        _pin_host_identifier(service.pair_record_path, own_identifier)
+        return True
     finally:
         await service.close()
+
+
+def _pin_host_identifier(path: Path, host_identifier: str) -> None:
+    """Pair-verify presents the record's identifier instead of one derived from the current hostname."""
+    record = plistlib.loads(path.read_bytes())
+    record["host_identifier"] = host_identifier
+    path.write_bytes(plistlib.dumps(record))
 
 
 class NetworkDiscovery:
@@ -270,6 +306,90 @@ async def _network_tunnel_provider(serial: Optional[str], autopair: bool, remote
     return await _remote_pairing_service(serial), None
 
 
+class PairingRejected(Exception):
+    """The device answered pair-verify and does not know this record's key."""
+
+
+class _CheckedRemotePairing(RemotePairingTunnelService):
+    """RemotePairing over Wi-Fi that tells a refused record from a lost connection.
+
+    Upstream raises the same bare `ConnectionTerminatedError` for both.
+    """
+
+    def __init__(self, remote_identifier: str, hostname: str, port: int) -> None:
+        super().__init__(remote_identifier, hostname, port)
+        self.stage = "connect"
+        self.pairing_error: Optional[bytes] = None
+        self._last_pairing_data = b""
+
+    async def _attempt_pair_verify(self) -> None:
+        self.stage = "handshake"
+        await super()._attempt_pair_verify()
+        self.stage = "verify"
+
+    async def _receive_pairing_data(self) -> bytes:
+        self._last_pairing_data = await super()._receive_pairing_data()
+        return self._last_pairing_data
+
+    async def _validate_pairing(self) -> bool:
+        if await super()._validate_pairing():
+            return True
+        components = self.decode_tlv(PairingDataComponentTLVBuf.parse(self._last_pairing_data))
+        self.pairing_error = components.get(PairingDataComponentType.ERROR)
+        # Other errors (busy, back off, unavailable) can pass; only this one is about the key.
+        if self.pairing_error == AUTHENTICATION_ERROR:
+            raise PairingRejected()
+        return False
+
+
+async def _open_remote_pairing(udid: Optional[str], host: str, port: int) -> RemotePairingTunnelService:
+    service = _CheckedRemotePairing(udid or "", host, port)
+    try:
+        await service.connect(autopair=False)
+    except PairingRejected:
+        raise
+    except Exception as e:
+        logger.warning("RemotePairing connection failed host=%s port=%s stage=%s pairing_error=%s error=%r",
+                       host, port, service.stage,
+                       service.pairing_error.hex() if service.pairing_error is not None else "none", e)
+        raise
+    return service
+
+
+def _remote_record_path(udid: str) -> Path:
+    return create_pairing_records_cache_folder() / f"{get_remote_pairing_record_filename(udid)}.{PAIRING_RECORD_EXT}"
+
+
+def _read_remote_record(udid: str) -> Optional[dict[str, Any]]:
+    try:
+        return plistlib.loads(_remote_record_path(udid).read_bytes())
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return None
+
+
+def mark_wireless_rejected(udid: Optional[str]) -> None:
+    """Note the refusal in the shared record, so every app using it stops offering Wi-Fi.
+
+    Pairing again rewrites the record without this key.
+    """
+    record = _read_remote_record(udid or "")
+    if record is None:
+        return
+    record[REJECTED_AT_KEY] = time.time()
+    with contextlib.suppress(OSError):
+        _remote_record_path(udid or "").write_bytes(plistlib.dumps(record))
+
+
+def wireless_rejected(udid: str) -> bool:
+    record = _read_remote_record(udid)
+    return record is not None and REJECTED_AT_KEY in record
+
+
+def forget_wireless_pairing(udid: str) -> None:
+    with contextlib.suppress(OSError):
+        _remote_record_path(udid).unlink(missing_ok=True)
+
+
 async def _remote_pairing_service(udid: Optional[str]) -> Any:
     """Connect over this tool's RemotePairing record.
 
@@ -286,9 +406,14 @@ async def _remote_pairing_service(udid: Optional[str]) -> Any:
         tried.add((host, port))
         logger.info("RemotePairing connection attempt host=%s port=%s", host, port)
         try:
-            return await create_core_device_tunnel_service_using_remotepairing(udid, host, port)
-        except (ConnectionTerminatedError, asyncio.IncompleteReadError, asyncio.TimeoutError, OSError) as e:
-            logger.warning("RemotePairing connection failed host=%s port=%s error=%r", host, port, e)
+            return await _open_remote_pairing(udid, host, port)
+        except PairingRejected:
+            # Every address reaches the same device, so the answer holds for all of them.
+            logger.warning("wireless.verify.rejected host=%s port=%s", host, port)
+            mark_wireless_rejected(udid)
+            raise RpcError(WIRELESS_REJECTED, f"The device no longer accepts its Wi-Fi pairing with "
+                                              f"{identity.display_name()}; connect it with USB once to pair again") from None
+        except (ConnectionTerminatedError, asyncio.IncompleteReadError, asyncio.TimeoutError, OSError):
             return None
 
     for host, port in _known_endpoints():

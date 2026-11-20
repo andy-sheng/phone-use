@@ -88,6 +88,29 @@ an open Wi-Fi session stays attached while its worker's tunnel is alive.
 A first connection without USB obtains its actual OS version from the worker
 before selecting mirror video and the iOS 27 HID authentication policy.
 
+A RemotePairing record can exist and still be refused. The device forgets this
+Mac when its trusted computers are cleared, and pymobiledevice3 derives the host
+identifier from the hostname unless the record stores one. Each USB attachment
+therefore runs pair-verify over `com.apple.dt.remotepairingdeviced.lockdown` and
+pairs again, without a prompt, only when the device refuses the record; the new
+record pins `host_identifier`. Over Wi-Fi, a pair-verify answer with the
+authentication TLV error (`0x02`) is a refusal rather than a lost connection: the
+worker stops trying other addresses, writes `devicehubRejectedAt` into the shared
+record and fails with `wirelessPairingRejected`. Other TLV errors and transport
+failures keep the previous retry behaviour. The network device then reports
+`wirelessPairingExpired` instead of `ready`, so neither app reconnects in a loop.
+The next USB attachment discards a marked record before pairing, since lockdown
+may still verify a record Wi-Fi refused; a new pairing from either app rewrites
+the record without the marker. Logs name `wireless.verify.rejected`,
+`wireless.repaired` (with `reason=missing|refused|rejectedOverWifi`) and
+`wireless.repair.failed`, and each failed Wi-Fi attempt names the stage it reached
+(`connect`, `handshake`, `verify`) with any pairing TLV error.
+
+`setSystemWifi` (USB only) sets lockdown's `EnableWifiConnections`, which is what
+Finder's "Show this iPhone when on Wi-Fi" changes. It gives macOS its own Wi-Fi
+route through `usbmuxd`, independent of this tool's RemotePairing record; USB
+probes report it as `systemWifi`.
+
 Offline tests cover discovery without prior records, address fallback without
 replaying consent, failed code verification, cancellation, timeout, client
 ownership, and USB session preservation. They do not establish physical-device

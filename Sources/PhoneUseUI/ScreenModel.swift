@@ -153,8 +153,12 @@ public final class ScreenModel: ObservableObject {
                 break
             } catch {
                 guard isCurrentRequest(device.id, generation: generation) else { return }
-                Diagnostics.record("preview.connect.failed", ["device": Diagnostics.deviceID(device.udid), "attempt": String(attempt), "error": String(describing: error)])
+                let code: String? = if case DeviceHubError.daemon(let code, _) = error { code } else { nil }
+                Diagnostics.record("preview.connect.failed", ["device": Diagnostics.deviceID(device.udid), "attempt": String(attempt),
+                                                              "code": code ?? "", "error": String(describing: error)])
                 lastError = String(describing: error)
+                // The device answered and refused the pairing; asking again gets the same answer.
+                if code == "wirelessPairingRejected" { break }
                 if attempt < connectionAttempts {
                     status = "Waiting for \(device.name)…"
                     do { try await Task.sleep(for: retryDelay) }

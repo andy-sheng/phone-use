@@ -67,6 +67,11 @@ public actor DeviceHub {
         try await daemon().revealDeveloperMode(udid)
     }
 
+    /// Lets macOS reach the device over Wi-Fi on its own; the device must be on USB.
+    public func setSystemWifi(_ udid: String, enabled: Bool) async throws {
+        try await daemon().setSystemWifi(udid, enabled: enabled)
+    }
+
     public func mountDeveloperImage(_ udid: String) async throws {
         try await daemon().mountDeveloperImage(udid)
     }

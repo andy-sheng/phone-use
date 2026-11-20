@@ -112,6 +112,10 @@ public actor DaemonClient {
         try await callIgnoringResult("stopWirelessPairing", ["sessionID": sessionID])
     }
 
+    public func setSystemWifi(_ udid: String, enabled: Bool) async throws {
+        try await callIgnoringResult("setSystemWifi", ["udid": udid, "enabled": enabled])
+    }
+
     public func revealDeveloperMode(_ udid: String) async throws {
         try await callIgnoringResult("revealDeveloperMode", ["udid": udid])
     }
@@ -235,16 +239,16 @@ public actor DaemonClient {
 
     // MARK: Transport
 
-    private func callIgnoringResult(_ method: String, _ params: [String: String]) async throws {
+    private func callIgnoringResult(_ method: String, _ params: [String: Any]) async throws {
         _ = try await rawCall(method, params)
     }
 
-    private func call<T: Decodable>(_ method: String, _ params: [String: String] = [:], as type: T.Type) async throws -> T {
+    private func call<T: Decodable>(_ method: String, _ params: [String: Any] = [:], as type: T.Type) async throws -> T {
         let data = try await rawCall(method, params)
         return try JSONDecoder().decode(T.self, from: data)
     }
 
-    private func rawCall(_ method: String, _ params: [String: String]) async throws -> Data {
+    private func rawCall(_ method: String, _ params: [String: Any]) async throws -> Data {
         if let failure { throw DeviceHubError.daemonUnavailable("\(failure)") }
         let id = nextID
         nextID += 1

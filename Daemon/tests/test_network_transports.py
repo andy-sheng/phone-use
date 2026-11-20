@@ -223,7 +223,7 @@ class RemotePairingServiceTests(unittest.IsolatedAsyncioTestCase):
         with browse, patch('devicehubd.transports.wireless_identities', return_value={'udid': b'irk'}), \
                 patch('devicehubd.transports._match_remote_pair_record',
                       side_effect=lambda item, irks: 'udid' if item.properties['identifier'] == 'mine' else None), \
-                patch('devicehubd.transports.create_core_device_tunnel_service_using_remotepairing', connect):
+                patch('devicehubd.transports._open_remote_pairing', connect):
             self.assertIs(await _remote_pairing_service('udid'), service)
         self.assertEqual([call.args for call in connect.await_args_list],
                          [('udid', 'fe80::1%en1', 49152), ('udid', '192.168.1.5', 49152)])
@@ -235,7 +235,7 @@ class RemotePairingServiceTests(unittest.IsolatedAsyncioTestCase):
         connect = AsyncMock(return_value=service)
         with browse, patch.dict('os.environ', {ENDPOINTS_ENV: '[["192.168.1.111", 49152]]'}), \
                 patch('devicehubd.transports.wireless_identities', return_value={'udid': b'irk'}), \
-                patch('devicehubd.transports.create_core_device_tunnel_service_using_remotepairing', connect):
+                patch('devicehubd.transports._open_remote_pairing', connect):
             self.assertIs(await _remote_pairing_service('udid'), service)
         connect.assert_awaited_once_with('udid', '192.168.1.111', 49152)
         self.assertEqual(calls, [])
@@ -247,7 +247,7 @@ class RemotePairingServiceTests(unittest.IsolatedAsyncioTestCase):
         with browse, patch.dict('os.environ', {ENDPOINTS_ENV: '[["192.168.1.111", 49152]]'}), \
                 patch('devicehubd.transports.wireless_identities', return_value={'udid': b'irk'}), \
                 patch('devicehubd.transports._match_remote_pair_record', return_value='udid'), \
-                patch('devicehubd.transports.create_core_device_tunnel_service_using_remotepairing', connect):
+                patch('devicehubd.transports._open_remote_pairing', connect):
             self.assertIs(await _remote_pairing_service('udid'), service)
         self.assertEqual([call.args[1] for call in connect.await_args_list], ['192.168.1.111', '192.168.1.120'])
 

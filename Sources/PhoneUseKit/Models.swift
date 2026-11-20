@@ -16,6 +16,8 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
         case ready
         case unauthorized
         case offline
+        /// The device refused this Mac's Wi-Fi pairing; a USB connection or a new pairing renews it.
+        case wirelessPairingExpired
     }
 
     public var id: String { udid }
@@ -36,13 +38,16 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
     public let developerImage: Bool?
     /// Whether the device is paired for Wi-Fi, which happens on its own while it is on USB.
     public let wireless: Bool?
+    /// Whether macOS itself may reach the device over Wi-Fi, as Finder's "Show this iPhone when
+    /// on Wi-Fi" allows. Known only while the device is on USB.
+    public let systemWifi: Bool?
     /// `closed`, `opening`, `open` or `failed`.
     public let session: String
     public let error: String?
 
     private enum CodingKeys: String, CodingKey {
         case udid, platform, connection, simulatorState, name, productType, productVersion, buildVersion, state
-        case paired, developerMode, developerImage, wireless, session, error
+        case paired, developerMode, developerImage, wireless, systemWifi, session, error
     }
 
     public init(from decoder: Decoder) throws {
@@ -61,6 +66,7 @@ public struct DeviceSummary: Codable, Hashable, Identifiable, Sendable {
         developerMode = try values.decodeIfPresent(Bool.self, forKey: .developerMode)
         developerImage = try values.decodeIfPresent(Bool.self, forKey: .developerImage)
         wireless = try values.decodeIfPresent(Bool.self, forKey: .wireless)
+        systemWifi = try values.decodeIfPresent(Bool.self, forKey: .systemWifi)
         session = try values.decode(String.self, forKey: .session)
         error = try values.decodeIfPresent(String.self, forKey: .error)
     }

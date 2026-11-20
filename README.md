@@ -119,6 +119,8 @@ python3.13 scripts/prepare-android-tools.py --archive /path/to/platform-tools_r3
 配对成功后设备会自动加入列表，后续在同一局域网中可被自动发现。关闭配对窗口会停止本次发现、广播及未完成的配对；窗口最多保持三分钟。
 系统已信任并通过 Wi-Fi 暴露给 usbmuxd 的设备（包括 Xcode 已连接的设备）会直接出现在列表中，无需重新配对；应用复用系统连接，不导入 Xcode 的配对密钥。
 旧版系统或未显示开发者模式时，先通过 USB 连接、信任并完成设置；后台会尝试建立无线配对，之后可拔线重连。USB 与 Wi-Fi 同时可用时优先使用 USB。
+设备不再接受这台 Mac 的无线配对时（例如在设备上移除了已信任的电脑），设备会显示「Wi-Fi pairing expired」且不再反复重试。用 USB 连接一次即可自动重新配对，设备上不会出现提示；没有数据线时也可以重新进行附近配对。
+设备通过 USB 连接时，检查器中的「Wi-Fi through macOS」开关相当于 Finder 的「在 Wi-Fi 上显示此 iPhone」，开启后应用自身的无线配对失效时仍可通过系统连接使用 Wi-Fi。
 
 ## iOS 模拟器
 

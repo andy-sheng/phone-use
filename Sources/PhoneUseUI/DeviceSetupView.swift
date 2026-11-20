@@ -5,6 +5,8 @@ import SwiftUI
 struct DeviceSetupView: View {
     @EnvironmentObject private var model: DeviceListModel
     let device: DeviceSummary
+    /// Opens nearby Wi-Fi pairing, for a device whose Wi-Fi pairing expired away from a cable.
+    var pairWirelessly: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -56,6 +58,7 @@ struct DeviceSetupView: View {
         case .offline: "Device is offline"
         case .developerModeOff: "Turn on Developer Mode"
         case .developerImageMissing: "Preparing developer services"
+        case .wirelessPairingExpired: "Wi-Fi pairing expired"
         case .ready: "Ready"
         }
     }
@@ -132,6 +135,16 @@ struct DeviceSetupView: View {
             Text("Installing developer services on the \(appleDeviceName). The first time needs an internet connection.")
             actionButton("Retry", progress: "Installing developer services…") {
                 try await DeviceHub.shared.mountDeveloperImage($0)
+            }
+        case .wirelessPairingExpired:
+            Text("The \(appleDeviceName) no longer accepts this Mac's Wi-Fi pairing, for example after this Mac was removed from its trusted computers.")
+                .fixedSize(horizontal: false, vertical: true)
+            Step(number: 1, text: "Connect the \(appleDeviceName) to this Mac with a USB cable once. Wi-Fi pairing renews on its own, without a prompt on the device.")
+            Step(number: 2, text: "Without a cable, pair again over Wi-Fi from Settings › Developer › Paired Macs on the \(appleDeviceName) (iOS 27 or later).")
+            if let pairWirelessly {
+                Button("Pair Over Wi-Fi…", action: pairWirelessly)
+                    .glassButton(prominent: true)
+                    .controlSize(.large)
             }
         case .ready:
             EmptyView()
