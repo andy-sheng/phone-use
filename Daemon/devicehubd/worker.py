@@ -395,6 +395,17 @@ def _free_port() -> int:
         return probe.getsockname()[1]
 
 
+def device_metadata(rsd: Any) -> dict[str, str]:
+    """What the tunnel learned about the device, so one known only over Wi-Fi still gets a name."""
+    values = getattr(rsd, "all_values", None) or {}
+    properties = (getattr(rsd, "peer_info", None) or {}).get("Properties") or {}
+    metadata = {
+        "deviceName": values.get("DeviceName"),
+        "productType": values.get("ProductType") or properties.get("ProductType"),
+        "buildVersion": values.get("BuildVersion") or properties.get("BuildVersion"),
+    }
+    return {key: value for key, value in metadata.items() if isinstance(value, str) and value}
+
 async def run(udid: str, connection: str, out: Any) -> int:
     worker = Worker(udid, connection, out)
     try:
@@ -412,6 +423,7 @@ async def run(udid: str, connection: str, out: Any) -> int:
         "event": "ready",
         "productVersion": worker.rsd.product_version,
         "services": worker.services(),
+        **device_metadata(worker.rsd),
     })
 
     loop = asyncio.get_running_loop()

@@ -705,6 +705,11 @@ class Supervisor:
                     if record.platform == "ios":
                         record.developer_image = True
                     record.product_version = message.get("productVersion") or record.product_version
+                    if record.platform == "ios" and not record.is_simulator:
+                        record.name = message.get("deviceName") or record.name
+                        record.product_type = message.get("productType") or record.product_type
+                        record.build_version = message.get("buildVersion") or record.build_version
+                        self._remember(record)
                     await self.broadcast()
             elif event in ("failed", "closed"):
                 failure = message.get("error")
