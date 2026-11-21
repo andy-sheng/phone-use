@@ -46,6 +46,25 @@ Screenshot-only connections do not offer recording. Stopping or switching the pr
 finalizes the current movie; stream errors, dropped compressed frames or format changes
 stop recording and report the failure, preserving any playable prefix.
 
+## Automation screenshots on physical iOS
+
+`automation-bridge` takes recognition screenshots through `ScreenshotVideoFallback`.
+Device screenshots stay the primary source because they are lossless and native size. On iOS 27
+the daemon already runs the Mirror stream to authenticate touches, so the bridge subscribes to
+it locally; this adds no device or Wi-Fi traffic. While that stream is up, a screenshot waits
+at most 8 s for its reply. Without it, the wait is 20 s. A timed-out reply is not retried,
+which keeps every bridge request inside the runtime's 30 s limit. A dead channel is still
+reopened once.
+
+When a screenshot fails or times out, the bridge requests a keyframe (`/pli`) and waits up to
+3 s for a frame decoded after the failure. That frame is scaled to native pixels and the
+reply's `source` is `video`. Frames whose aspect differs from the native screen, and frames in
+which the encoder collapsed the capture into the top-left corner with flat mid-gray padding,
+are rejected rather than stretched. Video frames are HEVC-compressed, so plugins with tight
+color or template thresholds should also be checked against video frames. Devices before
+iOS 27, and Mirror streams that cannot start, use screenshots only. A Mirror stream that
+ends is restarted on a later screenshot, at most every 10 s.
+
 Physical iOS lock uses a 100 ms Consumer/Power press (page `0x0C`, usage `0x30`),
 verified on iPhone 16 / iOS 26.5. The old 500 ms hold invoked Siri instead of locking.
 Presses release their key even when the hold is cancelled.

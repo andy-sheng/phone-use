@@ -72,6 +72,12 @@ final class IOSDeviceConnection: DeviceConnection, Sendable {
         return try ScreenCapture.image(from: try await channels.request(DeviceService.screenCapture, ScreenCapture.request()))
     }
 
+    /// One reply wait of at most `replyTimeout`; a timeout is reported rather than retried.
+    func screenshot(replyTimeout: Duration) async throws -> CGImage {
+        try ScreenCapture.image(from: try await channels.request(
+            DeviceService.screenCapture, ScreenCapture.request(), timeout: replyTimeout, retriesTimeout: false))
+    }
+
     func launchApp(bundleID: String) async throws {
         let reply = try await channels.request(DeviceService.appService, AppLaunch.request(bundleID: bundleID))
         _ = try CoreDeviceInvocation.output(of: reply, feature: AppLaunch.feature)
@@ -110,9 +116,14 @@ actor ServiceChannels {
         try await withConnection(service) { try await $0.send(message) }
     }
 
-    func request(_ service: String, _ message: XPCDictionary) async throws -> XPCDictionary {
-        try await Diagnostics.operation("ios.request", ["service": service, "device": Diagnostics.deviceID(udid), "attempt_timeout_ms": "20000", "max_attempts": "2"]) {
-            try await withConnection(service) { try await $0.request(message) }
+    /// `retriesTimeout: false` still reopens a dead channel once, but returns a reply timeout to the
+    /// caller instead of waiting a second full `timeout`.
+    func request(_ service: String, _ message: XPCDictionary, timeout: Duration = .seconds(20),
+                 retriesTimeout: Bool = true) async throws -> XPCDictionary {
+        try await Diagnostics.operation("ios.request", ["service": service, "device": Diagnostics.deviceID(udid),
+            "attempt_timeout_ms": String(Int(timeout.timeInterval * 1000)), "max_attempts": "2",
+            "retries_timeout": String(retriesTimeout)]) {
+            try await withConnection(service, retriesTimeout: retriesTimeout) { try await $0.request(message, timeout: timeout) }
         }
     }
 
@@ -138,10 +149,18 @@ actor ServiceChannels {
         connections.removeAll()
     }
 
-    private func withConnection<T>(_ service: String, _ body: (RemoteXPCConnection) async throws -> T) async throws -> T {
+    private func withConnection<T>(_ service: String, retriesTimeout: Bool = true,
+                                   _ body: (RemoteXPCConnection) async throws -> T) async throws -> T {
         do {
             return try await body(try await connection(for: service))
         } catch {
+            // A timed-out request has already failed its channel; the next use reopens it.
+            if !retriesTimeout, case DeviceHubError.timeout = error {
+                Diagnostics.record("ios.channel.timeout", ["device": Diagnostics.deviceID(udid), "service": service])
+                await connections.removeValue(forKey: service)?.close()
+                touchAuthenticated = false
+                throw error
+            }
             Diagnostics.record("ios.channel.retry", ["device": Diagnostics.deviceID(udid), "service": service, "error": String(describing: error)])
             // A dead channel fails its first use; open a fresh one once before giving up.
             await connections.removeValue(forKey: service)?.close()

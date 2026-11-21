@@ -15,10 +15,26 @@ final class MirrorScreenStream: ScreenStream {
     private let session: DeviceSession
     private let displayLayer = AVSampleBufferDisplayLayer()
     private var readTask: Task<Void, Never>?
+    private var streamURL: URL?
     private let recordingSink = ScreenRecordingSink()
     var canRecord: Bool { true }
     func copyFrame() -> CGImage? { recordingSink.frameCapture.copyFrame() }
     func copyPixelBuffer() -> CVPixelBuffer? { recordingSink.frameCapture.copyPixelBuffer() }
+    func copyLatestFrame() -> (pixels: CVPixelBuffer, uptime: TimeInterval)? {
+        recordingSink.frameCapture.copyLatestFrame()
+    }
+
+    /// Asks the daemon for a fresh keyframe (an RTCP PLI; the server rate-limits it). A static
+    /// screen otherwise sends new frames only every few seconds.
+    func requestKeyFrame() async {
+        guard let streamURL, var components = URLComponents(url: streamURL, resolvingAgainstBaseURL: false) else { return }
+        components.path = "/pli"
+        components.query = nil
+        guard let url = components.url else { return }
+        var request = URLRequest(url: url, timeoutInterval: 1)
+        request.httpMethod = "POST"
+        _ = try? await URLSession.shared.data(for: request)
+    }
 
     func startRecording(to destination: URL) throws -> any ScreenRecordingSession {
         try recordingSink.start(to: destination)
@@ -31,6 +47,7 @@ final class MirrorScreenStream: ScreenStream {
 
     func start() async throws {
         let url = try await session.mirrorURL()
+        streamURL = url
         let (bytes, response) = try await URLSession.shared.bytes(from: url)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else {
             throw DeviceHubError.serviceFailed("The mirror stream is not available")

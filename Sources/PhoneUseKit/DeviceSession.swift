@@ -153,6 +153,16 @@ public final class DeviceSession: @unchecked Sendable {
         }
     }
 
+    /// A physical iOS screenshot whose reply wait is bounded and not retried after a timeout.
+    /// Other platforms take their usual screenshot.
+    func screenshot(replyTimeout: Duration) async throws -> CGImage {
+        guard let ios = connection as? IOSDeviceConnection else { return try await screenshot() }
+        return try await Diagnostics.operation("screenshot", ["device": Diagnostics.deviceID(device.udid),
+            "connection": device.connection, "reply_timeout_ms": String(Int(replyTimeout.timeInterval * 1000))]) {
+            try await ios.screenshot(replyTimeout: replyTimeout)
+        }
+    }
+
     public func launchApp(bundleID: String) async throws {
         try await connection.launchApp(bundleID: bundleID)
     }

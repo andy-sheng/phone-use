@@ -9,6 +9,8 @@ final class ScreenFrameCapture: @unchecked Sendable {
     private let context = CIContext(options: [.cacheIntermediates: false])
     private var enabled = false
     private var pixels: CVPixelBuffer?
+    /// System uptime at which `pixels` became the latest frame.
+    private var pixelsUptime: TimeInterval = 0
     private var decoder: VTDecompressionSession?
     private var format: CMFormatDescription?
 
@@ -16,7 +18,7 @@ final class ScreenFrameCapture: @unchecked Sendable {
         lock.withLock {
             guard enabled else { return }
             if let image = CMSampleBufferGetImageBuffer(sample) {
-                pixels = image
+                setPixels(image)
                 return
             }
             guard let description = CMSampleBufferGetFormatDescription(sample) else { return }
@@ -38,9 +40,22 @@ final class ScreenFrameCapture: @unchecked Sendable {
                 status, _, image, _, _ in
                 if status == noErr { output.set(image) }
             }
-            if status == noErr, let image = output.get() { pixels = image }
+            if status == noErr, let image = output.get() { setPixels(image) }
             else { resetDecoder() }
         }
+    }
+
+    /// Latest decoded pixels and the system uptime at which they arrived. Opts in like `copyFrame`.
+    func copyLatestFrame() -> (pixels: CVPixelBuffer, uptime: TimeInterval)? {
+        lock.withLock {
+            enabled = true
+            return pixels.map { ($0, pixelsUptime) }
+        }
+    }
+
+    private func setPixels(_ image: CVPixelBuffer) {
+        pixels = image
+        pixelsUptime = ProcessInfo.processInfo.systemUptime
     }
 
     func copyFrame() -> CGImage? {

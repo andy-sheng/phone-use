@@ -88,6 +88,20 @@ def open_device(args, emit, bridge_factory=None, android_factory=None, android_i
         raise
 
 
+def capture(controller):
+    """One screenshot through Maa. Maa reports any capture failure as a missing cached image,
+    so the controller's own error, such as a bridge timeout, is what gets reported."""
+    if hasattr(controller, "last_error"):
+        controller.last_error = None
+    try:
+        image = controller.post_screencap().wait().get()
+    except RuntimeError as error:
+        raise RuntimeError(getattr(controller, "last_error", None) or "截图失败") from error
+    if image is None:
+        raise RuntimeError(getattr(controller, "last_error", None) or "截图失败")
+    return image
+
+
 def native_size(controller, info):
     if "width" in info and "height" in info:
         return [info["width"], info["height"]]
@@ -143,9 +157,7 @@ def execute(args, packages, emit, stop, bridge_factory=None, android_factory=Non
         if not tasker.bind(resource, controller) or not tasker.inited:
             raise RuntimeError("MaaFramework 初始化失败")
         if args.command == "probe":
-            image = controller.post_screencap().wait().get()
-            if image is None:
-                raise RuntimeError(getattr(controller, "last_error", None) or "截图失败")
+            image = capture(controller)
             path = (args.output / "screen.png").resolve()
             save_png(path, image)
             task = tasker.post_recognition("OCR", JOCR(roi=[0, 0, 0, 0]), image).wait().get()
@@ -197,8 +209,12 @@ def execute(args, packages, emit, stop, bridge_factory=None, android_factory=Non
         if result.get("status") not in {"completed", "cancelled", "failed"}:
             raise ValueError("插件返回了无效的结果状态")
         screenshot = None
+        # The final picture is optional: a failed capture must not replace the task's own result.
         if not stop.is_set():
-            image = controller.post_screencap().wait().get()
+            try:
+                image = capture(controller)
+            except RuntimeError:
+                image = None
             if image is not None:
                 screenshot = str((args.output / "final.png").resolve())
                 save_png(Path(screenshot), image)

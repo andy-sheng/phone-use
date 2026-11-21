@@ -16,6 +16,7 @@ private struct BridgeFailure: Error, CustomStringConvertible {
 @MainActor
 func runAutomationBridge(deviceQuery: String?) async {
     var session: DeviceSession?
+    var capture: ScreenshotVideoFallback?
     var heldPoint: (Double, Double)?
 
     func reply(_ object: [String: Any]) {
@@ -93,6 +94,10 @@ func runAutomationBridge(deviceQuery: String?) async {
                 guard valid.contains(method) else { throw BridgeFailure(description: "Unknown method: \(method)") }
                 if session == nil { session = try await DeviceHub.shared.session(for: deviceQuery) }
                 guard let session else { throw BridgeFailure(description: "Device session unavailable") }
+                if capture == nil {
+                    capture = ScreenshotVideoFallback(session: session)
+                    capture?.prepare()
+                }
                 var result: [String: Any] = [:]
                 switch method {
                 case "connect":
@@ -100,12 +105,14 @@ func runAutomationBridge(deviceQuery: String?) async {
                               "platform": session.device.isAndroid ? "android" : "ios",
                               "width": session.display.pixelWidth, "height": session.display.pixelHeight]
                 case "screenshot":
-                    let image = try await session.screenshot()
+                    guard let capture else { throw BridgeFailure(description: "Device session unavailable") }
+                    let (image, source) = try await capture.screenshot()
                     guard image.width == Int(session.display.pixelWidth), image.height == Int(session.display.pixelHeight) else {
                         throw BridgeFailure(description: "Screen orientation changed; portrait automation must be restarted")
                     }
                     guard let png = ImageEncoding.png(image) else { throw BridgeFailure(description: "Screenshot encoding failed") }
-                    result = ["png": png.base64EncodedString(), "width": image.width, "height": image.height]
+                    result = ["png": png.base64EncodedString(), "width": image.width, "height": image.height,
+                              "source": source.rawValue]
                 case "click":
                     guard heldPoint == nil else { throw BridgeFailure(description: "A touch is already held") }
                     let p = try point(params, session: session)
@@ -150,5 +157,6 @@ func runAutomationBridge(deviceQuery: String?) async {
         FileHandle.standardError.write(Data("automation bridge: \(error)\n".utf8))
     }
     try? await release()
+    capture?.stop()
     await session?.close()
 }

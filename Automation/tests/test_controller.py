@@ -10,6 +10,7 @@ from maa.tasker import Tasker
 
 from devicehub_runtime.controller import DeviceController
 from devicehub_runtime.images import encode_png
+from devicehub_runtime.runner import capture
 
 
 class FakeBridge:
@@ -81,6 +82,19 @@ class MaaCoordinateTests(unittest.TestCase):
         self.assertIsNone(controller.screencap())
         self.assertEqual(controller.last_error, "Screen orientation or size changed")
         self.assertFalse(any(method.startswith("touch") for method, _ in bridge.calls))
+
+    def test_failed_capture_reports_the_bridge_error_instead_of_maas_cache_message(self):
+        class TimingOutBridge(FakeBridge):
+            def request(self, method, **params):
+                if method == "screenshot":
+                    raise TimeoutError("automation-bridge screenshot timed out; run stopped")
+                return super().request(method, **params)
+
+        controller = DeviceController(TimingOutBridge())
+        self.assertTrue(controller.post_connection().wait().succeeded)
+        controller.last_error = "an older failure"
+        with self.assertRaisesRegex(RuntimeError, "^automation-bridge screenshot timed out; run stopped$"):
+            capture(controller)
 
 
 if __name__ == "__main__":

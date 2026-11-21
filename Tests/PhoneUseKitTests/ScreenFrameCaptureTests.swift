@@ -26,5 +26,12 @@ final class ScreenFrameCaptureTests: XCTestCase {
         XCTAssertEqual(image.height, 16)
         capture.reset()
         XCTAssertNil(capture.copyFrame())
+
+        // Timestamps tell a fallback whether a frame arrived after its screenshot failed.
+        let before = ProcessInfo.processInfo.systemUptime
+        capture.append(try XCTUnwrap(sample))
+        let frame = try XCTUnwrap(capture.copyLatestFrame())
+        XCTAssertGreaterThanOrEqual(frame.uptime, before)
+        XCTAssertLessThanOrEqual(frame.uptime, ProcessInfo.processInfo.systemUptime)
     }
 }
