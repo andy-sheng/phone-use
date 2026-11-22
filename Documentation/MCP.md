@@ -6,12 +6,13 @@ PhoneUseKit 的共享设备会话执行；无需另装 sim-use、idb、XcodeBuil
 
 ## 发现、观察、操作、验证
 
-1. 调用 `list_devices`，查看设备状态及 `capabilities`。屏幕和输入操作要求设备为 `ready`。自建或此前用过的关机模拟器也会列出，可用 `start_simulator` 启动。
+1. 调用 `list_devices`，查看设备状态及 `capabilities`。`state: ready` 表示可连接。另看 `lock_state` 判断屏幕是否锁定。自建或此前用过的关机模拟器也会列出，可用 `start_simulator` 启动。
 2. 调用 `select_device` 选择设备，再调用 `connect_device` 建立连接并请求预览，对应界面的选中与连接。
    `select_device` 不连接设备，也可选择尚需配对等准备的设备；`connect_device` 只连接 `ready` 设备。
    省略 `device` 时使用 PhoneUse 当前选中设备；没有选中设备时，只能自动选取唯一的就绪设备。
    当前选择与界面、所有 MCP 客户端共享，并发 agent 应显式传入完整标识。名称匹配不唯一会报错。
    当前选中设备不可用时不会静默换到另一台设备。
+   连接成功后会重新查询 `lock_state`。若为 `locked`，先按 `unlock_hint` 解锁，再启动应用或发送输入。若为 `unknown`，先观察当前界面。黑屏本身无法确认锁屏状态。
 3. iOS 模拟器和真机中的开发签名应用优先用 `describe_ui` 读取界面，并用 `id`、`label` 或 `label_contains` 定位。
    真机中的系统/App Store/TestFlight 应用、Android 或自绘控件使用 `screenshot`，根据返回图像的坐标操作。
 4. 操作后再次读取 UI 树或截图验证。返回 `input_sent: true` 仅表示输入已发送，
@@ -26,6 +27,9 @@ PhoneUseKit 的共享设备会话执行；无需另装 sim-use、idb、XcodeBuil
 
 | 字段 | 含义 |
 | --- | --- |
+| `lock_state` | 本次读取的屏幕状态，取值为 `locked`、`unlocked` 或 `unknown` |
+| `passcode_required`、`unlocked_since_boot` | iOS 真机有系统回读时提供。仅凭当前无需密码，仍可能无法确定屏幕是否锁定 |
+| `unlock_hint` | 已确认锁屏时提供。若重启后尚未首次解锁，提示用户手动解锁 |
 | `web_preview.available`、`web_preview.url` | 服务是否验证成功；只有成功时才附 URL |
 | `web_preview_pending` | 当前未取得已验证的 URL |
 | `next_required_action` | 有已验证的地址时为 `open_url` |

@@ -21,6 +21,26 @@ public actor DeviceHub {
         try await daemon().devices()
     }
 
+    /// Read-only. Listing devices must not boot a simulator or open a device session.
+    public func lockStatus(for device: DeviceSummary) async -> DeviceLockStatus {
+        guard device.isReady else { return DeviceLockStatus(.unknown) }
+        if device.isAndroid || device.isSimulator {
+            let locked: Bool?
+            if device.isAndroid {
+                locked = try? await daemon().androidScreenLocked(device.udid)
+            } else {
+                locked = try? await device.simulatorScreenLocked()
+            }
+            return DeviceLockStatus(locked.map { $0 ? .locked : .unlocked } ?? .unknown)
+        }
+        let status = (try? await device.physicalLockStatus()) ?? DeviceLockStatus(.unknown)
+        guard status.state == .unknown, let locked = try? await sessions[device.udid]?.physicalScreenLock() else {
+            return status
+        }
+        return DeviceLockStatus(locked ? .locked : .unlocked, passcodeRequired: status.passcodeRequired,
+                                unlockedSinceBoot: status.unlockedSinceBoot)
+    }
+
     public func deviceUpdates() async throws -> AsyncStream<[DeviceSummary]> {
         try await daemon().deviceUpdates()
     }

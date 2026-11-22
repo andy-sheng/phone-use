@@ -38,6 +38,7 @@ from pymobiledevice3.services.mobile_image_mounter import (
 )
 
 from devicehubd import VERSION, identity, protocol
+from devicehubd.android_unlock import parse_keyguard
 from devicehubd.android import AndroidAttachment, AndroidDiscovery
 from devicehubd.protocol import RpcError
 from devicehubd.simulator import SIMULATOR, SimulatorAttachment, SimulatorDiscovery
@@ -855,6 +856,12 @@ class Supervisor:
         if method == "subscribe":
             self.subscribers.add(writer)
             return {"devices": self.device_list()}
+        if method == "androidLockState":
+            record = self._record(udid)
+            if record.platform != "android" or record.adb_state != "device" or not record.adb_serial:
+                raise RpcError("deviceNotReady", "Android device is not ready")
+            output = await self.android.command("-s", record.adb_serial, "shell", "dumpsys", "window", "policy", timeout=3)
+            return {"locked": parse_keyguard(output)}
         if method == "androidTools":
             # Clients that drive Android themselves must use this same adb: a second adb
             # version would restart the shared server and drop every device connection.

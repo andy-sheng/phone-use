@@ -12,6 +12,16 @@ final class PasscodeKeypadTests: XCTestCase {
         }
     }
 
+    func testPhysicalLockStatusPreservesPartialCoreDeviceEvidence() {
+        let noPIN = DeviceLockStatus(physicalInfo: ["passcodeRequired": false, "unlockedSinceBoot": true])
+        XCTAssertEqual(noPIN.state, .unknown)
+        XCTAssertEqual(noPIN.passcodeRequired, false)
+        XCTAssertEqual(noPIN.unlockedSinceBoot, true)
+        XCTAssertEqual(DeviceLockStatus(physicalInfo: ["passcodeRequired": true]).state, .locked)
+        XCTAssertEqual(DeviceLockStatus(physicalInfo: ["unlockedSinceBoot": false]).state, .locked)
+        XCTAssertEqual(DeviceLockStatus(physicalInfo: [:]).state, .unknown)
+    }
+
     func testVisionReadsSyntheticPasscodeScreen() throws {
         let size = CGSize(width: 780, height: 1688)
         let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width),

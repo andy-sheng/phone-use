@@ -8,6 +8,47 @@ public enum DeviceUnlockResult: String, Sendable {
     case unconfirmed = "unlock_unconfirmed"
 }
 
+public struct DeviceLockStatus: Sendable {
+    public enum State: String, Sendable { case locked, unlocked, unknown }
+    public let state: State
+    public let passcodeRequired: Bool?
+    public let unlockedSinceBoot: Bool?
+
+    public init(_ state: State, passcodeRequired: Bool? = nil, unlockedSinceBoot: Bool? = nil) {
+        self.state = state
+        self.passcodeRequired = passcodeRequired
+        self.unlockedSinceBoot = unlockedSinceBoot
+    }
+
+    init(physicalInfo: [String: Any]) {
+        let required = physicalInfo["passcodeRequired"] as? Bool
+        let sinceBoot = physicalInfo["unlockedSinceBoot"] as? Bool
+        self.init(required == true || sinceBoot == false ? .locked : .unknown,
+                  passcodeRequired: required, unlockedSinceBoot: sinceBoot)
+    }
+}
+
+extension DeviceSummary {
+    func physicalLockStatus() async throws -> DeviceLockStatus {
+        let info = try await DeviceCtl.run(["device", "info", "lockState", "--device", deviceIdentifier], timeout: 5)
+        return DeviceLockStatus(physicalInfo: info)
+    }
+
+    func simulatorScreenLocked() async throws -> Bool {
+        guard let developer = SimulatorTools.developerDirectory() else {
+            throw DeviceHubError.capabilityUnavailable("Xcode simulator tools")
+        }
+        let name = "com.apple.springboard.lockstate"
+        let output = try await SimulatorTools.simctl(["spawn", deviceIdentifier, "notifyutil", "-g", name],
+                                                    developerDirectory: developer, timeout: .seconds(5))
+        let fields = output.split(whereSeparator: \.isWhitespace)
+        guard fields.count == 2, fields[0] == Substring(name), let value = UInt64(fields[1]) else {
+            throw DeviceHubError.serviceFailed("Cannot read the simulator lock state")
+        }
+        return value != 0
+    }
+}
+
 /// Only the app owns credentials. Obtain the PIN before locating the keypad so Keychain latency cannot stale the coordinates.
 extension DeviceSession {
     public func unlock(takePIN: @Sendable (String) async throws -> String?) async throws -> DeviceUnlockResult {
@@ -17,19 +58,7 @@ extension DeviceSession {
     }
 
     private func unlockSimulator(takePIN: @Sendable () async throws -> String?) async throws -> DeviceUnlockResult {
-        guard let developer = SimulatorTools.developerDirectory() else {
-            throw DeviceHubError.capabilityUnavailable("Xcode simulator tools")
-        }
-        func isLocked() async throws -> Bool {
-            let name = "com.apple.springboard.lockstate"
-            let output = try await SimulatorTools.simctl(["spawn", device.deviceIdentifier, "notifyutil", "-g", name],
-                                                        developerDirectory: developer, timeout: .seconds(5))
-            let fields = output.split(whereSeparator: \.isWhitespace)
-            guard fields.count == 2, fields[0] == Substring(name), let value = UInt64(fields[1]) else {
-                throw DeviceHubError.serviceFailed("Cannot read the simulator lock state")
-            }
-            return value != 0
-        }
+        func isLocked() async throws -> Bool { try await device.simulatorScreenLocked() }
         guard try await isLocked() else { return .alreadyUnlocked }
         try await press(.home)
         try await Task.sleep(for: .milliseconds(650))
@@ -45,11 +74,11 @@ extension DeviceSession {
 
     private func unlockPhone(takePIN: @Sendable () async throws -> String?) async throws -> DeviceUnlockResult {
         func state() async throws -> (requiresPIN: Bool, firstUnlock: Bool) {
-            let info = try await DeviceCtl.run(["device", "info", "lockState", "--device", device.deviceIdentifier], timeout: 5)
-            guard let required = info["passcodeRequired"] as? Bool, let boot = info["unlockedSinceBoot"] as? Bool else {
+            let status = try await device.physicalLockStatus()
+            guard let required = status.passcodeRequired, let sinceBoot = status.unlockedSinceBoot else {
                 throw DeviceHubError.serviceFailed("Cannot determine the device passcode state")
             }
-            return (required, boot)
+            return (required, sinceBoot)
         }
         let initial = try await state()
         guard initial.firstUnlock else { return .needsUserUnlock }

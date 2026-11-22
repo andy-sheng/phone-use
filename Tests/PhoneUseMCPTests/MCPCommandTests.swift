@@ -347,6 +347,55 @@ private actor WorkspaceProbe {
 }
 
 extension MCPCommandTests {
+    func testLockStateIsIndependentOfReadinessAndRefreshedAfterConnect() async throws {
+        let phone = try testDevice("phone", connection: "usb")
+        let boot = try testDevice("boot", connection: "usb")
+        let offline = try testDevice("offline", state: "untrusted")
+        let devices = [phone, offline, boot]
+        let probe = WorkspaceProbe()
+        let workspace = MCPWorkspaceAccess(selectedDevice: { await probe.selected }, select: { _ in },
+            connect: { try await probe.connect($0) }, unlock: { _ in
+                XCTFail("Status checks must not unlock the device")
+                return .unconfirmed
+            })
+        let access = MCPDeviceAccess(devices: { devices }, session: { _ in
+            XCTFail("Status checks must not open an extra session")
+            throw DeviceHubError.connectionClosed
+        }, lockStatus: { device in
+            XCTAssertTrue(device.isReady)
+            if device.id == boot.id {
+                return DeviceLockStatus(.locked, passcodeRequired: true, unlockedSinceBoot: false)
+            }
+            if await probe.selected == device.id { return DeviceLockStatus(.unlocked) }
+            return DeviceLockStatus(.locked, passcodeRequired: true, unlockedSinceBoot: true)
+        })
+        let listed = try await MCPCommand(name: "list_devices", arguments: [:]).execute(access: access, workspace: workspace)
+        let list = try XCTUnwrap(listed["structuredContent"] as? [String: Any])
+        let rows = try XCTUnwrap(list["devices"] as? [[String: Any]])
+        XCTAssertEqual(rows.compactMap { $0["udid"] as? String }, devices.map(\.udid))
+        XCTAssertEqual(rows.compactMap { $0["lock_state"] as? String }, ["locked", "unknown", "locked"])
+        XCTAssertEqual(rows[0]["state"] as? String, "ready")
+        XCTAssertEqual(rows[0]["passcode_required"] as? Bool, true)
+        XCTAssertTrue((rows[0]["unlock_hint"] as? String)?.contains("unlock_device") == true)
+        XCTAssertNil(rows[1]["passcode_required"])
+        XCTAssertNil(rows[1]["unlock_hint"])
+        XCTAssertEqual(rows[2]["unlocked_since_boot"] as? Bool, false)
+        XCTAssertTrue((rows[2]["unlock_hint"] as? String)?.contains("Ask the user") == true)
+
+        let result = try await MCPCommand(name: "connect_device", arguments: ["device": phone.id])
+            .execute(access: access, workspace: workspace)
+        let connection = try XCTUnwrap(result["structuredContent"] as? [String: Any])
+        XCTAssertEqual(connection["lock_state"] as? String, "unlocked")
+        XCTAssertEqual(connection["session_connected"] as? Bool, true)
+        XCTAssertNil(connection["unlock_hint"])
+
+        let bootResult = try await MCPCommand(name: "connect_device", arguments: ["device": boot.id])
+            .execute(access: access, workspace: workspace)
+        let bootConnection = try XCTUnwrap(bootResult["structuredContent"] as? [String: Any])
+        XCTAssertEqual(bootConnection["lock_state"] as? String, "locked")
+        XCTAssertEqual(bootConnection["unlock_hint"] as? String, rows[2]["unlock_hint"] as? String)
+    }
+
     func testOnlyConnectReturnsVerifiedWebHandoffEvenWithBatchedDeviceCalls() async throws {
         let session = try TestSession()
         let probe = WebHandoffProbe()
@@ -398,6 +447,7 @@ extension MCPCommandTests {
         let connection = try XCTUnwrap(connectedResult["structuredContent"] as? [String: Any])
         XCTAssertEqual(connection["session_connected"] as? Bool, true)
         XCTAssertEqual(connection["web_preview_pending"] as? Bool, true)
+        XCTAssertEqual(connection["lock_state"] as? String, "unknown")
         XCTAssertNil(connection["next_required_action"])
         let preview = try XCTUnwrap(connection["web_preview"] as? [String: Any])
         XCTAssertNil(preview["url"])

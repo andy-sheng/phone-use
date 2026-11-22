@@ -435,6 +435,22 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.supervisor.android.adb_path = "/adb"
         self.supervisor.simulators.attached = AsyncMock(return_value=[])
 
+    async def test_read_lock_state_without_opening_worker(self):
+        record = DeviceRecord(udid="android:serial", connection="usb", platform="android",
+                              adb_serial="serial", adb_state="device")
+        self.supervisor.records[record.udid] = record
+        self.supervisor._worker = AsyncMock()
+        command = AsyncMock(return_value="KeyguardServiceDelegate\n  showing=true\n")
+        self.supervisor.android.command = command
+        result = await self.supervisor.dispatch("androidLockState", {"udid": record.udid}, None)
+        self.assertEqual(result, {"locked": True})
+        command.assert_awaited_once_with("-s", "serial", "shell", "dumpsys", "window", "policy", timeout=3)
+        record.adb_state = "unauthorized"
+        with self.assertRaises(RpcError):
+            await self.supervisor.dispatch("androidLockState", {"udid": record.udid}, None)
+        self.assertEqual(command.await_count, 1)
+        self.supervisor._worker.assert_not_awaited()
+
     async def test_mixed_discovery_authorization_change_and_disconnect(self):
         ios = SimpleNamespace(connection="usb", attached=AsyncMock(return_value=[SimpleNamespace(udid="same", connection="usb")]))
         android = AndroidAttachment("same", "unauthorized", "usb", "Pixel", "Pixel")

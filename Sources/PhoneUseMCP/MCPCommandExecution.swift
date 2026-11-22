@@ -28,6 +28,7 @@ extension DeviceSession: MCPDeviceSession {}
 struct MCPDeviceAccess: Sendable {
     let devices: @Sendable () async throws -> [DeviceSummary]
     let session: @Sendable (String) async throws -> any MCPDeviceSession
+    var lockStatus: @Sendable (DeviceSummary) async -> DeviceLockStatus = { _ in DeviceLockStatus(.unknown) }
     var files: @Sendable (DeviceSummary) throws -> any DeviceFileAccess = { try DeviceFiles(device: $0) }
     var webPreview: @Sendable (String, UInt16) async throws -> URL = { _, _ in
         throw ToolFailure(message: "Web preview discovery is not configured")
@@ -38,7 +39,39 @@ struct MCPDeviceAccess: Sendable {
 
     static let live = MCPDeviceAccess(devices: { try await DeviceHub.shared.devices() },
                                      session: { try await DeviceHub.shared.session(for: $0) },
+                                     lockStatus: { await DeviceHub.shared.lockStatus(for: $0) },
                                      webPreview: { try await MCPWebPreview.url(deviceID: $0, port: $1) })
+
+    func lockStatuses(for devices: [DeviceSummary]) async -> [DeviceLockStatus] {
+        await withTaskGroup(of: (Int, DeviceLockStatus).self) { group in
+            var statuses = Array(repeating: DeviceLockStatus(.unknown), count: devices.count)
+            var pending = 0
+            for (index, device) in devices.enumerated() where device.isReady {
+                if pending == 4, let (finished, status) = await group.next() {
+                    statuses[finished] = status
+                    pending -= 1
+                }
+                group.addTask { (index, await lockStatus(device)) }
+                pending += 1
+            }
+            for await (index, status) in group { statuses[index] = status }
+            return statuses
+        }
+    }
+}
+
+private extension DeviceLockStatus {
+    func fields(canUnlock: Bool) -> [String: Any] {
+        var fields: [String: Any] = ["lock_state": state.rawValue]
+        if let passcodeRequired { fields["passcode_required"] = passcodeRequired }
+        if let unlockedSinceBoot { fields["unlocked_since_boot"] = unlockedSinceBoot }
+        if state == .locked {
+            fields["unlock_hint"] = canUnlock && unlockedSinceBoot != false
+                ? "Call unlock_device and check unlock_verified before launching apps or sending input."
+                : "Ask the user to unlock the device before launching apps or sending input."
+        }
+        return fields
+    }
 }
 
 extension MCPCommand {
@@ -75,8 +108,11 @@ extension MCPCommand {
         let devices = try await access.devices()
         let selection = await workspace?.selectedDevice()
         if case .listDevices = action {
-            let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(devices)) as? [[String: Any]] ?? []
-            let rows = zip(devices, encoded).map { device, row in
+            guard let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(devices)) as? [[String: Any]],
+                  encoded.count == devices.count else { throw ToolFailure(message: "Could not encode device list") }
+            let statuses = await access.lockStatuses(for: devices)
+            let rows = devices.enumerated().map { index, device in
+                let row = encoded[index].merging(statuses[index].fields(canUnlock: workspace?.unlock != nil)) { _, new in new }
                 var capabilities = ["screenshot", "tap", "long_press", "swipe", "touch_path", "gesture", "button", "launch_app"]
                 if workspace?.unlock != nil { capabilities.append("unlock_device") }
                 if device.isSimulator { capabilities.append("start_recording") }
@@ -169,11 +205,20 @@ extension MCPCommand {
         if case .connectDevice = action {
             guard let workspace else { throw ToolFailure(message: "Explicit device connection requires the PhoneUse app host.") }
             try await workspace.connect(selected)
+            async let statusProbe = access.lockStatus(selected)
             let preview = await access.previewWorkflow.lookup(deviceID: selected.udid, probe: access.webPreview)
             var output: [String: Any] = ["device": selected.udid, "selected": true, "session_connected": true,
                                         "preview_requested": true, "first_frame_verified": false,
                                         "web_preview": preview.status, "web_preview_pending": preview.url == nil]
-            var content = [mcpText("Connected to \(selected.name). Requested the native PhoneUse preview.")]
+            let status = await statusProbe
+            let lockFields = status.fields(canUnlock: workspace.unlock != nil)
+            output.merge(lockFields) { _, new in new }
+            var content = [mcpText("Connected to \(selected.name). Requested the native PhoneUse preview. Screen lock state: \(status.state.rawValue).")]
+            if let hint = lockFields["unlock_hint"] as? String {
+                content.append(mcpText(hint))
+            } else if status.state == .unknown {
+                content.append(mcpText("Inspect the current UI before launching an app or sending input."))
+            }
             if let url = preview.url {
                 output["next_required_action"] = "open_url"
                 output["next_action_target"] = "client_browser"

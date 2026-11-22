@@ -81,6 +81,11 @@ public actor DaemonClient {
         return updates
     }
 
+    func androidScreenLocked(_ udid: String) async throws -> Bool {
+        struct Status: Decodable { let locked: Bool }
+        return try await call("androidLockState", ["udid": udid], as: Status.self).locked
+    }
+
     /// The adb executable the daemon uses. Anything else that drives Android devices must use it
     /// too, or the adb servers of two versions keep restarting each other.
     public func androidADBPath() async throws -> String {
