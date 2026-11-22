@@ -32,7 +32,7 @@ enum MCPGesture: String, CaseIterable {
 /// Decode once before opening a device. Invalid input must never turn into a default action.
 struct MCPCommand {
     enum Action {
-        case listDevices, selectDevice, connectDevice, screenshot
+        case listDevices, selectDevice, connectDevice, unlockDevice, screenshot
         case listSimulatorOptions, createSimulator(name: String?, deviceType: String, runtime: String)
         case management(MCPManagement, name: String?, directory: URL?)
         case settings(MCPSettingsCommand)
@@ -125,6 +125,7 @@ struct MCPCommand {
             return
         }
         switch name {
+        case "unlock_device": action = .unlockDevice
         case "list_simulator_options": action = .listSimulatorOptions
         case "create_simulator":
             action = .createSimulator(name: try Self.string(arguments, "name", optional: true),

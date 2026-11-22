@@ -31,11 +31,14 @@ final class MCPActivityStore: ObservableObject {
         }
         let params = request["params"] as? [String: Any] ?? [:]
         let args = params["arguments"] as? [String: Any] ?? [:]
+        // Unlock has no secret argument. Discard unknown fields even on malformed client requests.
+        let displayedArguments: Any = params["name"] as? String == "unlock_device"
+            ? args.filter { $0.key == "device" } : (params["arguments"] ?? [:])
         let token = UUID()
         let start = ProcessInfo.processInfo.systemUptime
         calls.insert(Call(id: token, name: Self.bounded(params["name"] as? String ?? "未知工具", limit: 200),
                           device: Self.bounded(args["device"] as? String ?? "自动选择设备", limit: 300),
-                          arguments: Self.json(params["arguments"] ?? [:]), startedAt: Date()), at: 0)
+                          arguments: Self.json(displayedArguments), startedAt: Date()), at: 0)
         if calls.count > capacity { calls.removeLast(calls.count - capacity) }
 
         let reply = await operation(line)

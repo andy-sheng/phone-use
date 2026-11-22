@@ -81,11 +81,29 @@ final class MCPCommandTests: XCTestCase {
         return try XCTUnwrap(reply?["result"] as? [String: Any])
     }
 
+    func testUnlockResolvesSelectedDeviceAndHasNoCredentialArguments() async throws {
+        let device = try testDevice()
+        let access = MCPDeviceAccess(devices: { [device] }, session: { _ in
+            XCTFail("Unlock uses the app host"); throw DeviceHubError.connectionClosed
+        })
+        let workspace = MCPWorkspaceAccess(selectedDevice: { device.id }, select: { _ in }, connect: { _ in },
+                                           unlock: { target in
+            XCTAssertEqual(target.id, device.id)
+            return .needsPasscode
+        })
+        XCTAssertThrowsError(try MCPCommand(name: "unlock_device", arguments: ["pin": "1234"]))
+        let command = try MCPCommand(name: "unlock_device", arguments: [:])
+        let reply = try await command.execute(access: access, workspace: workspace)
+        let output = try XCTUnwrap(reply["structuredContent"] as? [String: Any])
+        XCTAssertEqual(output["status"] as? String, "needs_saved_pin")
+        XCTAssertEqual(output["unlock_verified"] as? Bool, false)
+    }
+
     func testCatalogAndLegacyAliases() throws {
         let reply = MCPServer.localReply(to: ["id": 1, "method": "tools/list"])!
         let tools = (reply["result"] as! [String: Any])["tools"] as! [[String: Any]]
         let names = Set(tools.compactMap { $0["name"] as? String })
-        XCTAssertEqual(names, Set(MCPManagement.allCases.map(\.rawValue)).union(["list_simulator_options", "create_simulator", "rotate_simulator", "set_simulator_posture", "touch_path", "get_device_settings", "set_appearance", "set_location", "set_audio", "select_device", "connect_device", "get_web_preview", "list_devices", "start_recording", "stop_recording", "screenshot", "describe_ui", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "type_text", "list_apps", "list_sandbox_files", "read_sandbox_file", "download_sandbox_file"]))
+        XCTAssertEqual(names, Set(MCPManagement.allCases.map(\.rawValue)).union(["list_simulator_options", "create_simulator", "rotate_simulator", "set_simulator_posture", "touch_path", "get_device_settings", "set_appearance", "set_location", "set_audio", "select_device", "connect_device", "get_web_preview", "list_devices", "unlock_device", "start_recording", "stop_recording", "screenshot", "describe_ui", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "type_text", "list_apps", "list_sandbox_files", "read_sandbox_file", "download_sandbox_file"]))
         XCTAssertNotNil(MCPServer.encode(reply), "every schema must remain JSON serializable")
         let handoffTools = tools.filter { ($0["description"] as? String)?.contains("handoff") == true }
         XCTAssertEqual(handoffTools.compactMap { $0["name"] as? String }, ["connect_device"])

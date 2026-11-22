@@ -31,6 +31,18 @@ final class IOSDeviceConnection: DeviceConnection, Sendable {
         try await channels.sendTouch(.ended, x: x, y: y)
     }
 
+    func tapPasscodeKey(_ point: CGPoint) async throws {
+        // A write failure may occur after the device received the contact. Never replay a digit.
+        do {
+            try await channels.sendTouch(.began, x: point.x, y: point.y, replayOnDisconnect: false)
+            try await Task.sleep(for: .milliseconds(50))
+        } catch {
+            try? await channels.sendTouch(.ended, x: point.x, y: point.y, replayOnDisconnect: false)
+            throw error
+        }
+        try await channels.sendTouch(.ended, x: point.x, y: point.y, replayOnDisconnect: false)
+    }
+
     func longPress(x: Double, y: Double, duration: Duration) async throws {
         try await channels.sendTouch(.began, x: x, y: y)
         try await Task.sleep(for: duration)
@@ -67,6 +79,18 @@ final class IOSDeviceConnection: DeviceConnection, Sendable {
     }
 
     // MARK: Screen and apps
+
+    func screenLocked() async throws -> Bool {
+        let name = "com.apple.springboard.lockstate"
+        let reply = try await channels.request("com.apple.mobile.notification_proxy.remote",
+                                               ["Command": "GetNotificationState", "Name": .string(name)],
+                                               timeout: .seconds(3), retriesTimeout: false)
+        guard reply["Command"]?.stringValue == "RelayNotificationState", reply["Name"]?.stringValue == name,
+              (reply["Status"]?.intValue ?? 0) == 0, let state = reply["State"]?.intValue else {
+            throw DeviceHubError.serviceFailed("Cannot read the SpringBoard lock state")
+        }
+        return state != 0
+    }
 
     func screenshot() async throws -> CGImage {
         return try ScreenCapture.image(from: try await channels.request(DeviceService.screenCapture, ScreenCapture.request()))
@@ -127,7 +151,7 @@ actor ServiceChannels {
         }
     }
 
-    func sendTouch(_ phase: TouchPhase, x: Double, y: Double) async throws {
+    func sendTouch(_ phase: TouchPhase, x: Double, y: Double, replayOnDisconnect: Bool = true) async throws {
         if needsTouchAuth && !touchAuthenticated {
             // iOS 27 drops host touches unless a media stream is running; the daemon keeps one.
             _ = try await daemon.startMirror(udid)
@@ -135,7 +159,12 @@ actor ServiceChannels {
             touchAuthenticated = true
         }
         let state = phase == .ended ? HIDReports.release : HIDReports.contact
-        try await send(DeviceService.universalHID, HIDReports.touchMessage(HIDReports.touchscreen(state: state, x: x, y: y)))
+        let message = HIDReports.touchMessage(HIDReports.touchscreen(state: state, x: x, y: y))
+        if replayOnDisconnect {
+            try await send(DeviceService.universalHID, message)
+        } else {
+            try await connection(for: DeviceService.universalHID).send(message)
+        }
     }
 
     func uiTree() async throws -> UITree { try await daemon.iosUITree(udid) }

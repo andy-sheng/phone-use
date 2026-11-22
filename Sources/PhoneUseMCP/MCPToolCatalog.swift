@@ -62,6 +62,7 @@ enum MCPToolCatalog {
             return tool(op.rawValue, op.description, fields, required: required, action: op != .available, destructive: op.disruptive)
         }
         return management + [
+            tool("unlock_device", "Unlock the selected iOS or Android device or simulator using the PIN saved by its owner in PhoneUse on this Mac. Never supply a PIN. Check status; if manual intervention is required, stop and ask the user.", ["device": device]),
             tool("list_simulator_options", "List installed iOS runtimes and their compatible iPhone and iPad models. Use their identifiers with create_simulator.",
                  [:], action: false),
             tool("create_simulator", "Create a shut down simulator on this Mac. Use a compatible pair from list_simulator_options. The name defaults to the model. Returns the exact device identifier; discovery may take a moment.",

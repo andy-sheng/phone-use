@@ -78,6 +78,7 @@ extension MCPCommand {
             let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(devices)) as? [[String: Any]] ?? []
             let rows = zip(devices, encoded).map { device, row in
                 var capabilities = ["screenshot", "tap", "long_press", "swipe", "touch_path", "gesture", "button", "launch_app"]
+                if workspace?.unlock != nil { capabilities.append("unlock_device") }
                 if device.isSimulator { capabilities.append("start_recording") }
                 if !device.isAndroid { capabilities += ["describe_ui", "element_targeting", "list_management_actions"] }
                 if device.isSimulator || !device.isAndroid && device.osMajorVersion >= 27 { capabilities.append("type_text") }
@@ -105,7 +106,7 @@ extension MCPCommand {
         }
         let exclusive: Bool
         switch action {
-        case .touchPath, .geometry: exclusive = true
+        case .touchPath, .geometry, .unlockDevice: exclusive = true
         case .management(let op, _, _): exclusive = op != .available
         default: exclusive = false
         }
@@ -114,6 +115,13 @@ extension MCPCommand {
         switch action {
         case .management(let op, let name, let directory):
             return try await op.execute(selected, name: name, directory: directory, recordings: access.recordings, workspace: workspace)
+        case .unlockDevice:
+            guard let unlock = workspace?.unlock else {
+                throw ToolFailure(message: "Device unlock requires the PhoneUse app host.")
+            }
+            let result = try await unlock(selected)
+            return try mcpObject(["device": selected.udid, "status": result.rawValue,
+                                  "unlock_verified": result == .unlocked || result == .alreadyUnlocked])
         case .settings(let command): return try await command.execute(selected)
         case .geometry(let change):
             guard selected.isSimulator else { throw DeviceHubError.capabilityUnavailable("Simulator geometry on this device") }

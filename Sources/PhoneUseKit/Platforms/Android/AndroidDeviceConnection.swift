@@ -101,6 +101,32 @@ actor AndroidDeviceConnection: DeviceConnection {
         return image
     }
 
+    func unlockIdentity() async throws -> String {
+        try requireOpen()
+        let reply = try JSONDecoder().decode([String: String].self, from: await request("unlockIdentity", [:]))
+        guard let identity = reply["identity"], identity.count == 16, identity.allSatisfy(\.isHexDigit) else {
+            throw DeviceHubError.serviceFailed("Unknown Android user identity")
+        }
+        return identity
+    }
+
+    func unlock(takePIN: @Sendable (String) async throws -> String?) async throws -> DeviceUnlockResult {
+        try requireOpen()
+        func perform(_ action: String, _ parameters: [String: String]) async throws -> DeviceUnlockResult {
+            let data = try await request(action, parameters)
+            let reply = try JSONDecoder().decode([String: String].self, from: data)
+            guard let status = reply["status"].flatMap(DeviceUnlockResult.init(rawValue:)) else {
+                throw DeviceHubError.serviceFailed("Unknown Android unlock result")
+            }
+            return status
+        }
+        let result = try await perform("prepareUnlock", [:])
+        guard result == .needsPasscode else { return result }
+        let identity = try await unlockIdentity()
+        guard let pin = try await takePIN(identity) else { return .needsPasscode }
+        return try await perform("submitUnlockPIN", ["identity": identity, "pin": pin])
+    }
+
     func launchApp(bundleID: String) async throws {
         try requireOpen()
         guard !bundleID.isEmpty else { throw DeviceHubError.serviceFailed("Missing Android package name") }

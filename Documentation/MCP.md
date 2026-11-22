@@ -75,6 +75,7 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
 | `list_devices` | 无 | 列出 iOS / Android 真机以及运行中或此前启动过的 iOS 模拟器，返回设备状态和能力 |
 | `select_device` | `device` | 切换 PhoneUse 界面选中设备，不建立连接 |
 | `connect_device` | `device?` | 连接设备、请求原生界面预览，并自动校验 Web 地址，返回浏览器下一步 |
+| `unlock_device` | `device?` | 使用 PhoneUse 为该设备保存的数字密码解锁，返回 `status` 和 `unlock_verified` |
 | `get_web_preview` | `device?`, `port?: 8765` | 检查已运行的本地 Web 服务，返回匹配设备的控制页地址 |
 | `start_recording` | `device?` | 开始录制 MP4，返回 `recording_id`、设备标识和 Mac 上的 `local_path` |
 | `stop_recording` | `recording_id` | 按开始时返回的 ID 停止录制，等待文件写完后返回 `local_path` |
@@ -95,7 +96,18 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
 并报告选择已改变。配对、信任和开发者模式仍由设备与应用设置完成。
 旧的直接调用方式仍可用：`screenshot`、`tap` 等会按需建立共享会话，无须强制先执行这两个新工具。
 
-输入操作（不含选择与连接）共同支持 `device`、`pre_delay`、`post_delay` 和 `return_screen`。
+在 PhoneUse 的「设备设置 → 设备解锁」保存本机钥匙串中的 4 位或 6 位数字密码。GUI 的「一键解锁」和
+`unlock_device` 共用这项配置。MCP 调用只接受设备标识。无密码的普通锁屏可以直接尝试解锁。
+iPhone 的 USB 镜像可能只显示密码页背景。iOS 解锁会先读取本机钥匙串，再从第一张可识别的原生截图确认空密码框和十个数字键。
+PhoneUse 按这张图上的坐标连续输入整个 PIN，最后回读系统锁屏状态。键盘无法确认或输入框已有内容时返回 `needs_user_unlock`。
+iOS 密码键盘识别支持简体中文、繁体中文和英文。真机重启后首次解锁需要用户操作。Android 需要已授权 ADB，
+并且系统界面必须能确认数字密码输入框。
+
+`unlocked` 和 `already_unlocked` 表示回读成功。`no_passcode_required` 表示真机当前无需密码，
+但系统没有提供锁屏界面状态。`needs_saved_pin` 要求用户在 GUI 保存密码，`needs_user_unlock` 要求用户在设备上解锁。
+`unlock_unconfirmed` 或输入中断后，请核对设备和已保存的密码。一次输入结果未确认时，PhoneUse 会暂停使用该密码，直到用户重新保存。
+
+输入操作（不含选择、连接与解锁）共同支持 `device`、`pre_delay`、`post_delay` 和 `return_screen`。
 新参数 `duration`、`pre_delay`、`post_delay` 均以**秒**为单位；时长须大于 0 且不超过
 10 秒，延迟允许 0–10 秒。`return_screen: true` 在操作及 `post_delay` 后再等待 0.6 秒截图。
 截图失败会明确报告“操作已发送、截图失败”，不会将它伪装成输入失败或自动重发输入。

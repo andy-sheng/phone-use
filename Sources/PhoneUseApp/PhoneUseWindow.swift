@@ -33,7 +33,17 @@ struct PhoneUseWindow: View {
             case .calls:
                 MCPActivityPanel(activity: activity)
             case .settings:
-                DeviceSettingsPanel(device: model.selectedDevice)
+                VStack(spacing: 0) {
+                    if let device = model.selectedDevice {
+                        DeviceUnlockPanel(device: device).id(device.id)
+                        Divider()
+                    }
+                    if model.selectedDevice?.isAndroid == true {
+                        Spacer()
+                    } else {
+                        DeviceSettingsPanel(device: model.selectedDevice)
+                    }
+                }
             case .deviceInfo:
                 if let device = model.selectedDevice {
                     DeviceInspector(device: device, screen: screen)

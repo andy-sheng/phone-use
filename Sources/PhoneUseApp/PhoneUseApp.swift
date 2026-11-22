@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             selectedDevice: { [model] in await model.selection },
             select: { [model] device in await model.selectDevice(device) },
             connect: { [model] device in try await model.connectDevice(device) },
+            unlock: { try await DeviceUnlockController.shared.unlock($0) },
             endPreview: { [model] device in await model.endPreview(for: device) },
             changeGeometry: { [model] device, change in try await model.changeGeometry(for: device, change: change) }
         )) { [model] in try await model.launcher.start() }

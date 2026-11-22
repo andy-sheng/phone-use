@@ -15,7 +15,7 @@ import sys
 import threading
 from typing import Any
 
-from devicehubd import protocol
+from devicehubd import android_unlock, protocol
 from devicehubd.android_control import ACTION_DOWN, ACTION_MOVE, ACTION_UP, KEY_DOWN, KEY_UP, AdbDriver
 from devicehubd.android_display import read_display_geometry
 from devicehubd.android_video import AndroidVideoManager
@@ -212,6 +212,8 @@ class AndroidDevice:
         if self.failed:
             raise RpcError("invalidState", "An Android operation timed out; close and reopen the device")
         handler = {
+            "unlockIdentity": self._unlock_identity, "prepareUnlock": self._prepare_unlock,
+            "submitUnlockPIN": self._submit_unlock_pin,
             "screenshot": self._screenshot, "touch": self._touch, "tap": self._tap,
             "swipe": self._swipe, "press": self._press, "launch": self._launch,
         }.get(action)
@@ -224,6 +226,57 @@ class AndroidDevice:
             with contextlib.suppress(Exception):
                 self.release(owner)
             raise
+
+    def _unlock_identity(self, params, owner):
+        return {"identity": android_unlock.identity(self.adb_path, self.serial)}
+
+    def _prepare_unlock(self, params, owner):
+        adb, serial = self.adb_path, self.serial
+        self._idle_touch()
+        # WAKEUP is idempotent, unlike toggling the power button.
+        android_unlock.shell(adb, serial, "input", "keyevent", "KEYCODE_WAKEUP")
+        if not android_unlock.locked(adb, serial):
+            return {"status": "already_unlocked"}
+        android_unlock.shell(adb, serial, "wm", "dismiss-keyguard")
+        self._pause(0.5)
+        if not android_unlock.locked(adb, serial):
+            return {"status": "unlocked"}
+        ready = android_unlock.ready_for_pin(adb, serial)
+        return {"status": "needs_saved_pin" if ready else "needs_user_unlock"}
+
+    def _submit_unlock_pin(self, params, owner):
+        pin = params.get("pin", "")
+        if not re.fullmatch(r"(?:[0-9]{4}|[0-9]{6})", pin):
+            raise RpcError("invalidParams", "Expected a numeric device PIN")
+        self._idle_touch()
+        self._check_input()
+        adb, serial = self.adb_path, self.serial
+        if (params.get("identity") != android_unlock.identity(adb, serial)
+                or not android_unlock.ready_for_pin(adb, serial)):
+            return {"status": "needs_user_unlock"}
+        # Send through the existing private scrcpy control socket. No PIN in shell commands,
+        # command-line arguments, clipboard, or diagnostics.
+        def key(code):
+            self.held_keys.add(code)
+            self.driver.key(KEY_DOWN, code)
+            self.driver.key(KEY_UP, code)
+            self.held_keys.discard(code)
+
+        for digit in pin:
+            if not android_unlock.system_pin_pad_present(adb, serial):
+                return {"status": "unlock_unconfirmed"}
+            key(7 + int(digit))  # KEYCODE_0 through KEYCODE_9.
+            self._pause(0.1)
+        self._pause(0.5)
+        if android_unlock.locked(adb, serial):
+            # Some keyboards require Enter. Ensure the credential field still owns input.
+            if android_unlock.system_pin_pad_present(adb, serial, filled=True):
+                key(66)
+        for _ in range(6):
+            self._pause(0.25)
+            if not android_unlock.locked(adb, serial):
+                return {"status": "unlocked"}
+        return {"status": "unlock_unconfirmed"}
 
     def _screenshot(self, params: dict[str, str], owner: str) -> dict[str, Any]:
         image = self._capture()

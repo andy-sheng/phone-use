@@ -22,6 +22,33 @@ public final class DeviceSession: @unchecked Sendable {
     public var canFold: Bool { (connection as? SimulatorDeviceConnection)?.canFold == true }
     public var canRotate: Bool { (connection as? SimulatorDeviceConnection)?.canRotate == true }
 
+    public func unlockCredentialID() async throws -> String {
+        guard let android = connection as? AndroidDeviceConnection else { return device.id }
+        return "\(device.id):user:\(try await android.unlockIdentity())"
+    }
+
+    func unlockAndroid(takePIN: @Sendable (String) async throws -> String?) async throws -> DeviceUnlockResult {
+        guard let android = connection as? AndroidDeviceConnection else {
+            throw DeviceHubError.capabilityUnavailable("Android keyguard")
+        }
+        return try await android.unlock { identity in try await takePIN("\(self.device.id):user:\(identity)") }
+    }
+
+    func tapPasscodeKey(_ point: CGPoint) async throws {
+        if let ios = connection as? IOSDeviceConnection {
+            try await ios.tapPasscodeKey(point)
+        } else {
+            try await connection.tap(x: point.x, y: point.y)
+        }
+    }
+
+    func physicalScreenLock() async throws -> Bool? {
+        guard let ios = connection as? IOSDeviceConnection,
+              let version = device.productVersion,
+              version.compare("27.2", options: .numeric) != .orderedAscending else { return nil }
+        return try await ios.screenLocked()
+    }
+
     public func rotate(_ direction: DeviceRotationDirection) async throws {
         guard let simulator = connection as? SimulatorDeviceConnection else {
             throw DeviceHubError.capabilityUnavailable("screen rotation on this connection")

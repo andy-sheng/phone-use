@@ -13,6 +13,14 @@ final class MCPActivityTests: XCTestCase {
             "content": [["type": "text", "text": text]]]])!
     }
 
+    func testUnlockDiscardsUnexpectedSecretArgumentsFromHistory() async {
+        let store = MCPActivityStore()
+        let output = reply("Unsupported argument", failed: true)
+        _ = await store.handle(line: request("unlock_device", arguments: ["device": "phone", "pin": "012345"])) { _ in output }
+        XCTAssertFalse(store.calls[0].arguments.contains("012345"))
+        XCTAssertTrue(store.calls[0].arguments.contains("phone"))
+    }
+
     func testRecordsRunningAndCompletedWithoutChangingWireResponse() async {
         let store = MCPActivityStore()
         let input = request(arguments: ["device": "test-device", "x": 10, "y": 20])
