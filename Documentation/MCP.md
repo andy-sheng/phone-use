@@ -6,7 +6,7 @@ PhoneUseKit 的共享设备会话执行；无需另装 sim-use、idb、XcodeBuil
 
 ## 发现、观察、操作、验证
 
-1. 调用 `list_devices`，查看设备状态及 `capabilities`。屏幕和输入操作要求设备为 `ready`。处于关机状态且此前用过的模拟器也会列出，可用 `start_simulator` 启动。
+1. 调用 `list_devices`，查看设备状态及 `capabilities`。屏幕和输入操作要求设备为 `ready`。自建或此前用过的关机模拟器也会列出，可用 `start_simulator` 启动。
 2. 调用 `select_device` 选择设备，再调用 `connect_device` 建立连接并请求预览，对应界面的选中与连接。
    `select_device` 不连接设备，也可选择尚需配对等准备的设备；`connect_device` 只连接 `ready` 设备。
    省略 `device` 时使用 PhoneUse 当前选中设备；没有选中设备时，只能自动选取唯一的就绪设备。
@@ -106,6 +106,8 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
 
 | 工具 | 参数与效果 |
 | --- | --- |
+| `list_simulator_options` | 列出本机已安装的 iOS 运行时和各版本兼容的 iPhone / iPad 机型，无需选择设备 |
+| `create_simulator` | 传入同一组选项中的运行时标识 `runtime` 与机型标识 `device_type`，可选 `name`。返回新设备的 `simulator:<UDID>`，保持关机，等待设备发现刷新后即可管理 |
 | `start_simulator`、`shutdown_simulator` | 启动或关闭指定的模拟器 |
 | `restart_device`、`rename_device` | 对模拟器或支持该能力的 iPhone / iPad 重启、改名；改名传 `name` |
 | `erase_simulator`、`delete_simulator` | 分别抹掉应用、数据与设置，或删除整台模拟器；均须显式传完整设备标识 `device` |

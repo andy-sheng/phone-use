@@ -13,7 +13,7 @@ enum DeviceManagementAction: String, Identifiable {
         case .showInFinder: "在 Finder 中显示"
         case .rename: "重命名"
         case .erase: "抹掉所有内容和设置"
-        case .remove: "移除模拟器"
+        case .remove: "删除模拟器"
         case .unpair: "取消 Xcode 配对"
         case .collectSysdiagnose: "收集 sysdiagnose"
         case .carPlay: "CarPlay 模拟器"

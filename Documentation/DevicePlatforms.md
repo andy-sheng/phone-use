@@ -173,14 +173,16 @@ native-resolution operations for preview fallback and automation recognition.
 
 ## iOS Simulator
 
-Active or previously used available iOS and iPadOS simulators join the shared device list
+Custom, active or previously used available iOS and iPadOS simulators join the shared device list
 with `platform: ios`, `connection: simulator` and a `simulator:<UDID>` identifier, so plugins and automation see
 an iOS device. `simulator.py` lists them with `xcrun simctl list devices available -j`, at most
 every three seconds; a few consecutive `simctl` failures are tolerated before simulators are
-removed from the list. Never-used shut-down devices are hidden; usage is detected from
+removed from the list. Custom simulators appear before first boot. Discovery reads the device set’s
+`DefaultDevices` mapping to hide unused Xcode defaults. When that mapping cannot be read,
+it falls back to usage history. Usage is detected from
 `lastUsedAt` / `lastBootedAt` in the listing or the device's `device.plist`. Starting one in
 Simulator or Xcode makes it discoverable. Deleted simulators are removed on the next
-successful discovery. Only booted simulators are `ready`; previously used shut-down
+successful discovery. Only booted simulators are `ready`; visible shut-down
 simulators remain in the sidebar's Available section with `state: disconnected` and their
 `simulatorState`. No pairing,
 Developer Mode or disk image applies. The shared window shows a device illustration,

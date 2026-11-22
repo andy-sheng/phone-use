@@ -4,6 +4,9 @@ import Foundation
 let usage = """
 usage: phone-use [--device <name|udid|android:serial|simulator:udid>] <command>
   list
+  list-simulator-options           list runtime ID, device type ID and model
+  create-simulator <runtime-id> <device-type-id> [name]
+  delete-simulator <simulator:udid>
   pair                             show the Trust prompt on the device
   reveal-developer-mode            make the Developer Mode switch appear in Settings
   mount                            mount the Developer Disk Image
@@ -66,6 +69,24 @@ func run() async throws {
     }
     let hub = DeviceHub.shared
     switch command {
+    case "list-simulator-options":
+        for runtime in try await SimulatorLifecycle.creationOptions() {
+            for model in runtime.supportedDeviceTypes {
+                print([runtime.id, model.id, model.name].joined(separator: "\t"))
+            }
+        }
+    case "create-simulator":
+        guard (3...4).contains(arguments.count) else { print(usage); exit(2) }
+        let id = try await SimulatorLifecycle.create(name: arguments.count == 4 ? arguments[3] : nil,
+                                                     deviceType: arguments[2], runtime: arguments[1])
+        print(id)
+    case "delete-simulator":
+        guard arguments.count == 2, deviceQuery == nil else { print(usage); exit(2) }
+        let id = arguments[1]
+        guard let device = try await hub.devices().first(where: { $0.isSimulator && $0.id.caseInsensitiveCompare(id) == .orderedSame }) else {
+            throw DeviceHubError.deviceNotFound(id)
+        }
+        try await SimulatorLifecycle.remove(device)
     case "serve":
         let value = arguments.count > 1 ? arguments[1] : "8765"
         guard let port = UInt16(value), port > 0, arguments.count <= 2 else {

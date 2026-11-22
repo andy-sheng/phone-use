@@ -2,6 +2,65 @@ import Foundation
 
 /// Simulator management through the same Xcode installation used for discovery and control.
 public enum SimulatorLifecycle {
+    public struct Runtime: Codable, Identifiable, Sendable {
+        public struct Model: Codable, Identifiable, Sendable {
+            public let identifier: String
+            public let name: String
+            public let productFamily: String
+            public var id: String { identifier }
+        }
+
+        public let identifier: String
+        public let name: String
+        public let version: String
+        public let supportedDeviceTypes: [Model]
+        public var id: String { identifier }
+    }
+
+    public static func creationOptions() async throws -> [Runtime] {
+        try await creationOptions(developer: developerDirectory())
+    }
+
+    private static func creationOptions(developer: String) async throws -> [Runtime] {
+        let output = try await SimulatorTools.simctl(["list", "runtimes", "--json"], developerDirectory: developer)
+        return try decodeCreationOptions(Data(output.utf8))
+    }
+
+    static func decodeCreationOptions(_ data: Data) throws -> [Runtime] {
+        struct Listing: Decodable {
+            struct Entry: Decodable {
+                let identifier: String
+                let name: String
+                let version: String
+                let isAvailable: Bool
+                let supportedDeviceTypes: [Runtime.Model]?
+            }
+            let runtimes: [Entry]
+        }
+        return try JSONDecoder().decode(Listing.self, from: data).runtimes.compactMap { entry in
+            guard entry.isAvailable, entry.identifier.hasPrefix("com.apple.CoreSimulator.SimRuntime.iOS-"),
+                  let models = entry.supportedDeviceTypes?.filter({ ["iPhone", "iPad"].contains($0.productFamily) }),
+                  !models.isEmpty else { return nil }
+            return Runtime(identifier: entry.identifier, name: entry.name, version: entry.version, supportedDeviceTypes: models)
+        }.sorted { $0.version.compare($1.version, options: .numeric) == .orderedDescending }
+    }
+
+    /// Returns the exact discovery identifier. Creation leaves the simulator shut down.
+    public static func create(name: String?, deviceType: String, runtime: String) async throws -> String {
+        let developer = try developerDirectory()
+        let options = try await creationOptions(developer: developer)
+        guard let model = options.first(where: { $0.id == runtime })?.supportedDeviceTypes.first(where: { $0.id == deviceType }) else {
+            throw DeviceHubError.serviceFailed("The selected simulator model and runtime are unavailable or incompatible.")
+        }
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let output = try await SimulatorTools.simctl(["create", trimmed.isEmpty ? model.name : trimmed, deviceType, runtime],
+                                                    developerDirectory: developer)
+        guard let uuid = UUID(uuidString: output) else {
+            throw DeviceHubError.serviceFailed("Xcode did not return the created simulator’s identifier. Check the device list.")
+        }
+        return "simulator:\(uuid.uuidString)"
+    }
+
     public static func isAvailable(for device: DeviceSummary) async -> Bool {
         guard let (_, developer) = try? target(device) else { return false }
         return (try? await SimulatorTools.simctl(["help", "shutdown"], developerDirectory: developer)) != nil
@@ -57,10 +116,14 @@ public enum SimulatorLifecycle {
         guard device.isSimulator, UUID(uuidString: device.deviceIdentifier) != nil else {
             throw DeviceHubError.capabilityUnavailable("Managing this device as an iOS simulator")
         }
+        return (device.deviceIdentifier, try developerDirectory())
+    }
+
+    private static func developerDirectory() throws -> String {
         guard let developer = SimulatorTools.developerDirectory() else {
             throw DeviceHubError.serviceFailed("Xcode is required to manage a simulator")
         }
-        return (device.deviceIdentifier, developer)
+        return developer
     }
 
     private struct Inventory: Decodable {

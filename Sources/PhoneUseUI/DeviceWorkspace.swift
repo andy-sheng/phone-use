@@ -28,6 +28,7 @@ public struct DeviceWorkspace<Panel: View>: View {
     @State private var search = ""
     @AppStorage("sidebar.platformFilter") private var platformFilter: PlatformFilter = .all
     @AppStorage("sidebar.showsUnavailable") private var showsUnavailable = true
+    @State private var newSimulatorFamily: SimulatorCreationSheet.Family?
     @State private var showingPairing = false
     /// Screen points per view point, or nil to fit the window.
     @State private var zoom: CGFloat?
@@ -158,6 +159,13 @@ public struct DeviceWorkspace<Panel: View>: View {
             }
         }
         .sheet(isPresented: $showingPairing) { WirelessPairingSheet() }
+        .sheet(item: $newSimulatorFamily) { family in
+            SimulatorCreationSheet(family: family) { id in
+                if platformFilter == .android { platformFilter = .apple }
+                search = ""
+                model.selection = id
+            }
+        }
         .sheet(item: $managementPrompt) { request in
             DeviceManagementPrompt(request) { performManagement(request, name: $0) }
         }
@@ -178,7 +186,14 @@ public struct DeviceWorkspace<Panel: View>: View {
             let available = matching(model.availableDevices)
             let unavailable = showsUnavailable ? matching(model.unavailableDevices) : []
             Section("Available") {
-                ForEach(available) { DeviceRow(device: $0) }
+                ForEach(available) { device in
+                    DeviceRow(device: device)
+                        .contextMenu {
+                            if canRemoveSimulator(device) {
+                                managementItem(.remove, device: device, prompts: true, destructive: true)
+                            }
+                        }
+                }
                 if available.isEmpty {
                     Text(isFiltering || !search.isEmpty
                          ? "没有符合条件的设备"
@@ -196,10 +211,19 @@ public struct DeviceWorkspace<Panel: View>: View {
         .searchable(text: $search, placement: .sidebar, prompt: "Search")
         .toolbar {
             ToolbarItemGroup {
-                Button { showingPairing = true } label: {
-                    Label("配对附近设备", systemImage: "plus")
+                Menu {
+                    Button("配对附近设备…") { showingPairing = true }
+                    Section("模拟器") {
+                        ForEach(SimulatorCreationSheet.Family.allCases) { family in
+                            Button(family.rawValue + "…", systemImage: family.icon) { newSimulatorFamily = family }
+                                .disabled(!allowsInput)
+                        }
+                    }
+                } label: {
+                    Label("添加设备", systemImage: "plus")
                 }
-                .help("通过 Wi-Fi 配对附近的 iPhone 或 iPad")
+                .menuIndicator(.hidden)
+                .help("配对附近设备或创建模拟器")
                 Menu {
                     Picker("平台", selection: $platformFilter) {
                         Text("全部设备").tag(PlatformFilter.all)
@@ -373,7 +397,7 @@ public struct DeviceWorkspace<Panel: View>: View {
                 Divider()
                 managementItem(.restart, device: device)
             }
-            if device.simulatorState == "Booted" || device.simulatorState == "Shutdown" {
+            if canRemoveSimulator(device) {
                 Divider()
                 managementItem(.showInFinder, device: device)
                 managementItem(.rename, device: device, prompts: true)
@@ -431,6 +455,10 @@ public struct DeviceWorkspace<Panel: View>: View {
         screen.requestConnection(to: device)
     }
 
+    private func canRemoveSimulator(_ device: DeviceSummary) -> Bool {
+        device.isSimulator && ["Booted", "Shutdown"].contains(device.simulatorState)
+    }
+
     private func managementItem(_ action: DeviceManagementAction, device: DeviceSummary,
                                 prompts: Bool = false, destructive: Bool = false, ellipsis: Bool = false) -> some View {
         Button(action.title + (prompts || ellipsis ? "…" : ""), role: destructive ? .destructive : nil) {
@@ -454,8 +482,12 @@ public struct DeviceWorkspace<Panel: View>: View {
     }
 
     private func performManagement(_ request: DeviceManagementRequest, name: String = "") {
-        guard allowsInput, managingDevice == nil, model.selectedDevice?.id == request.device.id else { return }
-        let device = request.device
+        guard allowsInput, managingDevice == nil,
+              let device = model.devices.first(where: { $0.id == request.device.id }) else { return }
+        // A sidebar context menu can target a row without changing the current selection.
+        if request.action == .remove {
+            guard canRemoveSimulator(device) else { return }
+        } else if device.id != model.selection { return }
         managingDevice = request
         Task {
             defer { managingDevice = nil }

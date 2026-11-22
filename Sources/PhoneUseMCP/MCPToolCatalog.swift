@@ -62,6 +62,10 @@ enum MCPToolCatalog {
             return tool(op.rawValue, op.description, fields, required: required, action: op != .available, destructive: op.disruptive)
         }
         return management + [
+            tool("list_simulator_options", "List installed iOS runtimes and their compatible iPhone and iPad models. Use their identifiers with create_simulator.",
+                 [:], action: false),
+            tool("create_simulator", "Create a shut down simulator on this Mac. Use a compatible pair from list_simulator_options. The name defaults to the model. Returns the exact device identifier; discovery may take a moment.",
+                 ["device_type": string, "runtime": string, "name": string], required: ["device_type", "runtime"]),
             tool("rotate_simulator", "Rotate the ready iOS simulator 90 degrees. A geometry change finalizes device recordings. Use a fresh screenshot for new coordinates.",
                  ["device": device, "direction": choices(["left", "right"])], required: ["direction"]),
             tool("set_simulator_posture", "Set the hinge of a ready foldable iOS simulator. Finalizes device recordings before changing panels.",
@@ -91,7 +95,7 @@ enum MCPToolCatalog {
             tool("download_sandbox_file", "Download one regular file to an absolute path on the Mac running PhoneUse. The parent directory must exist and the destination must not exist. Returns the local path; does not return file contents. Directories and symbolic links are rejected. A live SQLite file alone is not a consistent database backup; WAL/SHM may be required." + fileScope,
                  sandbox.merging(["destination": ["type": "string", "minLength": 1]]) { _, new in new },
                  required: ["bundle_id", "path", "destination"]),
-            tool("list_devices", "List attached iOS/Android devices and active or previously used iOS simulators, including previously booted shut down simulators (connection: simulator). start_simulator can boot one. Use select_device to choose a device, then connect_device to connect it and request its UI preview.", [:], action: false),
+            tool("list_devices", "List attached iOS/Android devices and custom, active or previously used iOS simulators, including shut down simulators (connection: simulator). start_simulator can boot one. Use select_device to choose a device, then connect_device to connect it and request its UI preview.", [:], action: false),
             tool("select_device", "Select a discovered device in PhoneUse, like clicking its sidebar row. Does not connect. May select a device that still needs setup. Selection is shared with the UI and all MCP clients; subsequent calls without device use this selection.", ["device": device], required: ["device"]),
             tool("connect_device", "Connect the specified or currently selected ready device and request its PhoneUse preview, like the UI Connect button. Waits for the device session to open and reuses it when available. Pairing, trust and Developer Mode are handled separately. Without a selection, only one ready device may be chosen. Read the result before continuing. It checks the existing web preview and provides the one-time handoff to your agent's built-in web preview when a verified URL is available. The device connection can succeed independently of the web preview.", ["device": device]),
             tool("get_web_preview", "Verify an already running local web preview for this device and return its URL on the PhoneUse Mac. Use this when asked for the preview URL, to recheck after starting the service, or to use a custom port. A verified URL in the connect_device result can be used directly.",

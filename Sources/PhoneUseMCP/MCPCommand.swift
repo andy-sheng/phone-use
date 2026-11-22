@@ -33,6 +33,7 @@ enum MCPGesture: String, CaseIterable {
 struct MCPCommand {
     enum Action {
         case listDevices, selectDevice, connectDevice, screenshot
+        case listSimulatorOptions, createSimulator(name: String?, deviceType: String, runtime: String)
         case management(MCPManagement, name: String?, directory: URL?)
         case settings(MCPSettingsCommand)
         case geometry(SimulatorGeometryChange)
@@ -124,6 +125,11 @@ struct MCPCommand {
             return
         }
         switch name {
+        case "list_simulator_options": action = .listSimulatorOptions
+        case "create_simulator":
+            action = .createSimulator(name: try Self.string(arguments, "name", optional: true),
+                                      deviceType: try Self.string(arguments, "device_type")!,
+                                      runtime: try Self.string(arguments, "runtime")!)
         case "get_device_settings", "set_appearance", "set_audio", "set_location":
             action = .settings(try MCPSettingsCommand(name, arguments))
         case "rotate_simulator":

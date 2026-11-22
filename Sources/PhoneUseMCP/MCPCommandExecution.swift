@@ -63,6 +63,15 @@ extension MCPCommand {
     }
 
     func execute(access: MCPDeviceAccess, workspace: MCPWorkspaceAccess? = nil) async throws -> [String: Any] {
+        switch action {
+        case .listSimulatorOptions:
+            let options = try await SimulatorLifecycle.creationOptions()
+            return try mcpObject(["runtimes": JSONSerialization.jsonObject(with: JSONEncoder().encode(options))])
+        case .createSimulator(let name, let deviceType, let runtime):
+            let id = try await SimulatorLifecycle.create(name: name, deviceType: deviceType, runtime: runtime)
+            return try mcpObject(["device": id])
+        default: break
+        }
         let devices = try await access.devices()
         let selection = await workspace?.selectedDevice()
         if case .listDevices = action {

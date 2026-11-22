@@ -1,6 +1,6 @@
 """iOS Simulator discovery through ``simctl``; importing this module never touches a simulator.
 
-Active or previously used iOS/iPadOS simulators are published, including shut-down devices.
+Custom, active or previously used iOS/iPadOS simulators are published, including shut-down devices.
 Their UDIDs carry a ``simulator:`` prefix so they can never collide with a physical device, and control happens in the client
 process through CoreSimulator rather than through a daemon worker.
 """
@@ -61,9 +61,25 @@ def _has_usage_history(entry: dict[str, Any]) -> bool:
     )
 
 
+def _default_devices(device_set: Path) -> set[str] | None:
+    """CoreSimulator records its automatically provisioned UDIDs by runtime and model."""
+    try:
+        with (device_set / "device_set.plist").open("rb") as file:
+            metadata = plistlib.load(file)
+    except (OSError, ValueError, plistlib.InvalidFileException, ExpatError):
+        return None
+    defaults = metadata.get("DefaultDevices") if isinstance(metadata, dict) else None
+    if not isinstance(defaults, dict):
+        return None
+    # The same dictionary also contains a scalar schema version.
+    return {udid.upper() for models in defaults.values() if isinstance(models, dict)
+            for udid in models.values() if isinstance(udid, str)}
+
+
 def parse_devices(output: str) -> list[SimulatorAttachment]:
-    """Lists active or previously used available iOS/iPadOS simulators."""
+    """Keep custom simulators visible before their first boot, while hiding unused defaults."""
     devices: dict[str, Any] = json.loads(output).get("devices") or {}
+    default_sets: dict[Path, set[str] | None] = {}
     attached = []
     for runtime, entries in devices.items():
         match = _RUNTIME.search(runtime)
@@ -75,8 +91,16 @@ def parse_devices(output: str) -> list[SimulatorAttachment]:
                 continue
             if entry.get("isAvailable") is False or not entry.get("udid"):
                 continue
-            if entry["state"] == "Shutdown" and not _has_usage_history(entry):
-                continue
+            if entry["state"] == "Shutdown":
+                data_path = entry.get("dataPath")
+                defaults = None
+                if isinstance(data_path, str) and os.path.isabs(data_path):
+                    device_set = Path(data_path).parent.parent
+                    if device_set not in default_sets:
+                        default_sets[device_set] = _default_devices(device_set)
+                    defaults = default_sets[device_set]
+                if (defaults is None or entry["udid"].upper() in defaults) and not _has_usage_history(entry):
+                    continue
             attached.append(SimulatorAttachment(
                 identifier=entry["udid"],
                 name=entry.get("name") or entry["udid"],

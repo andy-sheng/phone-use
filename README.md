@@ -109,7 +109,7 @@ python3.13 scripts/prepare-android-tools.py --archive /path/to/platform-tools_r3
 
 ## iPhone / iPad 无线连接
 
-点击侧栏底部或工具栏的「配对附近设备」，允许 phone-use 访问本地网络，并让设备与 Mac 连接同一 Wi-Fi。
+从侧栏「+」选择「配对附近设备…」，允许 phone-use 访问本地网络，并让设备与 Mac 连接同一 Wi-Fi。
 首次不插线配对需要 iOS / iPadOS 27 或更新版本：
 
 1. 在设备的「设置 › 隐私与安全性」中开启「开发者模式」，按提示重启并确认。
@@ -124,8 +124,9 @@ python3.13 scripts/prepare-android-tools.py --archive /path/to/platform-tools_r3
 
 ## iOS 模拟器
 
-本机已启动或有使用记录的 iOS / iPadOS 模拟器会自动出现在设备列表中，连接方式显示为「Simulator」，ID 形如 `simulator:<UDID>`。
-从未使用过的关机模拟器默认不显示；首次在 Simulator / Xcode 中启动后会自动加入。已删除的模拟器会从列表移除。
+本机自建、已启动或有使用记录的 iOS / iPadOS 模拟器会自动出现在设备列表中，连接方式显示为「Simulator」，ID 形如 `simulator:<UDID>`。
+在 PhoneUse 或 Automation 的侧栏点「+」，选 iPhone 或 iPad，再选择已安装的系统版本和兼容机型。名称留空会使用机型名。创建后，设备以关机状态加入「Available」，点「启动」即可预览。
+右键模拟器行或打开所选设备的「更多」菜单，选择「删除模拟器…」并确认，会永久删除该实例及其数据。Xcode 自动预置且从未启动的模拟器默认隐藏。
 需要安装 Xcode，并通过 `xcode-select` 或 `DEVELOPER_DIR` 选中它；无需配对、开发者模式或 USB。
 可以在 Simulator / Xcode 中启动模拟器，也可以运行 `xcrun simctl boot <UDID>`；关机后设备在列表中显示为未连接。
 
@@ -133,6 +134,10 @@ python3.13 scripts/prepare-android-tools.py --archive /path/to/platform-tools_r3
 截图在预览或自动化会话收到画面刷新后直接读取帧缓冲，否则通过 `xcrun simctl io` 截取。返回、多任务键仅适用于 Android。
 
 ```sh
+phone-use list-simulator-options
+phone-use create-simulator <runtime-id> <device-type-id> [name]
+phone-use delete-simulator simulator:<UDID>
+
 xcrun simctl boot "iPhone 17 Pro"
 .build/debug/phone-use --device simulator:<UDID> screenshot .build/simulator.png
 ```

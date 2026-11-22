@@ -50,6 +50,19 @@ class ParsingTests(unittest.TestCase):
                 ]}})
                 self.assertEqual([d.identifier for d in parse_devices(listing)], ["NEW"])
 
+    def test_custom_shutdown_simulator_is_visible_before_first_boot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = "com.apple.CoreSimulator.SimRuntime.iOS-27-0"
+            defaults_path = root / "device_set.plist"
+            defaults_path.write_bytes(plistlib.dumps({"DefaultDevices": {"version": 1, runtime: {"iPhone": "DEFAULT"}}}))
+            rows = [{"udid": udid, "name": "Same model", "state": "Shutdown",
+                     "dataPath": str(root / udid / "data")} for udid in ["DEFAULT", "CUSTOM"]]
+            listing = json.dumps({"devices": {runtime: rows}})
+            self.assertEqual([device.identifier for device in parse_devices(listing)], ["CUSTOM"])
+            defaults_path.write_bytes(b"unreadable")
+            self.assertEqual(parse_devices(listing), [])
+
     def test_shutdown_usage_history_falls_back_to_device_plist(self):
         Path(".build").mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=".build") as temporary:

@@ -3,6 +3,23 @@ import XCTest
 @testable import PhoneUseKit
 
 final class SimulatorTests: XCTestCase {
+    func testCreationOptionsKeepCompatibleModelsGroupedByAvailableIOSRuntime() throws {
+        let phone = ["identifier": "phone", "name": "Phone", "productFamily": "iPhone"]
+        let pad = ["identifier": "pad", "name": "Pad", "productFamily": "iPad"]
+        let watch = ["identifier": "watch", "name": "Watch", "productFamily": "Apple Watch"]
+        func entry(_ version: String, _ models: [[String: String]], available: Bool = true, platform: String = "iOS") -> [String: Any] {
+            ["identifier": "com.apple.CoreSimulator.SimRuntime.\(platform)-\(version)", "name": platform + " " + version,
+             "version": version, "isAvailable": available, "supportedDeviceTypes": models]
+        }
+        let data = try JSONSerialization.data(withJSONObject: ["runtimes": [
+            entry("18.9", [phone, pad]), entry("18.10", [pad]), entry("19", [phone], available: false),
+            entry("20", [watch]), entry("21", [phone], platform: "watchOS"),
+        ]])
+        let runtimes = try SimulatorLifecycle.decodeCreationOptions(data)
+        XCTAssertEqual(runtimes.map(\.version), ["18.10", "18.9"])
+        XCTAssertEqual(runtimes.map { $0.supportedDeviceTypes.map(\.identifier) }, [["pad"], ["phone", "pad"]])
+    }
+
     func testShutdownSimulatorIsAvailableButRequiresAnExplicitStart() throws {
         let shutdown = try decodeDevice(["state": "disconnected", "simulatorState": "Shutdown"])
         XCTAssertFalse(shutdown.isReady)

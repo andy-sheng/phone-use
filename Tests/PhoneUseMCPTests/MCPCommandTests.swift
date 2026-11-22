@@ -85,7 +85,7 @@ final class MCPCommandTests: XCTestCase {
         let reply = MCPServer.localReply(to: ["id": 1, "method": "tools/list"])!
         let tools = (reply["result"] as! [String: Any])["tools"] as! [[String: Any]]
         let names = Set(tools.compactMap { $0["name"] as? String })
-        XCTAssertEqual(names, Set(MCPManagement.allCases.map(\.rawValue)).union(["rotate_simulator", "set_simulator_posture", "touch_path", "get_device_settings", "set_appearance", "set_location", "set_audio", "select_device", "connect_device", "get_web_preview", "list_devices", "start_recording", "stop_recording", "screenshot", "describe_ui", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "type_text", "list_apps", "list_sandbox_files", "read_sandbox_file", "download_sandbox_file"]))
+        XCTAssertEqual(names, Set(MCPManagement.allCases.map(\.rawValue)).union(["list_simulator_options", "create_simulator", "rotate_simulator", "set_simulator_posture", "touch_path", "get_device_settings", "set_appearance", "set_location", "set_audio", "select_device", "connect_device", "get_web_preview", "list_devices", "start_recording", "stop_recording", "screenshot", "describe_ui", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "type_text", "list_apps", "list_sandbox_files", "read_sandbox_file", "download_sandbox_file"]))
         XCTAssertNotNil(MCPServer.encode(reply), "every schema must remain JSON serializable")
         let handoffTools = tools.filter { ($0["description"] as? String)?.contains("handoff") == true }
         XCTAssertEqual(handoffTools.compactMap { $0["name"] as? String }, ["connect_device"])
@@ -97,6 +97,9 @@ final class MCPCommandTests: XCTestCase {
     func testInvalidArgumentsAreRejectedBeforePreparingOrOpeningDevices() async throws {
         let session = try TestSession()
         let invalid: [(String, [String: Any])] = [
+            ("create_simulator", [:]), ("create_simulator", ["runtime": "iOS"]),
+            ("create_simulator", ["device_type": "iPhone", "runtime": 17]),
+            ("list_simulator_options", ["device": "unrelated"]),
             ("set_audio", [:]), ("set_audio", ["volume": true]), ("set_audio", ["volume": 42.5]),
             ("set_location", [:]), ("set_location", ["latitude": 25, "longitude": 190]),
             ("set_location", ["preset": "Apple", "longitude": 10]), ("set_location", ["clear": false]),
