@@ -40,8 +40,9 @@ public struct DeviceWorkspace<Panel: View>: View {
     @State private var managingDevice: DeviceManagementRequest?
     @State private var managementError: String?
     /// Shows only the device screen in a window fitted to it.
-    @State private var isCompact = false
-    @State private var compactWindow = CompactWindowController()
+    @StateObject private var compactWindow = CompactWindowController()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private var isCompact: Bool { compactWindow.isCompact }
 
     private let title: String
     private let tabs: [WorkspaceTab]
@@ -129,23 +130,19 @@ public struct DeviceWorkspace<Panel: View>: View {
     }
 
     public var body: some View {
-        // One stable root, so switching layouts keeps the tasks below and the live stream running.
-        ZStack {
-            if isCompact {
-                compactStage
-            } else {
-                DeviceWorkspaceView(showsPanel: showsPanel) {
-                    sidebar
-                } detail: {
-                    detail
-                } panel: {
-                    inspector
-                }
-            }
+        DeviceWorkspaceView(isCompact: isCompact, isResizingWindow: compactWindow.isResizing,
+                            showsPanel: showsPanel && !isCompact) {
+            sidebar
+        } detail: {
+            detail
+        } panel: {
+            inspector
         }
-        .background(WindowReader { compactWindow.window = $0 })
+        // The toolbar belongs to the whole split view, including while the sidebar collapses.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .toolbar(removing: isCompact ? .sidebarToggle : nil)
         .onChange(of: screen.aspectRatio) { _, ratio in
-            if isCompact { compactWindow.fit(screenAspectRatio: ratio) }
+            compactWindow.fit(screenAspectRatio: ratio, reduceMotion: reduceMotion)
         }
         .task {
             model.visibleScreen = screen
@@ -270,36 +267,34 @@ public struct DeviceWorkspace<Panel: View>: View {
             Color(nsColor: .underPageBackgroundColor)
                 .extendedUnderSidebar()
                 .ignoresSafeArea()
-            deviceStage(compact: false)
+            deviceStage
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(WindowStageReader { compactWindow.stage = $0 })
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if liveStream != nil {
+            if liveStream != nil || isCompact {
                 controlBar
-                    .padding(.top, 8)
-                    .padding(.bottom, 16)
+                    .opacity(liveStream == nil ? 0 : 1)
+                    .allowsHitTesting(liveStream != nil)
+                    .padding(.top, isCompact ? 0 : 8)
+                    .padding(.bottom, isCompact ? 0 : 16)
+                    .frame(height: isCompact ? CompactLayout.controlsHeight : nil)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .animation(.smooth(duration: 0.25), value: liveStream != nil)
-        // A transparent title bar, so the stage and the device run beneath the toolbar.
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .navigationTitle(model.selectedDevice?.name ?? title)
         .navigationSubtitle(windowSubtitle)
         .toolbar { detailToolbar }
     }
 
     @ViewBuilder
-    private func deviceStage(compact: Bool) -> some View {
+    private var deviceStage: some View {
         if let device = model.selectedDevice {
             if let stream = liveStream {
-                if compact {
-                    DeviceScreenView(screen: screen, stream: stream, allowsInput: allowsInput,
-                                     frameStyle: DeviceFrameStyle(device), insets: CompactLayout.screenInsets)
-                } else {
-                    DeviceScreenView(screen: screen, stream: stream, allowsInput: allowsInput,
-                                     frameStyle: DeviceFrameStyle(device),
-                                     zoom: zoom, onFitScale: { fitScale = $0 })
-                }
+                DeviceScreenView(screen: screen, stream: stream, allowsInput: allowsInput,
+                                 frameStyle: DeviceFrameStyle(device), zoom: zoom,
+                                 onFitScale: { fitScale = $0 }, isCompact: isCompact)
             } else if let request = managingDevice, request.device.id == device.id, request.action.interruptsPreview {
                 ProgressView(request.action.title)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -312,7 +307,7 @@ public struct DeviceWorkspace<Panel: View>: View {
                                        cancel: { screen.cancelConnection() })
             } else if !device.isReady {
                 DeviceSetupView(device: device, pairWirelessly: { showingPairing = true })
-                    .padding(compact ? 16 : 24)
+                    .padding(isCompact ? 16 : 24)
             } else {
                 DeviceConnectionView(device: device,
                                      isConnecting: screen.isShowingDevice(device.id) && screen.isConnecting,
@@ -328,35 +323,38 @@ public struct DeviceWorkspace<Panel: View>: View {
 
     @ToolbarContentBuilder
     private var detailToolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
-            Group {
-                Button(action: zoomOut) { Label("缩小", systemImage: "minus.magnifyingglass") }
-                    .help("缩小 (⌘-)")
-                    .keyboardShortcut("-", modifiers: .command)
-                Button { zoom = nil } label: { Label("适合窗口", systemImage: "arrow.up.left.and.down.right.magnifyingglass") }
-                    .help("适合窗口 (⌘0)")
-                    .keyboardShortcut("0", modifiers: .command)
-                Button { zoom = 1 } label: { Label("实际大小", systemImage: "1.magnifyingglass") }
-                    .help("实际大小 (⌘1)")
-                    .keyboardShortcut("1", modifiers: .command)
-                Button(action: zoomIn) { Label("放大", systemImage: "plus.magnifyingglass") }
-                    .help("放大 (⌘+)")
-                    .keyboardShortcut("=", modifiers: .command)
+        if !isCompact {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Group {
+                    Button(action: zoomOut) { Label("缩小", systemImage: "minus.magnifyingglass") }
+                        .help("缩小 (⌘-)")
+                        .keyboardShortcut("-", modifiers: .command)
+                    Button { zoom = nil } label: { Label("适合窗口", systemImage: "arrow.up.left.and.down.right.magnifyingglass") }
+                        .help("适合窗口 (⌘0)")
+                        .keyboardShortcut("0", modifiers: .command)
+                    Button { zoom = 1 } label: { Label("实际大小", systemImage: "1.magnifyingglass") }
+                        .help("实际大小 (⌘1)")
+                        .keyboardShortcut("1", modifiers: .command)
+                    Button(action: zoomIn) { Label("放大", systemImage: "plus.magnifyingglass") }
+                        .help("放大 (⌘+)")
+                        .keyboardShortcut("=", modifiers: .command)
+                }
+                .disabled(liveStream == nil)
             }
-            .disabled(liveStream == nil)
-        }
 
-        groupSpacer
+            groupSpacer
+        }
 
         ToolbarItemGroup(placement: .primaryAction) {
             compactToggle
             moreMenu
         }
 
-        groupSpacer
-
-        ToolbarItemGroup(placement: .primaryAction) {
-            ForEach(tabs) { inspectorTabToggle($0) }
+        if !isCompact {
+            groupSpacer
+            ToolbarItemGroup(placement: .primaryAction) {
+                ForEach(tabs) { inspectorTabToggle($0) }
+            }
         }
     }
 
@@ -557,45 +555,8 @@ public struct DeviceWorkspace<Panel: View>: View {
     }
 
     private func setCompact(_ compact: Bool) {
-        guard compact != isCompact else { return }
         showingLaunch = false
-        isCompact = compact
-        let controller = compactWindow
-        let ratio = screen.aspectRatio
-        // Resize once SwiftUI has swapped the layout, so the window takes the new minimum size.
-        DispatchQueue.main.async {
-            if compact {
-                controller.enter(screenAspectRatio: ratio)
-            } else {
-                controller.exit()
-            }
-        }
-    }
-
-    // MARK: Compact
-
-    /// Only the device, its title and the essential controls, like Simulator's compact window.
-    private var compactStage: some View {
-        ZStack {
-            Color(nsColor: .underPageBackgroundColor)
-                .ignoresSafeArea()
-            VStack(spacing: 0) {
-                deviceStage(compact: true)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                controlBar
-                    .opacity(liveStream == nil ? 0 : 1)
-                    .frame(height: CompactLayout.controlsHeight)
-            }
-        }
-        .frame(minWidth: CompactLayout.minimumSize.width, minHeight: CompactLayout.minimumSize.height - 60)
-        .navigationTitle(model.selectedDevice?.name ?? title)
-        .navigationSubtitle(windowSubtitle)
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                compactToggle
-                moreMenu
-            }
-        }
+        compactWindow.setCompact(compact, screenAspectRatio: screen.aspectRatio, reduceMotion: reduceMotion)
     }
 
     /// Device buttons floating below the screen in two glass capsules, shared by both layouts:

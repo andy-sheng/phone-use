@@ -7,12 +7,17 @@ import SwiftUI
 /// background runs beneath it and shows through the glass. The stage's content is inset by the
 /// panel's width, so the device itself is never covered.
 struct DeviceWorkspaceView<Sidebar: View, Detail: View, Panel: View>: View {
+    var isCompact = false
+    var isResizingWindow = false
     let showsPanel: Bool
     @ViewBuilder var sidebar: Sidebar
     @ViewBuilder var detail: Detail
     @ViewBuilder var panel: Panel
 
     @AppStorage("inspector.width") private var storedPanelWidth: Double = 400
+    @State private var columns = NavigationSplitViewVisibility.all
+    @State private var expandedSidebarWidth: CGFloat = 250
+    @State private var expandedColumns = NavigationSplitViewVisibility.all
     @State private var dragStartWidth: CGFloat?
 
     static var previewMinimumWidth: CGFloat { 300 }
@@ -35,11 +40,15 @@ struct DeviceWorkspaceView<Sidebar: View, Detail: View, Panel: View>: View {
 
     var body: some View {
         GeometryReader { window in
-            NavigationSplitView {
+            NavigationSplitView(columnVisibility: $columns) {
                 sidebar
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                        if !isCompact && !isResizingWindow && width >= 220 { expandedSidebarWidth = width }
+                    }
                     .navigationSplitViewColumnWidth(
-                        min: 220, ideal: 250,
-                        max: max(220, window.size.width - detailMinimumWidth - dividerWidth)
+                        min: isResizingWindow ? expandedSidebarWidth : 220, ideal: expandedSidebarWidth,
+                        max: max(isResizingWindow ? expandedSidebarWidth : 220,
+                                 window.size.width - detailMinimumWidth - dividerWidth)
                     )
             } detail: {
                 GeometryReader { available in
@@ -58,10 +67,18 @@ struct DeviceWorkspaceView<Sidebar: View, Detail: View, Panel: View>: View {
                         }
                     }
                 }
-                .frame(minWidth: detailMinimumWidth)
+                .frame(minWidth: isCompact || isResizingWindow ? nil : detailMinimumWidth)
             }
         }
-        .frame(minWidth: 940, minHeight: 680)
+        .background {
+            if isCompact { Color(nsColor: .underPageBackgroundColor).ignoresSafeArea() }
+        }
+        .onChange(of: isCompact) { _, compact in
+            if compact { expandedColumns = columns }
+            columns = compact ? .detailOnly : expandedColumns
+        }
+        .frame(minWidth: isCompact || isResizingWindow ? CompactLayout.minimumSize.width : 940,
+               minHeight: isCompact || isResizingWindow ? CompactLayout.minimumSize.height - 60 : 680)
     }
 
     private func floatingPanel(width: CGFloat, available: CGFloat) -> some View {

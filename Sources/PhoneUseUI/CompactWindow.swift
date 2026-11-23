@@ -34,67 +34,105 @@ enum CompactLayout {
 
 /// Switches one window between the full workspace frame and a frame fitted to the device.
 @MainActor
-final class CompactWindowController {
-    weak var window: NSWindow?
+final class CompactWindowController: ObservableObject {
+    weak var stage: NSView?
+    @Published private(set) var isCompact = false
+    @Published private(set) var isResizing = false
     private var expandedFrame: NSRect?
-
-    var isCompact: Bool { expandedFrame != nil }
-
-    func enter(screenAspectRatio: CGFloat) {
-        guard let window, expandedFrame == nil else { return }
-        expandedFrame = window.frame
-        fit(screenAspectRatio: screenAspectRatio)
+    private struct TitlebarAppearance {
+        let transparent: Bool
+        let separator: NSTitlebarSeparatorStyle
+        let background: NSColor
+        let fullSizeContent: Bool
     }
 
-    /// Resizes the compact window to the device, keeping its top-left corner where it was.
-    func fit(screenAspectRatio: CGFloat) {
-        guard let window, expandedFrame != nil, !window.styleMask.contains(.fullScreen) else { return }
+    private var expandedTitlebar: TitlebarAppearance?
+    private var revision = 0
+
+    func setCompact(_ compact: Bool, screenAspectRatio: CGFloat, reduceMotion: Bool) {
+        guard compact != isCompact, let stage, let window = stage.window else { return }
+        let fullscreen = window.styleMask.contains(.fullScreen)
+        if compact, expandedFrame == nil, !fullscreen { expandedFrame = window.frame }
+
+        // Measure before the sidebar or inspector moves. The compact window closes around
+        // the preview even when the user has dragged either divider away from its default.
+        let centerX = window.convertToScreen(stage.convert(stage.bounds, to: nil)).midX
+        let target = compact ? compactFrame(in: window, ratio: screenAspectRatio, centerX: centerX) : expandedFrame
+        updateTitlebar(in: window, compact: compact)
+        let resize = !fullscreen && target != nil
+        isResizing = resize
+        let duration = target.map { window.animationResizeTime($0) } ?? 0.25
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: duration)) {
+            isCompact = compact
+        }
+        if resize, let target {
+            resizeWindow(window, to: target, reduceMotion: reduceMotion)
+        } else {
+            revision += 1
+            if !compact { expandedFrame = nil }
+        }
+    }
+
+    private func updateTitlebar(in window: NSWindow, compact: Bool) {
+        if compact {
+            let fullSizeContent = window.styleMask.contains(.fullSizeContentView)
+            expandedTitlebar = TitlebarAppearance(transparent: window.titlebarAppearsTransparent,
+                                                  separator: window.titlebarSeparatorStyle,
+                                                  background: window.backgroundColor, fullSizeContent: fullSizeContent)
+            // Extend the stage beneath the native toolbar and match its backing during the resize.
+            if !fullSizeContent { window.styleMask.insert(.fullSizeContentView) }
+            window.backgroundColor = .underPageBackgroundColor
+            window.titlebarAppearsTransparent = true
+            window.titlebarSeparatorStyle = .none
+        } else if let expandedTitlebar {
+            if !expandedTitlebar.fullSizeContent { window.styleMask.remove(.fullSizeContentView) }
+            window.backgroundColor = expandedTitlebar.background
+            window.titlebarAppearsTransparent = expandedTitlebar.transparent
+            window.titlebarSeparatorStyle = expandedTitlebar.separator
+            self.expandedTitlebar = nil
+        }
+    }
+
+    func fit(screenAspectRatio: CGFloat, reduceMotion: Bool) {
+        guard isCompact, let window = stage?.window, !window.styleMask.contains(.fullScreen) else { return }
+        let target = compactFrame(in: window, ratio: screenAspectRatio, centerX: window.frame.midX)
+        resizeWindow(window, to: target, reduceMotion: reduceMotion)
+    }
+
+    private func compactFrame(in window: NSWindow, ratio: CGFloat, centerX: CGFloat) -> NSRect {
         let visible = (window.screen ?? NSScreen.main)?.visibleFrame ?? window.frame
         let chrome = max(window.frame.height - window.contentLayoutRect.height, 0)
-        let stage = CompactLayout.stageSize(screenAspectRatio: screenAspectRatio,
-                                            available: visible.size, chromeHeight: chrome)
-        var frame = NSRect(x: window.frame.minX, y: window.frame.maxY - stage.height - chrome,
-                           width: stage.width, height: stage.height + chrome)
-        frame.origin.x = min(max(frame.minX, visible.minX), visible.maxX - frame.width)
-        frame.origin.y = min(max(frame.minY, visible.minY), visible.maxY - frame.height)
-        window.setFrame(frame, display: true, animate: true)
+        let stageSize = CompactLayout.stageSize(screenAspectRatio: ratio, available: visible.size, chromeHeight: chrome)
+        let size = CGSize(width: stageSize.width, height: stageSize.height + chrome)
+        return NSRect(x: min(max((centerX - size.width / 2).rounded(), visible.minX), visible.maxX - size.width),
+                      y: min(max(window.frame.maxY - size.height, visible.minY), visible.maxY - size.height),
+                      width: size.width, height: size.height)
     }
 
-    func exit() {
-        guard let frame = expandedFrame else { return }
-        expandedFrame = nil
-        guard let window, !window.styleMask.contains(.fullScreen) else { return }
-        window.setFrame(frame, display: true, animate: true)
+    private func resizeWindow(_ window: NSWindow, to frame: NSRect, reduceMotion: Bool) {
+        revision += 1
+        let current = revision
+        // Give SwiftUI a layout pass to release the expanded minimum width before shrinking.
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window, self.revision == current else { return }
+            window.contentView?.layoutSubtreeIfNeeded()
+            window.setFrame(frame, display: true, animate: !reduceMotion)
+            guard self.revision == current else { return }
+            self.isResizing = false
+            if !self.isCompact { self.expandedFrame = nil }
+        }
     }
 }
 
-/// Reports the window hosting a SwiftUI view.
-struct WindowReader: NSViewRepresentable {
-    let onWindow: (NSWindow?) -> Void
+/// Locates the device stage in desktop coordinates before compacting the window.
+struct WindowStageReader: NSViewRepresentable {
+    let onStage: (NSView) -> Void
 
-    func makeNSView(context: Context) -> ReaderView {
-        ReaderView(onWindow: onWindow)
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        onStage(view)
+        return view
     }
 
-    func updateNSView(_ view: ReaderView, context: Context) {
-        view.onWindow = onWindow
-    }
-
-    final class ReaderView: NSView {
-        var onWindow: (NSWindow?) -> Void
-
-        init(onWindow: @escaping (NSWindow?) -> Void) {
-            self.onWindow = onWindow
-            super.init(frame: .zero)
-        }
-
-        required init?(coder: NSCoder) {
-            fatalError("init(coder:) is not supported")
-        }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            onWindow(window)
-        }
-    }
+    func updateNSView(_ view: NSView, context: Context) {}
 }

@@ -64,7 +64,10 @@ struct DeviceScreenView: View {
     var onFitScale: (CGFloat) -> Void = { _ in }
 
     /// Space kept around the device frame. The control bar below the stage adds its own spacing.
-    var insets = EdgeInsets(top: 32, leading: 32, bottom: 12, trailing: 32)
+    var isCompact = false
+    private var insets: EdgeInsets {
+        isCompact ? CompactLayout.screenInsets : EdgeInsets(top: 32, leading: 32, bottom: 12, trailing: 32)
+    }
 
     var body: some View {
         GeometryReader { area in
@@ -80,7 +83,7 @@ struct DeviceScreenView: View {
                     .frame(minWidth: area.size.width, minHeight: area.size.height)
             }
             .scrollIndicators(.never)
-            .scrollDisabled(zoom == nil)
+            .scrollDisabled(isCompact || zoom == nil)
             .defaultScrollAnchor(.center, for: .initialOffset)
             .defaultScrollAnchor(.center, for: .sizeChanges)
             .defaultScrollAnchor(.center, for: .alignment)
@@ -136,7 +139,7 @@ struct DeviceScreenView: View {
     /// The device frame's size: the zoomed screen width, or the largest frame that fits.
     private func frameSize(in area: CGSize, fitScale: CGFloat) -> CGSize {
         let ratio = screen.aspectRatio
-        if let zoom, let points = screen.display?.pointWidth, points > 0 {
+        if !isCompact, let zoom, let points = screen.display?.pointWidth, points > 0 {
             return DeviceFrame<EmptyView>.outerSize(screenWidth: points * zoom, screenAspectRatio: ratio)
         }
         let outer = DeviceFrame<EmptyView>.outerAspectRatio(screenAspectRatio: ratio)
