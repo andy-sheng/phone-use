@@ -61,6 +61,10 @@ mkdir -p "$ROOT/dist"
 ditto "$BUILT" "$APP"
 if [[ -n "${SIGN_IDENTITY:-}" ]]; then
     "$ASSET_PYTHON" "$ROOT/scripts/sign-app.py" "$APP" "$SIGN_IDENTITY" --entitlements "$ENTITLEMENTS"
+else
+    # An ad-hoc host has no team ID for loading Sparkle under the hardened runtime.
+    # Use the local development entitlements on the outer app only.
+    codesign --force --sign - --options runtime --entitlements "$ROOT/Support/DeviceHub-Debug.entitlements" "$APP"
 fi
 codesign --verify --deep --strict "$APP"
 
