@@ -31,6 +31,10 @@ struct PhoneUseWindow: View {
                         selectedTab: $selectedTab, showsPanel: $showsPanel,
                         devicesWithPasscode: Set(credentialStates.filter { $0.value.hasPIN }.keys),
                         configurePasscode: { passcodeDevice = $0 },
+                        unlockDevice: { device in
+                            defer { credentialRevision += 1 }
+                            return try await DeviceUnlockController.shared.unlock(device, requireSavedPasscode: true)
+                        },
                         browseSandbox: { filesDevice = $0 }) { tab, screen in
             switch Tab(rawValue: tab.id) ?? .settings {
             case .uiTree:

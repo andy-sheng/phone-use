@@ -1,7 +1,20 @@
 import XCTest
+import PhoneUseKit
 @testable import PhoneUseApp
 
 final class UnlockCredentialTests: XCTestCase {
+    func testToolbarUnlockWithNoSavedPasscodeStopsBeforeOpeningDevice() async throws {
+        for platform in ["android", "ios"] {
+            let data = try JSONSerialization.data(withJSONObject: [
+                "udid": UUID().uuidString, "name": "Fixture", "platform": platform,
+                "connection": "usb", "state": "ready", "session": "closed",
+            ])
+            let device = try JSONDecoder().decode(DeviceSummary.self, from: data)
+            let result = try await DeviceUnlockController().unlock(device, requireSavedPasscode: true)
+            XCTAssertEqual(result, .needsPasscode)
+        }
+    }
+
     func testLocalCredentialIsPerDeviceAndFailedAttemptsStayReserved() throws {
         let item = UnlockCredential(deviceID: "test-" + UUID().uuidString)
         let other = UnlockCredential(deviceID: "test-" + UUID().uuidString)

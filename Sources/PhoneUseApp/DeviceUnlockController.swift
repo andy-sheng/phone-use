@@ -146,13 +146,22 @@ actor DeviceUnlockController {
         return pin
     }
 
-    func unlock(_ device: DeviceSummary) async throws -> DeviceUnlockResult {
+    func unlock(_ device: DeviceSummary, requireSavedPasscode: Bool = false) async throws -> DeviceUnlockResult {
         let id = device.id
         guard active.insert(id).inserted else { throw DeviceHubError.serviceFailed("设备正在解锁。") }
         defer {
             active.remove(id)
             reserved.removeValue(forKey: id)
         }
+        if requireSavedPasscode {
+            switch try await statuses(for: [device])[id] {
+            case nil: throw DeviceHubError.serviceFailed("无法读取当前设备用户的密码状态，请重新连接后再试。")
+            case .missing: return .needsPasscode
+            case .pending: throw DeviceHubError.serviceFailed(UnlockCredential.Status.pending.rawValue)
+            case .saved: break
+            }
+        }
+        try Task.checkCancellation()
         let session = try await DeviceHub.shared.session(for: id)
         let result: DeviceUnlockResult
         do { result = try await session.unlock { try await self.reserve($0, device: id) } }

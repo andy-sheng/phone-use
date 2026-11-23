@@ -1,4 +1,5 @@
 import PhoneUseKit
+import PhoneUseUI
 import SwiftUI
 
 struct DeviceUnlockPanel: View {
@@ -19,14 +20,7 @@ struct DeviceUnlockPanel: View {
                 Button("一键解锁") {
                     run {
                         let result = try await DeviceUnlockController.shared.unlock(device)
-                        switch result {
-                        case .unlocked: return "已解锁"
-                        case .alreadyUnlocked: return "设备已解锁"
-                        case .noPasscodeRequired: return "设备当前无需密码，未确认锁屏界面状态。"
-                        case .needsUserUnlock: return "请在设备上解锁，当前无法确认系统密码键盘。"
-                        case .needsPasscode: return "请先保存这台设备的数字密码。"
-                        case .unconfirmed: return "未确认解锁。请在设备上核对，然后重新保存密码。"
-                        }
+                        return result.displayMessage
                     }
                 }.disabled(!device.isReady)
             }

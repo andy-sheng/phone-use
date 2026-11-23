@@ -51,6 +51,7 @@ public struct DeviceWorkspace<Panel: View>: View {
     private let badgedTabs: Set<String>
     private let devicesWithPasscode: Set<String>
     private let configurePasscode: ((DeviceSummary) -> Void)?
+    private let unlockDevice: ((DeviceSummary) async throws -> DeviceUnlockResult)?
     private let browseSandbox: ((DeviceSummary) -> Void)?
     private let panel: (WorkspaceTab, ScreenModel) -> Panel
 
@@ -62,6 +63,7 @@ public struct DeviceWorkspace<Panel: View>: View {
     public init(title: String, tabs: [WorkspaceTab], selectedTab: Binding<String>, showsPanel: Binding<Bool>,
                 allowsInput: Bool = true, badgedTabs: Set<String> = [],
                 devicesWithPasscode: Set<String> = [], configurePasscode: ((DeviceSummary) -> Void)? = nil,
+                unlockDevice: ((DeviceSummary) async throws -> DeviceUnlockResult)? = nil,
                 browseSandbox: ((DeviceSummary) -> Void)? = nil,
                 @ViewBuilder panel: @escaping (WorkspaceTab, ScreenModel) -> Panel) {
         self.title = title
@@ -72,6 +74,7 @@ public struct DeviceWorkspace<Panel: View>: View {
         self.badgedTabs = badgedTabs
         self.devicesWithPasscode = devicesWithPasscode
         self.configurePasscode = configurePasscode
+        self.unlockDevice = unlockDevice
         self.browseSandbox = browseSandbox
         self.panel = panel
     }
@@ -628,29 +631,15 @@ public struct DeviceWorkspace<Panel: View>: View {
             }
             .padding(4)
             .glassCapsule()
-            HStack(spacing: 2) {
-                if isCompact && (screen.canFold || screen.canRotate) {
-                    // Keep all fold presets visible even in the 300-point compact window.
-                    Menu {
-                        Button("锁定屏幕") { screen.press(.lock) }
-                        Button("音量 −") { screen.press(.volumeDown) }
-                        Button("音量 +") { screen.press(.volumeUp) }
-                        if screen.canRotate {
-                            Divider()
-                            rotationMenu
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .frame(width: 28, height: 32)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .help("设备操作")
-                    .accessibilityLabel("设备操作")
+            Group {
+                if canControl, let device = model.selectedDevice, let unlockDevice {
+                    PreviewLockControls(device: device, lock: { try await screen.lockScreen(for: device.id) },
+                                        unlock: { try await unlockDevice(device) },
+                                        configure: configurePasscode.map { edit in { edit(device) } },
+                                        content: hardwareControls)
+                        .id(device.id)
                 } else {
-                    ControlBarButton("锁定屏幕", systemImage: "lock") { screen.press(.lock) }
-                    ControlBarButton("音量 −", systemImage: "speaker.wave.1") { screen.press(.volumeDown) }
-                    ControlBarButton("音量 +", systemImage: "speaker.wave.3") { screen.press(.volumeUp) }
+                    hardwareControls("锁定屏幕", "lock", false) { screen.press(.lock) }
                 }
             }
             .disabled(!canControl)
@@ -676,6 +665,37 @@ public struct DeviceWorkspace<Panel: View>: View {
                 .disabled(!canControl)
                 .padding(4)
                 .glassCapsule()
+            }
+        }
+    }
+
+    private func hardwareControls(_ title: String, _ icon: String, _ busy: Bool,
+                                  _ action: @escaping () -> Void) -> some View {
+        HStack(spacing: 2) {
+            if isCompact && (screen.canFold || screen.canRotate) {
+                // Keep all fold presets visible even in the 300-point compact window.
+                Menu {
+                    Button(action: action) { Label(title, systemImage: icon) }
+                        .disabled(busy)
+                    Button("音量 −") { screen.press(.volumeDown) }
+                    Button("音量 +") { screen.press(.volumeUp) }
+                    if screen.canRotate {
+                        Divider()
+                        rotationMenu
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .frame(width: 28, height: 32)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .help("设备操作")
+                .accessibilityLabel("设备操作")
+            } else {
+                ControlBarButton(title, systemImage: icon, action: action)
+                    .disabled(busy)
+                ControlBarButton("音量 −", systemImage: "speaker.wave.1") { screen.press(.volumeDown) }
+                ControlBarButton("音量 +", systemImage: "speaker.wave.3") { screen.press(.volumeUp) }
             }
         }
     }

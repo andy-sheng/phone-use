@@ -366,6 +366,13 @@ public final class ScreenModel: ObservableObject {
         CGPoint(x: min(max(point.x, 0), 1), y: min(max(point.y, 0), 1))
     }
 
+    func lockScreen(for deviceID: String) async throws {
+        guard let session, requestedDeviceID == deviceID, session.device.id == deviceID else {
+            throw DeviceHubError.connectionClosed
+        }
+        try await session.press(.lock)
+    }
+
     func press(_ button: HardwareButton) {
         guard let session else { return }
         Task {
