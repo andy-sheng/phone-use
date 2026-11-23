@@ -6,16 +6,16 @@ import XCTest
 
 final class SimulatorOrientationTests: XCTestCase {
     func testQuarterTurnsCycleInBothDirectionsAndUseDuoSensorCommands() {
-        var orientation = SimulatorOrientation.portrait
-        for expected in [SimulatorOrientation.landscapeRight, .portraitUpsideDown, .landscapeLeft, .portrait] {
+        var orientation = DeviceOrientation.portrait
+        for expected in [DeviceOrientation.landscapeRight, .portraitUpsideDown, .landscapeLeft, .portrait] {
             orientation = orientation.rotated(.right)
             XCTAssertEqual(orientation, expected)
         }
-        for expected in [SimulatorOrientation.landscapeLeft, .portraitUpsideDown, .landscapeRight, .portrait] {
+        for expected in [DeviceOrientation.landscapeLeft, .portraitUpsideDown, .landscapeRight, .portrait] {
             orientation = orientation.rotated(.left)
             XCTAssertEqual(orientation, expected)
         }
-        for (orientation, value) in [(SimulatorOrientation.portrait, "portrait"), (.portraitUpsideDown, "pud"),
+        for (orientation, value) in [(DeviceOrientation.portrait, "portrait"), (.portraitUpsideDown, "pud"),
                                      (.landscapeLeft, "landscape-left"), (.landscapeRight, "landscape-right")] {
             XCTAssertEqual(orientation.command as? [String: String], [
                 "provider": "com.apple.Virtualization.VirtualMachines", "source": "orientation-picker-control",
@@ -26,7 +26,7 @@ final class SimulatorOrientationTests: XCTestCase {
 
     func testDisplayedTouchMapsBackToNativeFramebuffer() {
         let point = CGPoint(x: 0.2, y: 0.3)
-        let expected: [(SimulatorOrientation, CGPoint)] = [
+        let expected: [(DeviceOrientation, CGPoint)] = [
             (.portrait, point), (.landscapeRight, CGPoint(x: 0.3, y: 0.8)),
             (.portraitUpsideDown, CGPoint(x: 0.8, y: 0.7)),
             (.landscapeLeft, CGPoint(x: 0.7, y: 0.2)),
@@ -39,18 +39,18 @@ final class SimulatorOrientationTests: XCTestCase {
     }
 
     func testFaceUpPreservesLastNonFlatOrientationAndUnknownDoesNotDefaultToPortrait() {
-        XCTAssertEqual(SimulatorOrientation.parse(["deviceOrientation": "faceUp",
+        XCTAssertEqual(DeviceOrientation.parse(["deviceOrientation": "faceUp",
             "deviceOrientationNonFlat": "landscapeLeft"]), .landscapeLeft)
-        XCTAssertEqual(SimulatorOrientation.parse(["deviceOrientation": "portrait"]), .portrait)
-        XCTAssertNil(SimulatorOrientation.parse(["deviceOrientation": "unknown"]))
-        XCTAssertNil(SimulatorOrientation.parse([:]))
+        XCTAssertEqual(DeviceOrientation.parse(["deviceOrientation": "portrait"]), .portrait)
+        XCTAssertNil(DeviceOrientation.parse(["deviceOrientation": "unknown"]))
+        XCTAssertNil(DeviceOrientation.parse([:]))
     }
 
     /// The video layer and screenshots must rotate identically, without mirroring or stretching.
     @MainActor
     func testPreviewAndScreenshotKeepTheSameFourCornersAtEveryOrientation() async throws {
         let original = try colorQuadrants()
-        for orientation in SimulatorOrientation.allCases {
+        for orientation in DeviceOrientation.allCases {
             let expected = try orientation.image(original)
             XCTAssertEqual(expected.width, orientation.isLandscape ? 96 : 64)
             XCTAssertEqual(expected.height, orientation.isLandscape ? 64 : 96)
@@ -69,6 +69,26 @@ final class SimulatorOrientationTests: XCTestCase {
                 XCTAssertEqual(try pixel(expected, x: x, y: y), try pixel(original, x: native.x, y: native.y),
                                "Touch differs from screenshot at \(orientation): \(x),\(y)")
             }
+        }
+    }
+
+    @MainActor
+    func testLiveLayerInFlippedMacWindowMatchesNativeTouchAndUprightScreenshot() {
+        let windowLayer = CALayer()
+        windowLayer.isGeometryFlipped = true
+        let preview = SimulatorPreviewLayer()
+        windowLayer.addSublayer(preview)
+        for orientation in DeviceOrientation.allCases {
+            preview.orientation = orientation
+            preview.bounds.size = orientation.isLandscape ? CGSize(width: 390, height: 180) : CGSize(width: 180, height: 390)
+            preview.setNeedsLayout()
+            preview.layoutIfNeeded()
+            let point = CGPoint(x: 0.23, y: 0.78)
+            let source = preview.surfaceLayer.convert(CGPoint(x: point.x * preview.bounds.width,
+                                                             y: point.y * preview.bounds.height), from: preview)
+            let expected = orientation.nativePoint(point)
+            XCTAssertEqual(source.x, expected.x * 180, accuracy: 0.001)
+            XCTAssertEqual(source.y, expected.y * 390, accuracy: 0.001)
         }
     }
 

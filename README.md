@@ -46,6 +46,8 @@ swift build && swift run automation-app
 
 Android 设备需要启用 USB 调试并授权电脑；输入控制还可能需要厂商的 USB 调试安全设置。
 
+在 PhoneUse 或 Automation 的设备预览中，支持方向控制的 iPhone、iPad、iOS 模拟器和 Android 设备会显示旋转按钮。点按可旋转 90°，右键可选择向左或向右旋转。精简窗口中从「设备操作」菜单切换。iOS 真机需要支持该设备方向控制的 Xcode。Android 通过 ADB 临时指定显示方向，退出预览后恢复原有的自动旋转或方向锁定设置。
+
 ### 本地 Web 视频预览
 
 应用或守护进程运行后，可用 CLI 启动本地 HTTP 视频预览与控制：

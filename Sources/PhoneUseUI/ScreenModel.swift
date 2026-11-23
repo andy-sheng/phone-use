@@ -24,8 +24,11 @@ public final class ScreenModel: ObservableObject {
     @Published private(set) var isRecording = false
     @Published private(set) var canFold = false
     @Published private(set) var canRotate = false
+    @Published private(set) var previewOrientation = DeviceOrientation.portrait
     @Published private(set) var isChangingGeometry = false
     @Published private(set) var posture: SimulatorPosture?
+
+    var frameOrientation: DeviceOrientation? { session?.frameOrientation }
 
     private var session: DeviceSession?
     private var settings: DeviceSettings?
@@ -108,6 +111,7 @@ public final class ScreenModel: ObservableObject {
         display = nil
         canFold = false
         canRotate = false
+        previewOrientation = .portrait
         posture = nil
         isChangingGeometry = false
         framesPerSecond = nil
@@ -179,12 +183,14 @@ public final class ScreenModel: ObservableObject {
                 self.show(message)
             }
         }
+        await session.preparePreviewRotation()
+        guard isCurrentRequest(device.id, generation: generation) else { return }
         updateDisplay(session)
         canFold = session.canFold
         canRotate = session.canRotate
         status = "Starting screen…"
 
-        var stream = await makeScreenStream(for: session)
+        let stream = await makeScreenStream(for: session)
         guard isCurrentRequest(device.id, generation: generation) else { stream.stop(); return }
         attach(stream)
         status = nil
@@ -198,7 +204,7 @@ public final class ScreenModel: ObservableObject {
 
         // A video source can come up late, for example after the device re-enumerates on USB,
         // so screenshot polling keeps retrying until one is available.
-        while isCurrentRequest(device.id, generation: generation) {
+        while isCurrentRequest(device.id, generation: generation), let stream = self.stream {
             try? await Task.sleep(for: .seconds(stream.kind == .screenshots ? 5 : 1))
             guard isCurrentRequest(device.id, generation: generation) else { break }
             updateDisplay(session)
@@ -211,13 +217,16 @@ public final class ScreenModel: ObservableObject {
             }
             finishRecording()
             stream.stop()
-            stream = video
             attach(video)
         }
-        if self.stream === stream { finishRecording() }
-        stream.stop()
-        if self.stream === stream {
+        if runGeneration == generation {
+            finishRecording()
+            self.stream?.stop()
             self.stream = nil
+        }
+        if self.session !== session || runGeneration == generation || requestedDeviceID != device.id {
+            do { try await session.restorePreviewRotation() }
+            catch { Diagnostics.record("preview.rotation.restore.failed", ["error": String(describing: error)]) }
         }
     }
 
@@ -267,7 +276,9 @@ public final class ScreenModel: ObservableObject {
     }
 
     private func updateDisplay(_ session: DeviceSession) {
-        let next = session.display
+        let orientation = session.previewOrientation
+        if previewOrientation != orientation { previewOrientation = orientation }
+        let next = orientation.display(session.display)
         if display?.pixelWidth != next.pixelWidth || display?.pixelHeight != next.pixelHeight {
             display = next
             aspectRatio = next.pixelWidth / next.pixelHeight
@@ -294,7 +305,7 @@ public final class ScreenModel: ObservableObject {
     }
 
     func changeGeometry(_ change: SimulatorGeometryChange) async throws {
-        guard let session, !isChangingGeometry else { throw DeviceHubError.deviceNotReady("Simulator screen is busy.") }
+        guard let session, !isChangingGeometry else { throw DeviceHubError.deviceNotReady("Device screen is busy.") }
         let generation = runGeneration
         releaseManualTouch()
         isChangingGeometry = true
@@ -305,14 +316,28 @@ public final class ScreenModel: ObservableObject {
         case .posture(let next):
             try await session.setPosture(next)
             if runGeneration == generation { posture = next }
-        case .rotation(let direction): try await session.rotate(direction)
+        case .rotation(let direction):
+            try await session.rotate(direction)
+            if session.device.isAndroid {
+                guard isCurrentRequest(session.device.id, generation: generation) else {
+                    try await session.restorePreviewRotation()
+                    throw DeviceHubError.connectionClosed
+                }
+                stream?.stop()
+                let replacement = await makeScreenStream(for: session)
+                guard isCurrentRequest(session.device.id, generation: generation) else {
+                    replacement.stop()
+                    throw DeviceHubError.connectionClosed
+                }
+                attach(replacement)
+            }
         }
         if runGeneration == generation { updateDisplay(session) }
     }
 
     func touch(_ phase: TouchPhase, at point: CGPoint) {
         guard !isChangingGeometry else { return }
-        let point = clamped(point)
+        let point = previewOrientation.nativePoint(clamped(point))
         switch phase {
         case .began:
             releaseManualTouch()
@@ -355,9 +380,10 @@ public final class ScreenModel: ObservableObject {
     /// Saves a full-resolution PNG to the Desktop.
     func saveScreenshot() {
         guard let session else { return }
+        let orientation = previewOrientation
         Task {
             do {
-                let image = try await session.screenshot()
+                let image = try await orientation.image(session.screenshot())
                 guard let png = ImageEncoding.png(image) else { throw DeviceHubError.serviceFailed("PNG encoding failed") }
                 let formatter = DateFormatter()
                 formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"

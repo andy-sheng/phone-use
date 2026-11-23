@@ -119,7 +119,7 @@ final class SimulatorScreenStream: ScreenStream {
 /// Rotates the IOSurface using Core Animation, without copying pixels each frame.
 final class SimulatorPreviewLayer: CALayer {
     let surfaceLayer = CALayer()
-    var orientation = SimulatorOrientation.portrait {
+    var orientation = DeviceOrientation.portrait {
         didSet { if orientation != oldValue { setNeedsLayout() } }
     }
 
@@ -142,8 +142,9 @@ final class SimulatorPreviewLayer: CALayer {
         surfaceLayer.bounds = CGRect(origin: .zero, size: orientation.isLandscape
             ? CGSize(width: bounds.height, height: bounds.width) : bounds.size)
         surfaceLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
-        // CALayer uses bottom-left coordinates; physical clockwise rotation is negative.
-        surfaceLayer.setAffineTransform(CGAffineTransform(rotationAngle: -orientation.radians))
+        // Hosting in a flipped AppKit view reverses the layer tree's Y axis.
+        let angle = contentsAreFlipped() ? orientation.radians : -orientation.radians
+        surfaceLayer.setAffineTransform(CGAffineTransform(rotationAngle: angle))
         CATransaction.commit()
     }
 }

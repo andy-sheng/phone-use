@@ -14,13 +14,34 @@ public final class DeviceSession: @unchecked Sendable {
     public let device: DeviceSummary
     private let initialDisplay: DisplayInfo
     public var display: DisplayInfo {
+        if let android = connection as? AndroidDeviceConnection { return android.display }
         guard let framebuffer = simulatorDisplay, let size = try? framebuffer.pixelSize() else { return initialDisplay }
         return DisplayInfo(pixelWidth: Double(size.width), pixelHeight: Double(size.height),
                            pointScale: initialDisplay.pointScale)
     }
 
     public var canFold: Bool { (connection as? SimulatorDeviceConnection)?.canFold == true }
-    public var canRotate: Bool { (connection as? SimulatorDeviceConnection)?.canRotate == true }
+    /// Physical iOS streams and input use native coordinates. The UI applies this rotation to both.
+    public var previewOrientation: DeviceOrientation {
+        (connection as? IOSDeviceConnection)?.previewOrientation ?? .portrait
+    }
+
+    /// The bezel follows the selected panel, including a foldable simulator's mounting angle.
+    public var frameOrientation: DeviceOrientation? {
+        simulatorDisplay?.framebufferOrientation ?? (connection as? IOSDeviceConnection)?.previewOrientation
+            ?? (connection as? AndroidDeviceConnection)?.display.androidFrameOrientation
+    }
+
+    /// Probe only when opening the interactive preview. Other consumers use native coordinates.
+    public func preparePreviewRotation() async {
+        await (connection as? IOSDeviceConnection)?.readOrientation(deviceID: device.deviceIdentifier)
+    }
+
+    public var canRotate: Bool {
+        (connection as? SimulatorDeviceConnection)?.canRotate == true ||
+            (connection as? IOSDeviceConnection)?.previewOrientation != nil ||
+            (connection as? AndroidDeviceConnection)?.display.geometryID != nil
+    }
 
     public func unlockCredentialID() async throws -> String {
         guard let android = connection as? AndroidDeviceConnection else { return device.id }
@@ -50,10 +71,22 @@ public final class DeviceSession: @unchecked Sendable {
     }
 
     public func rotate(_ direction: DeviceRotationDirection) async throws {
+        if let android = connection as? AndroidDeviceConnection {
+            try await android.rotate(direction)
+            return
+        }
+        if let physical = connection as? IOSDeviceConnection, canRotate {
+            try await physical.rotate(direction, deviceID: device.deviceIdentifier)
+            return
+        }
         guard let simulator = connection as? SimulatorDeviceConnection else {
             throw DeviceHubError.capabilityUnavailable("screen rotation on this connection")
         }
         try await simulator.rotate(direction)
+    }
+
+    public func restorePreviewRotation() async throws {
+        try await (connection as? AndroidDeviceConnection)?.restoreRotation()
     }
 
     public func setPosture(_ posture: SimulatorPosture) async throws {

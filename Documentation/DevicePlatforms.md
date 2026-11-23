@@ -314,8 +314,10 @@ Input pauses while SpringBoard settles the hinge, and changing posture finalizes
 This provides screen controls, not DeviceHub's 3D chassis animation. `DEVICEHUB_FOLDABLE_SIMULATOR_UDID`
 enables the integration test that exercises all three postures on a booted Duo.
 
-Device rotation still has no supported control here: `devicectl device orientation set`
-reports success on an iOS 27 simulator but leaves the orientation unchanged.
+On physical iPhones and iPads, the native preview enables the same rotation controls when
+Xcode can read the connected device’s orientation. A left or right turn uses the orientation
+reported by `devicectl device orientation rotate`. The preview, bezel and saved UI screenshot
+turn together, and manual gestures map back to the device’s native touch coordinates.
 
 ## ADB selection
 
@@ -352,7 +354,13 @@ gesture. Closing the device worker closes both its control and video resources.
 
 Packet sizes, startup waits and transport backpressure are bounded. Malformed data
 fails the stream. SPS/PPS changes reset the H.264 format; a changed display aspect
-ratio stops the preview to avoid sending coordinates for a stale orientation. Native
+ratio stops the preview to avoid sending coordinates for a stale orientation.
+For a turn requested in the toolbar, the Android worker applies a temporary WindowManager
+rotation override to the default display and verifies its actual viewport. It issues a new
+geometry ID and the preview reopens video for that geometry. Positional input from older
+sessions requires a reconnect. Leaving the preview or closing the worker restores the prior
+user rotation and app-orientation policies. On multi-display phones screenshots explicitly
+target the default viewport’s physical display ID. Native
 screenshot geometry checks validate captures, while live display metadata checks protect
 input even when a rotation preserves the dimensions.
 

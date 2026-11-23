@@ -13,11 +13,14 @@ import signal
 import subprocess
 import sys
 import threading
+import time
+import uuid
 from typing import Any
 
 from devicehubd import android_unlock, protocol
 from devicehubd.android_control import ACTION_DOWN, ACTION_MOVE, ACTION_UP, KEY_DOWN, KEY_UP, AdbDriver
 from devicehubd.android_display import read_display_geometry
+from devicehubd.android_rotation import AndroidRotation
 from devicehubd.android_video import AndroidVideoManager
 from devicehubd.lifetime import WORKER_EXIT_DEADLINE, exit_after
 from devicehubd.protocol import RpcError
@@ -74,6 +77,9 @@ class AndroidDevice:
         self._geometry_reader = geometry_reader
         self._tap_hold, self._swipe_step = tap_hold, swipe_step
         self._rotation: int | None = None
+        self.rotation_control = AndroidRotation(adb_path, serial)
+        self.geometry_id = uuid.uuid4().hex
+        self._requires_geometry_id = False
         self._input_checked = False
         self._input_starting: threading.Thread | None = None
         self.stopped = stopped or threading.Event()
@@ -100,7 +106,46 @@ class AndroidDevice:
         self._input_starting = threading.Thread(target=self._start_input_quietly, name="android-input-start",
                                                 daemon=True)
         self._input_starting.start()
-        return {"services": [], "display": {"pixelWidth": self.width, "pixelHeight": self.height, "pointScale": 1}}
+        return {"services": [], "display": self.display_info()}
+
+    def display_info(self):
+        return {"pixelWidth": self.width, "pixelHeight": self.height, "pointScale": 1,
+                "androidRotation": self._rotation, "geometryID": self.geometry_id}
+
+    def _adopt_geometry(self, geometry):
+        self.physical_id = geometry.physical_id
+        self.width, self.height, self._rotation = geometry.width, geometry.height, geometry.rotation
+        self.geometry_changed = False
+        self._requires_geometry_id = True
+        self.geometry_id = uuid.uuid4().hex
+        return {"display": self.display_info()}
+
+    def _rotate(self, params, owner):
+        direction = params.get("direction")
+        if direction not in ("left", "right") or not owner:
+            raise RpcError("invalidParams", "Rotation requires an owner and a left or right direction")
+        self.release(owner)
+        self._idle_touch()
+        self._check_geometry()
+        # Android ROTATION_90 is the device turned counterclockwise from its natural orientation.
+        target = (self._rotation + (1 if direction == "left" else -1)) % 4
+        geometry = self.rotation_control.turn(owner, target, lambda: self._geometry_reader(self.adb_path, self.serial))
+        return self._adopt_geometry(geometry)
+
+    def _restore_rotation(self, params, owner):
+        if owner and self.rotation_control.restore(owner):
+            self.geometry_changed = True
+            # WindowManager applies restored sensor/app preferences asynchronously.
+            # Wait for a stable viewport before advertising geometry to the next preview.
+            geometry = self._geometry_reader(self.adb_path, self.serial)
+            for _ in range(8):
+                time.sleep(0.12)
+                next_geometry = self._geometry_reader(self.adb_path, self.serial)
+                if next_geometry == geometry:
+                    return self._adopt_geometry(geometry)
+                geometry = next_geometry
+            raise RpcError("displayChanged", "Android display is still changing; reconnect the preview")
+        return {}
 
     def _start_input_quietly(self) -> None:
         try:
@@ -214,11 +259,16 @@ class AndroidDevice:
             raise RpcError("disconnected", "The Android session is closed")
         if self.failed:
             raise RpcError("invalidState", "An Android operation timed out; close and reopen the device")
+        if action in {"tap", "swipe", "screenshot", "rotate"} or action == "touch" and params.get("phase") != "ended":
+            token = params.get("geometryID")
+            if (token is not None or self._requires_geometry_id) and token != self.geometry_id:
+                raise RpcError("displayChanged", "Android rotation changed; reconnect this device session")
         handler = {
             "unlockIdentity": self._unlock_identity, "prepareUnlock": self._prepare_unlock,
             "submitUnlockPIN": self._submit_unlock_pin,
             "screenshot": self._screenshot, "touch": self._touch, "tap": self._tap,
             "swipe": self._swipe, "press": self._press, "launch": self._launch,
+            "rotate": self._rotate, "restoreRotation": self._restore_rotation,
         }.get(action)
         if handler is None:
             raise RpcError("unknownMethod", f"Unknown Android action: {action}")
@@ -381,6 +431,10 @@ class AndroidDevice:
     def close(self) -> None:
         with contextlib.suppress(Exception):
             self.release()
+        try:
+            self.rotation_control.restore()
+        except RpcError as error:
+            logger.warning("Could not restore Android rotation: %s", error)
         driver, self.driver = self.driver, None
         if driver is not None:
             with contextlib.suppress(Exception):

@@ -13,6 +13,7 @@ from PIL import Image
 
 from devicehubd.android import AndroidAttachment, AndroidDiscovery, find_adb, parse_devices
 from devicehubd.android_display import DisplayGeometry
+from devicehubd.android_rotation import AndroidRotation
 from devicehubd.android_worker import AndroidDevice, check_input_permission
 from devicehubd.protocol import RpcError, encode
 from devicehubd.supervisor import (
@@ -167,6 +168,31 @@ class FakeDriver:
         self.closed = True
 
 
+class RotationTests(unittest.TestCase):
+    def test_failed_followup_turn_preserves_the_original_owners_policy(self):
+        rotation = AndroidRotation("/adb", "serial")
+        rotation._shell = MagicMock()
+        rotation._policy = MagicMock(return_value=("lock", "1", "enabled"))
+        rotation.turn("preview", 1, lambda: DisplayGeometry(2400, 1080, 1))
+        with self.assertRaisesRegex(RpcError, "viewport unavailable"):
+            rotation.turn("preview", 2, MagicMock(side_effect=RpcError("displayCheckFailed", "viewport unavailable")))
+        self.assertFalse(rotation.restore("other"))
+        self.assertTrue(rotation.restore("preview"))
+
+    def test_restores_original_sensor_preference_after_several_turns(self):
+        rotation = AndroidRotation("/adb", "serial")
+        rotation._shell = MagicMock()
+        rotation._policy = MagicMock(side_effect=[("free", "3", "default"), ("lock", "1", "enabled")])
+        rotation.turn("preview", 1, lambda: DisplayGeometry(2400, 1080, 1))
+        rotation.turn("preview", 0, lambda: DisplayGeometry(1080, 2400, 0))
+        rotation._shell.reset_mock()
+        self.assertTrue(rotation.restore("preview"))
+        self.assertEqual([entry.args for entry in rotation._shell.call_args_list], [
+            ("wm", "user-rotation", "lock", "3"), ("wm", "fixed-to-user-rotation", "default"),
+            ("wm", "user-rotation", "free"),
+        ])
+
+
 class DeviceTests(unittest.TestCase):
     def setUp(self):
         self.driver = FakeDriver()
@@ -184,7 +210,8 @@ class DeviceTests(unittest.TestCase):
         self.device.close()
 
     def test_native_resolution_and_png_color(self):
-        self.assertEqual(self.info["display"], {"pixelWidth": 1080, "pixelHeight": 2400, "pointScale": 1})
+        self.assertEqual(self.info["display"], {"pixelWidth": 1080, "pixelHeight": 2400, "pointScale": 1,
+                                                "androidRotation": 0, "geometryID": self.device.geometry_id})
         result = self.device.command({"action": "screenshot"})
         image = Image.open(io.BytesIO(base64.b64decode(result["png"])))
         self.assertEqual(image.size, (1080, 2400))
@@ -245,6 +272,23 @@ class DeviceTests(unittest.TestCase):
         self.assertFalse(any(call[0] == "down" for call in self.driver.calls))
         with self.assertRaisesRegex(RpcError, "orientation changed"):
             self.device.command({"action": "screenshot"})
+
+    def test_manual_rotation_updates_snapshot_and_rejects_input_from_previous_geometry(self):
+        old = self.device.geometry_id
+        self.device.rotation_control = MagicMock()
+        self.device.rotation_control.turn.return_value = DisplayGeometry(2400, 1080, 1)
+        display = self.device.command({"action": "rotate", "direction": "left", "owner": "preview",
+                                       "geometryID": old})["display"]
+        self.assertEqual((display["pixelWidth"], display["pixelHeight"], display["androidRotation"]), (2400, 1080, 1))
+        self.assertNotEqual(display["geometryID"], old)
+        self.assertEqual(self.device.rotation_control.turn.call_args.args[:2], ("preview", 1))
+        tap = {"action": "tap", "x": "0.75", "y": "0.25"}
+        for stale in [tap, {**tap, "geometryID": old}]:
+            with self.assertRaisesRegex(RpcError, "rotation changed"):
+                self.device.command(stale)
+        self.geometry_reader.return_value = DisplayGeometry(2400, 1080, 1)
+        self.device.command({**tap, "geometryID": display["geometryID"]})
+        self.assertEqual(self.driver.calls[-2:], [("down", 1800, 270), ("up",)])
 
     def test_rotation_during_drag_releases_without_moving(self):
         self.device.command({"action": "touch", "phase": "began", "x": "0", "y": "0"})

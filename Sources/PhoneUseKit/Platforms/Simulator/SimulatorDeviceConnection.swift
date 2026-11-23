@@ -74,8 +74,7 @@ actor SimulatorDeviceConnection: DeviceConnection {
         let modernInput = try await bridge.modernInput(for: simulator)
         let hid = try modernInput == nil ? bridge.hidClient(for: simulator) : nil
         let display = SimulatorDisplay(panels: try bridge.mainDisplays(of: simulator))
-        let orientation = try? await DeviceCtl.run(["device", "orientation", "get", "--device", device.deviceIdentifier])
-        let parsedOrientation = orientation.flatMap(SimulatorOrientation.parse)
+        let parsedOrientation = try? await DeviceOrientation.read(deviceID: device.deviceIdentifier)
         if let parsedOrientation { display.setOrientation(parsedOrientation) }
         let size = try display.pixelSize()
         let info = DisplayInfo(pixelWidth: Double(size.width), pixelHeight: Double(size.height),
@@ -106,7 +105,7 @@ actor SimulatorDeviceConnection: DeviceConnection {
             heldPoint = nil
             try await sendTouchMessage(.ended, at: held)
         }
-        let orientation: SimulatorOrientation
+        let orientation: DeviceOrientation
         if canFold {
             orientation = display.orientation.rotated(direction)
             if vendorInput == nil {
@@ -115,11 +114,7 @@ actor SimulatorDeviceConnection: DeviceConnection {
             }
             try await vendorInput?.setOrientation(orientation)
         } else {
-            let result = try await DeviceCtl.run(["device", "orientation", "rotate", "--device", identifier, direction.rawValue])
-            guard let parsed = SimulatorOrientation.parse(result) else {
-                throw DeviceHubError.serviceFailed("The simulator did not report its new orientation")
-            }
-            orientation = parsed
+            orientation = try await DeviceOrientation.rotate(direction, deviceID: identifier)
         }
         display.setOrientation(orientation)
         // Let the guest finish relayout before accepting the next gesture.
@@ -294,7 +289,7 @@ actor SimulatorDeviceConnection: DeviceConnection {
               let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else {
             throw DeviceHubError.serviceFailed("simctl returned an unreadable screenshot")
         }
-        return try display.framebufferOrientation.image(image)
+        return try display.simctlScreenshotCorrection.image(image)
     }
 
     func launchApp(bundleID: String) async throws {

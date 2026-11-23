@@ -322,7 +322,7 @@ final class SimulatorHIDChannel: @unchecked Sendable {
         try await sendVirtualMachineControl(posture.command)
     }
 
-    func setOrientation(_ orientation: SimulatorOrientation) async throws {
+    func setOrientation(_ orientation: DeviceOrientation) async throws {
         try await sendVirtualMachineControl(orientation.command)
     }
 

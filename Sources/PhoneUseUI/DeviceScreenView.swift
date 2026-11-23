@@ -123,9 +123,10 @@ struct DeviceScreenView: View {
     }
 
     private var frame: some View {
-        DeviceFrame(screenAspectRatio: screen.aspectRatio, style: frameStyle) {
+        DeviceFrame(screenAspectRatio: screen.aspectRatio, style: frameStyle, orientation: screen.frameOrientation) {
             ScreenSurface(
                 screenLayer: stream.layer,
+                orientation: screen.previewOrientation,
                 acceptsInput: allowsInput && screen.streamError == nil && !screen.isReconnecting && !screen.isChangingGeometry,
                 onTouch: { phase, point in screen.touch(phase, at: point) }
             )
@@ -149,7 +150,7 @@ struct DeviceScreenView: View {
         let outer = DeviceFrame<EmptyView>.outerAspectRatio(screenAspectRatio: screen.aspectRatio)
         let width = max(min(size.width - insets.leading - insets.trailing,
                             (size.height - insets.top - insets.bottom) * outer), 1)
-        return width * (1 - 2 * DeviceFrame<EmptyView>.bezelFraction) / points
+        return width / DeviceFrame<EmptyView>.outerSize(screenWidth: points, screenAspectRatio: screen.aspectRatio).width
     }
 }
 
@@ -198,6 +199,7 @@ enum DeviceFrameStyle {
 struct DeviceFrame<Content: View>: View {
     let screenAspectRatio: CGFloat
     var style = DeviceFrameStyle.iPhone
+    var orientation: DeviceOrientation?
     @ViewBuilder var content: Content
 
     static var bezelFraction: CGFloat { 0.035 }
@@ -209,13 +211,16 @@ struct DeviceFrame<Content: View>: View {
     private let buttonFraction: CGFloat = 0.011
 
     static func outerAspectRatio(screenAspectRatio: CGFloat) -> CGFloat {
-        1 / ((1 - 2 * bezelFraction) / screenAspectRatio + 2 * bezelFraction)
+        let size = outerSize(screenWidth: 1, screenAspectRatio: screenAspectRatio)
+        return size.width / size.height
     }
 
     /// The bezel's size around a screen of the given width.
     static func outerSize(screenWidth: CGFloat, screenAspectRatio: CGFloat) -> CGSize {
-        let width = screenWidth / (1 - 2 * bezelFraction)
-        return CGSize(width: width, height: width / outerAspectRatio(screenAspectRatio: screenAspectRatio))
+        let screenHeight = screenWidth / screenAspectRatio
+        let shortSide = min(screenWidth, screenHeight) / (1 - 2 * bezelFraction)
+        let bezel = shortSide * bezelFraction
+        return CGSize(width: screenWidth + 2 * bezel, height: screenHeight + 2 * bezel)
     }
 
     private var outerAspectRatio: CGFloat {
@@ -226,7 +231,7 @@ struct DeviceFrame<Content: View>: View {
         GeometryReader { geometry in
             let size = geometry.size
             let shortSide = min(size.width, size.height)
-            let bezel = size.width * bezelFraction
+            let bezel = shortSide * bezelFraction
             let band = max(shortSide * bandFraction, 1.5)
             let screenRadius = shortSide * screenCornerFraction
             let outer = RoundedRectangle(cornerRadius: screenRadius + bezel, style: .continuous)
@@ -270,8 +275,14 @@ struct DeviceFrame<Content: View>: View {
         case .trailing: CGRect(x: width - thickness, y: button.start * height, width: depth, height: button.length * height)
         case .top: CGRect(x: button.start * width, y: -thickness, width: button.length * width, height: depth)
         }
-        guard size.width > size.height else { return upright }
-        // Turned a quarter clockwise: the upright leading edge becomes the top.
-        return CGRect(x: height - upright.maxY, y: upright.minX, width: upright.height, height: upright.width)
+        switch orientation ?? (size.width > size.height ? .landscapeRight : .portrait) {
+        case .portrait: return upright
+        case .landscapeRight:
+            return CGRect(x: height - upright.maxY, y: upright.minX, width: upright.height, height: upright.width)
+        case .portraitUpsideDown:
+            return CGRect(x: width - upright.maxX, y: height - upright.maxY, width: upright.width, height: upright.height)
+        case .landscapeLeft:
+            return CGRect(x: upright.minY, y: width - upright.maxX, width: upright.height, height: upright.width)
+        }
     }
 }

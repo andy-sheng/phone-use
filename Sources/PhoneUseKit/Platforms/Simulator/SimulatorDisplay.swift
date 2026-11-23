@@ -25,6 +25,20 @@ final class SimulatorDisplay: @unchecked Sendable {
             return UInt64(unsafeBitCast(properties.method(for: selector), to: ID.self)(properties, selector))
         }
 
+        /// simctl applies the guest interface orientation to its PNG. The raw IOSurface does not.
+        var screenshotOrientation: DeviceOrientation {
+            let selector = NSSelectorFromString("uiOrientation")
+            guard let properties = CoreSimulatorBridge.object(descriptor, "screenProperties"),
+                  properties.responds(to: selector) else { return .portrait }
+            typealias Read = @convention(c) (AnyObject, Selector) -> UInt32
+            switch unsafeBitCast(properties.method(for: selector), to: Read.self)(properties, selector) {
+            case 2: return .portraitUpsideDown
+            case 3: return .landscapeRight
+            case 4: return .landscapeLeft
+            default: return .portrait
+            }
+        }
+
         var area: Int {
             guard let surface = CoreSimulatorBridge.object(descriptor, "framebufferSurface") as? IOSurface else { return 0 }
             return surface.width * surface.height
@@ -44,16 +58,21 @@ final class SimulatorDisplay: @unchecked Sendable {
     private let landscapePanelIdentifier: String?
     private var selectedIndex = 0
     private var commandedIndex: Int?
-    private var currentOrientation = SimulatorOrientation.portrait
-    var orientation: SimulatorOrientation { lock.withLock { currentOrientation } }
+    private var currentOrientation = DeviceOrientation.portrait
+    var orientation: DeviceOrientation { lock.withLock { currentOrientation } }
     /// Duo's inner panel is mounted a quarter-turn from the cover, despite both IOSurfaces
     /// reporting portrait dimensions. Keep the physical sensor pose separate from this correction.
-    var framebufferOrientation: SimulatorOrientation {
+    var framebufferOrientation: DeviceOrientation {
         let physical = orientation
         return selectedPanel.identifier == landscapePanelIdentifier ? physical.rotated(.right) : physical
     }
 
-    func setOrientation(_ orientation: SimulatorOrientation) {
+    var simctlScreenshotCorrection: DeviceOrientation {
+        let turns = framebufferOrientation.quarterTurns - selectedPanel.screenshotOrientation.quarterTurns
+        return DeviceOrientation.allCases[(turns + 4) % 4]
+    }
+
+    func setOrientation(_ orientation: DeviceOrientation) {
         let handlers = lock.withLock {
             currentOrientation = orientation
             return closed ? [] : Array(observers.values)

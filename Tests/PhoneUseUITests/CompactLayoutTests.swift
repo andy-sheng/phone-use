@@ -18,6 +18,14 @@ final class CompactLayoutTests: XCTestCase {
         XCTAssertLessThan(stage.width, 500)
     }
 
+    func testRotatingTheDeviceKeepsTheSameBezelThicknessAtActualSize() {
+        let portrait = DeviceFrame<EmptyView>.outerSize(screenWidth: 393, screenAspectRatio: 393.0 / 852)
+        let landscape = DeviceFrame<EmptyView>.outerSize(screenWidth: 852, screenAspectRatio: 852.0 / 393)
+        XCTAssertEqual(portrait.width, landscape.height, accuracy: 0.001)
+        XCTAssertEqual(portrait.height, landscape.width, accuracy: 0.001)
+        XCTAssertEqual(landscape.width - 852, landscape.height - 393, accuracy: 0.001)
+    }
+
     func testSmallScreenKeepsWindowOnScreen() {
         let available = CGSize(width: 1280, height: 700)
         let stage = CompactLayout.stageSize(screenAspectRatio: 393.0 / 852.0, available: available, chromeHeight: chrome)

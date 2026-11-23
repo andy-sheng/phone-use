@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import os
 
 /// Apple device services, HID, screenshot and application control live entirely in this adapter.
 /// The shared session never constructs or sends an Apple protocol message.
@@ -9,6 +10,19 @@ final class IOSDeviceConnection: DeviceConnection, Sendable {
     let touchPolicy = TouchQueuePolicy(coalescesMoves: false, suppressesFailedGestures: false,
                                        dropsPendingOnClose: false)
     private let channels: ServiceChannels
+
+    private let orientation = OSAllocatedUnfairLock<DeviceOrientation?>(initialState: nil)
+    var previewOrientation: DeviceOrientation? { orientation.withLock { $0 } }
+
+    func readOrientation(deviceID: String) async {
+        let value = try? await DeviceOrientation.read(deviceID: deviceID)
+        orientation.withLock { $0 = value }
+    }
+
+    func rotate(_ direction: DeviceRotationDirection, deviceID: String) async throws {
+        let value = try await DeviceOrientation.rotate(direction, deviceID: deviceID)
+        orientation.withLock { $0 = value }
+    }
 
     init(channels: ServiceChannels) {
         self.channels = channels

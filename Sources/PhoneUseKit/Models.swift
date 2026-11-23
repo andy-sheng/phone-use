@@ -134,6 +134,14 @@ public struct DisplayInfo: Codable, Sendable {
     public let pixelWidth: Double
     public let pixelHeight: Double
     public let pointScale: Double
+    var androidRotation: Int?
+    var geometryID: String?
+
+    var androidFrameOrientation: DeviceOrientation? {
+        guard let rotation = androidRotation, (0...3).contains(rotation) else { return nil }
+        let naturalLandscape = (pixelWidth > pixelHeight) != (rotation % 2 == 1)
+        return DeviceOrientation.allCases[((naturalLandscape ? 1 : 0) - rotation + 4) % 4]
+    }
 
     public var pointWidth: Double { pixelWidth / pointScale }
     public var pointHeight: Double { pixelHeight / pointScale }

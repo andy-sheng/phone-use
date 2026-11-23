@@ -5,6 +5,7 @@ import SwiftUI
 /// Hosts the device screen layer and turns mouse and trackpad input over it into normalized touches.
 struct ScreenSurface: NSViewRepresentable {
     let screenLayer: CALayer
+    var orientation = DeviceOrientation.portrait
     var acceptsInput = true
     let onTouch: (TouchPhase, CGPoint) -> Void
 
@@ -25,6 +26,7 @@ struct ScreenSurface: NSViewRepresentable {
     }
 
     private func update(_ view: SurfaceNSView) {
+        view.orientation = orientation
         view.hostedLayer = screenLayer
         view.acceptsInput = acceptsInput
         view.onTouch = onTouch
@@ -37,6 +39,14 @@ struct ScreenSurface: NSViewRepresentable {
             }
         }
         var onTouch: ((TouchPhase, CGPoint) -> Void)?
+        var orientation = DeviceOrientation.portrait {
+            didSet {
+                guard orientation != oldValue else { return }
+                releaseHeldTouch()
+                needsLayout = true
+            }
+        }
+
         var hostedLayer: CALayer? {
             didSet {
                 guard hostedLayer !== oldValue else { return }
@@ -46,6 +56,7 @@ struct ScreenSurface: NSViewRepresentable {
                 if let oldValue, oldValue.superlayer === layer { oldValue.removeFromSuperlayer() }
                 if let hostedLayer {
                     layer?.addSublayer(hostedLayer)
+                    hostedLayer.setNeedsLayout()
                 }
                 needsLayout = true
             }
@@ -78,9 +89,14 @@ struct ScreenSurface: NSViewRepresentable {
 
         override func layout() {
             super.layout()
+            guard let hostedLayer, hostedLayer.superlayer === layer else { return }
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            hostedLayer?.frame = bounds
+            hostedLayer.bounds = CGRect(origin: .zero, size: orientation.isLandscape
+                ? CGSize(width: bounds.height, height: bounds.width) : bounds.size)
+            hostedLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
+            // The backing layer of this flipped NSView has a downward Y axis.
+            hostedLayer.setAffineTransform(CGAffineTransform(rotationAngle: orientation.radians))
             CATransaction.commit()
         }
 

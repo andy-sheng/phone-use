@@ -818,7 +818,10 @@ class Supervisor:
         # Queue one operation at a time even when GUI and automation share a device.
         async with worker.command_lock:
             try:
-                return await worker.call("androidCommand", params, timeout=65)
+                result = await worker.call("androidCommand", params, timeout=65)
+                if params.get("action") in {"rotate", "restoreRotation"} and "display" in result:
+                    worker.ready.result()["display"] = result["display"]
+                return result
             except asyncio.TimeoutError as error:
                 # The action may already have executed. Close the session rather
                 # than replaying it or letting subsequent input race a late result.

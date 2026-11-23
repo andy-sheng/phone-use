@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import os
 
 /// High-level Android commands share the daemon connection but never use Apple device services.
 /// The injectable request function also lets tests exercise failures without a physical device.
@@ -18,7 +19,10 @@ actor AndroidDeviceConnection: DeviceConnection {
         let height: Int
     }
 
-    private let display: DisplayInfo
+    private let geometry: OSAllocatedUnfairLock<DisplayInfo>
+    nonisolated var display: DisplayInfo { geometry.withLock { $0 } }
+    private var ownsRotation = false
+    private var rotating = false
     private let owner: String
     private let request: Request
     private var displayChanged = false
@@ -29,9 +33,38 @@ actor AndroidDeviceConnection: DeviceConnection {
               width > 0, height > 0, display.pointScale.isFinite, display.pointScale > 0 else {
             throw DeviceHubError.serviceFailed("Android returned an invalid display size")
         }
-        self.display = display
+        self.geometry = OSAllocatedUnfairLock(initialState: display)
         self.owner = owner
         self.request = request
+    }
+
+    private struct GeometryReply: Decodable { let display: DisplayInfo }
+
+    func rotate(_ direction: DeviceRotationDirection) async throws {
+        try requireUsableDisplay()
+        guard let token = display.geometryID else { throw DeviceHubError.capabilityUnavailable("Android rotation") }
+        rotating = true
+        defer { rotating = false }
+        let data = try await request("rotate", ["owner": owner, "geometryID": token, "direction": direction.rawValue])
+        ownsRotation = true
+        try adoptGeometry(data)
+    }
+
+    func restoreRotation() async throws {
+        guard ownsRotation else { return }
+        let data = try await request("restoreRotation", ["owner": owner])
+        try adoptGeometry(data)
+        ownsRotation = false
+    }
+
+    private func adoptGeometry(_ data: Data) throws {
+        let next = try JSONDecoder().decode(GeometryReply.self, from: data).display
+        guard next.androidFrameOrientation != nil, next.geometryID != nil,
+              next.pixelWidth > 0, next.pixelHeight > 0, next.pointScale > 0 else {
+            throw DeviceHubError.serviceFailed("Android returned invalid display geometry")
+        }
+        geometry.withLock { $0 = next }
+        displayChanged = false
     }
 
     static func coordinate(_ value: Double) throws -> String {
@@ -86,7 +119,11 @@ actor AndroidDeviceConnection: DeviceConnection {
 
     func screenshot() async throws -> CGImage {
         try requireUsableDisplay()
-        let data = try await request("screenshot", [:])
+        let expected = display
+        var params: [String: String] = [:]
+        params["geometryID"] = expected.geometryID
+        let data = try await request("screenshot", params)
+        guard display.geometryID == expected.geometryID else { throw orientationError() }
         let screenshot = try JSONDecoder().decode(Screenshot.self, from: data)
         guard let png = Data(base64Encoded: screenshot.png),
               let source = CGImageSourceCreateWithData(png as CFData, nil),
@@ -139,11 +176,13 @@ actor AndroidDeviceConnection: DeviceConnection {
         guard !closed else { return }
         closed = true
         try? await touchRequest("release", [:])
+        try? await restoreRotation()
     }
 
     private func touchRequest(_ action: String, _ params: [String: String]) async throws {
         var params = params
         params["owner"] = owner
+        params["geometryID"] = display.geometryID
         _ = try await request(action, params)
     }
 
@@ -153,7 +192,7 @@ actor AndroidDeviceConnection: DeviceConnection {
 
     private func requireUsableDisplay() throws {
         try requireOpen()
-        if displayChanged { throw orientationError() }
+        if rotating || displayChanged { throw orientationError() }
     }
 
     private func orientationError() -> DeviceHubError {

@@ -5,6 +5,29 @@ import XCTest
 
 @MainActor
 final class InputCaptureTests: XCTestCase {
+    func testPhysicalPreviewAndNativeTouchUseTheSameCornersAfterEachTurn() throws {
+        let surface = ScreenSurface.SurfaceNSView()
+        let video = CALayer()
+        surface.hostedLayer = video
+        let host = try XCTUnwrap(surface.layer)
+        let native = CGSize(width: 180, height: 390)
+        for orientation in DeviceOrientation.allCases {
+            surface.orientation = orientation
+            surface.setFrameSize(orientation.isLandscape ? CGSize(width: native.height, height: native.width) : native)
+            surface.layoutSubtreeIfNeeded()
+            XCTAssertEqual(video.bounds.size, native)
+            for x in [0.15, 0.85] {
+                for y in [0.25, 0.75] {
+                    let nativePixel = video.convert(CGPoint(x: x * surface.bounds.width, y: y * surface.bounds.height),
+                                                    from: host)
+                    let touch = orientation.nativePoint(CGPoint(x: x, y: y))
+                    XCTAssertEqual(nativePixel.x, touch.x * native.width, accuracy: 0.001)
+                    XCTAssertEqual(nativePixel.y, touch.y * native.height, accuracy: 0.001)
+                }
+            }
+        }
+    }
+
     func testMouseWheelsDoNotSendDeviceTouches() throws {
         let surface = ScreenSurface.SurfaceNSView(frame: NSRect(x: 0, y: 0, width: 200, height: 400))
         var touches: [TouchPhase] = []
