@@ -1,21 +1,65 @@
 import PhoneUseKit
 import SwiftUI
 
+/// ADB discovery and a PhoneUse session have separate lifetimes.
+enum AndroidSidebarStatus: String {
+    case ready = "可连接"
+    case connecting = "正在连接…"
+    case connected = "已连接"
+    case failed = "连接失败"
+    case probing = "正在检查设备…"
+    case unauthorized = "等待调试授权"
+    case offline = "设备离线"
+    case disconnected = "已断开连接"
+    case unavailable = "设备未就绪"
+
+    init(device: DeviceSummary, connecting: Bool, failed: Bool) {
+        switch device.state {
+        case .ready:
+            if connecting || device.session == "opening" { self = .connecting }
+            else if failed || device.session == "failed" { self = .failed }
+            else { self = device.session == "open" ? .connected : .ready }
+        case .probing: self = .probing
+        case .unauthorized: self = .unauthorized
+        case .offline: self = .offline
+        case .disconnected: self = .disconnected
+        default: self = .unavailable
+        }
+    }
+
+    var needsAttention: Bool {
+        switch self {
+        case .failed, .unauthorized, .offline, .unavailable: true
+        default: false
+        }
+    }
+
+    func subtitle(for device: DeviceSummary) -> String {
+        guard self != .disconnected else { return rawValue }
+        let transport = device.connection == "emulator" ? "模拟器" : device.connectionDescription
+        return "\(transport) · \(rawValue)"
+    }
+}
+
 /// The sidebar reflects discovery state even when the screen preview is closed.
-struct AppleSidebarDeviceIcon: View {
+struct SidebarDeviceIcon: View {
     let device: DeviceSummary
+    let androidStatus: AndroidSidebarStatus?
 
     private var isLit: Bool {
         guard device.isSimulator, let state = device.simulatorState else { return device.isReady }
         return state == "Booted"
     }
 
-    private var isDuo: Bool { device.productType?.localizedCaseInsensitiveContains("Duo") == true }
+    private var isDuo: Bool {
+        !device.isAndroid && device.productType?.localizedCaseInsensitiveContains("Duo") == true
+    }
     private var deviceWidth: CGFloat { device.isPad ? 16 : isDuo ? 14 : 11 }
     private var cornerRadius: CGFloat { device.isPad ? 2 : isDuo ? 2.4 : 2.8 }
     private var outline: Color { isLit ? .black : .secondary.opacity(0.45) }
 
     private var statusDescription: String {
+        if let androidStatus { return androidStatus.subtitle(for: device) }
         if !device.isSimulator {
             if device.isReady { return "已连接" }
             return device.isAttached ? "尚未就绪" : "未连接"
@@ -39,7 +83,7 @@ struct AppleSidebarDeviceIcon: View {
                         .strokeBorder(outline, lineWidth: isLit ? 0.9 : 0.7)
                 }
                 .overlay(alignment: isDuo ? .topTrailing : .top) {
-                    if !device.isPad {
+                    if !device.isPad && !device.isAndroid {
                         Capsule()
                             .fill(outline)
                             .frame(width: isDuo ? 1.5 : 3.2, height: 1.2)

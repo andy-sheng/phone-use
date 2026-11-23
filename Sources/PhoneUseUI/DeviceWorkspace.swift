@@ -243,7 +243,12 @@ public struct DeviceWorkspace<Panel: View>: View {
     }
 
     private func deviceRow(_ device: DeviceSummary) -> some View {
-        DeviceRow(device: device, hasPasscode: devicesWithPasscode.contains(device.id))
+        let previewRequested = screen.requestedDeviceID == device.id && screen.isShowingDevice(device.id)
+        let androidStatus = device.isAndroid ? AndroidSidebarStatus(
+            device: device, connecting: previewRequested && (screen.isConnecting || screen.isReconnecting),
+            failed: previewRequested && screen.connectionError != nil
+        ) : nil
+        return DeviceRow(device: device, hasPasscode: devicesWithPasscode.contains(device.id), androidStatus: androidStatus)
             .contextMenu {
                 if let configurePasscode {
                     Button("设置解锁密码…", systemImage: "key") { configurePasscode(device) }
@@ -844,18 +849,11 @@ private struct ControlBarButton: View {
 private struct DeviceRow: View {
     let device: DeviceSummary
     let hasPasscode: Bool
+    let androidStatus: AndroidSidebarStatus?
 
     var body: some View {
         HStack(spacing: 10) {
-            if !device.isAndroid {
-                AppleSidebarDeviceIcon(device: device)
-            } else {
-                Image(systemName: device.deviceIcon)
-                    .font(.system(size: 14))
-                    .frame(width: 32, height: 32)
-                    .background(.quaternary, in: Circle())
-                    .foregroundStyle(device.isAttached ? .primary : .tertiary)
-            }
+            SidebarDeviceIcon(device: device, androidStatus: androidStatus)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
                     Text(device.name)
@@ -883,7 +881,7 @@ private struct DeviceRow: View {
                 }
                 Text(subtitle)
                     .font(.caption)
-                    .foregroundStyle(device.isReady || !device.isAttached ? Color.secondary : Color.orange)
+                    .foregroundStyle(needsAttention ? Color.orange : Color.secondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
@@ -903,7 +901,12 @@ private struct DeviceRow: View {
         #endif
     }
 
+    private var needsAttention: Bool {
+        androidStatus?.needsAttention ?? (!device.isReady && device.isAttached)
+    }
+
     private var subtitle: String {
+        if let androidStatus { return androidStatus.subtitle(for: device) }
         if device.isSimulator { return "Simulator" }
         return switch device.state {
         case .ready where !device.isWired:
