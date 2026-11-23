@@ -44,27 +44,64 @@ def parse_keyguard(dump):
     return states[0] == "true"
 
 
-def system_pin_pad(dump, *, empty=False, filled=False):
+def pin_prompt_visible(adb, serial):
+    """SystemUI's lightweight bouncer flag, when the device exposes it."""
+    try:
+        dump = shell(adb, serial, "dumpsys", "activity", "service", "com.android.systemui/.SystemUIService", "SysUiState")
+    except RpcError:
+        return False
+    flags = re.search(r"(?m)^[ \t]*mSysUiStateFlags=\d+[ \t]*\n[ \t]*([a-z0-9_|]+)[ \t]*$", dump)
+    return bool(flags and "bouncer_visible" in flags[1].split("|"))
+
+
+def pin_keys(dump, *, filled=False):
+    """Pixel centers from a single SystemUI layout. Require an empty entry before typing."""
     start, end = dump.find("<hierarchy"), dump.find("</hierarchy>")
     if start < 0 or end < start:
-        return False
+        return None
     try:
         root = ET.fromstring(dump[start:end + len("</hierarchy>")])
     except ET.ParseError:
-        return False
-    ids = {node.get("resource-id"): node for node in root.iter("node")
-           if node.get("package") == "com.android.systemui" and node.get("enabled") == "true"}
+        return None
     prefix = "com.android.systemui:id/"
-    entry = ids.get(prefix + "pinEntry")
-    return (entry is not None and entry.get("password") == "true" and (not empty or entry.get("text") == "")
-            and (not filled or bool(entry.get("text")))
-            and all(prefix + "key" + str(i) in ids for i in range(10)))
+    keys = {}
+    entries = []
+    for node in root.iter("node"):
+        if node.get("package") != "com.android.systemui" or node.get("enabled") != "true":
+            continue
+        resource = node.get("resource-id", "")
+        if not resource.startswith(prefix):
+            continue
+        name = resource[len(prefix):]
+        if name == "pinEntry":
+            entries.append(node)
+        if not re.fullmatch(r"key[0-9]", name):
+            continue
+        bounds = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", node.get("bounds", ""))
+        if not bounds:
+            return None
+        left, top, right, bottom = map(int, bounds.groups())
+        if right <= left or bottom <= top:
+            return None
+        # Some keyboards shuffle digits. Prefer the displayed digit over the view's slot.
+        labels = [node.get("content-desc", ""), node.get("text", "")]
+        labels.extend(child.get("text", "") for child in node.iter("node")
+                      if child.get("resource-id") == prefix + "digit_text")
+        labels = {label for label in labels if re.fullmatch("[0-9]", label)}
+        if len(labels) > 1:
+            return None
+        digit = next(iter(labels), name[-1])
+        if digit in keys:
+            return None
+        keys[digit] = ((left + right) // 2, (top + bottom) // 2)
+    if len(entries) != 1 or entries[0].get("password") != "true" or entries[0].get("text") is None:
+        return None
+    if bool(entries[0].get("text")) != filled or len(keys) != 10 or len(set(keys.values())) != 10:
+        return None
+    return keys
 
 
-def ready_for_pin(adb, serial):
+def read_pin_keys(adb, serial, *, filled=False):
     # /dev/tty returns XML over ADB without leaving a UI dump on device storage.
-    return system_pin_pad(shell(adb, serial, "uiautomator", "dump", "/dev/tty", tty=True), empty=True) and locked(adb, serial)
-
-
-def system_pin_pad_present(adb, serial, *, filled=False):
-    return system_pin_pad(shell(adb, serial, "uiautomator", "dump", "/dev/tty", tty=True), filled=filled) and locked(adb, serial)
+    dump = shell(adb, serial, "uiautomator", "dump", "/dev/tty", tty=True)
+    return pin_keys(dump, filled=filled)

@@ -236,15 +236,19 @@ class AndroidDevice:
     def _prepare_unlock(self, params, owner):
         adb, serial = self.adb_path, self.serial
         self._idle_touch()
-        # WAKEUP is idempotent, unlike toggling the power button.
-        android_unlock.shell(adb, serial, "input", "keyevent", "KEYCODE_WAKEUP")
-        if not android_unlock.locked(adb, serial):
-            return {"status": "already_unlocked"}
-        android_unlock.shell(adb, serial, "wm", "dismiss-keyguard")
-        self._pause(0.5)
-        if not android_unlock.locked(adb, serial):
-            return {"status": "unlocked"}
-        ready = android_unlock.ready_for_pin(adb, serial)
+        stage = params.get("stage")
+        if stage != "keypad":
+            android_unlock.shell(adb, serial, "input", "keyevent", "KEYCODE_WAKEUP")
+            if not android_unlock.locked(adb, serial):
+                return {"status": "already_unlocked"}
+            android_unlock.shell(adb, serial, "wm", "dismiss-keyguard")
+            self._pause(0.5)
+            if not android_unlock.locked(adb, serial):
+                return {"status": "unlocked"}
+            # Read the keypad after any Keychain approval so its positions are fresh.
+            if stage == "wake":
+                return {"status": "needs_saved_pin"}
+        ready = android_unlock.read_pin_keys(adb, serial) and android_unlock.locked(adb, serial)
         return {"status": "needs_saved_pin" if ready else "needs_user_unlock"}
 
     def _submit_unlock_pin(self, params, owner):
@@ -254,27 +258,37 @@ class AndroidDevice:
         self._idle_touch()
         self._check_input()
         adb, serial = self.adb_path, self.serial
-        if (params.get("identity") != android_unlock.identity(adb, serial)
-                or not android_unlock.ready_for_pin(adb, serial)):
+        if params.get("identity") != android_unlock.identity(adb, serial):
             return {"status": "needs_user_unlock"}
-        # Send through the existing private scrcpy control socket. No PIN in shell commands,
-        # command-line arguments, clipboard, or diagnostics.
-        def key(code):
-            self.held_keys.add(code)
-            self.driver.key(KEY_DOWN, code)
-            self.driver.key(KEY_UP, code)
-            self.held_keys.discard(code)
+        tracks_prompt = android_unlock.pin_prompt_visible(adb, serial)
+        keys = android_unlock.read_pin_keys(adb, serial)
+        if not keys or any(x >= self.width or y >= self.height for x, y in keys.values()):
+            return {"status": "needs_user_unlock"}
 
-        for digit in pin:
-            if not android_unlock.system_pin_pad_present(adb, serial):
-                return {"status": "unlock_unconfirmed"}
-            key(7 + int(digit))  # KEYCODE_0 through KEYCODE_9.
-            self._pause(0.1)
+        for index, digit in enumerate(pin):
+            if index:
+                self._pause(0.025)
+            if not android_unlock.locked(adb, serial):
+                return {"status": "unlock_unconfirmed" if index else "already_unlocked"}
+            if tracks_prompt:
+                visible = android_unlock.pin_prompt_visible(adb, serial)
+            else:
+                # Older SystemUI builds may omit the flag. Verify the same pad before continuing.
+                visible = index == 0 or android_unlock.read_pin_keys(adb, serial, filled=True) == keys
+            if not visible:
+                return {"status": "unlock_unconfirmed" if index else "needs_user_unlock"}
+            with self._momentary_touch(owner, keys[digit]):
+                self._pause(self._tap_hold)
+
         self._pause(0.5)
-        if android_unlock.locked(adb, serial):
-            # Some keyboards require Enter. Ensure the credential field still owns input.
-            if android_unlock.system_pin_pad_present(adb, serial, filled=True):
-                key(66)
+        if not android_unlock.locked(adb, serial):
+            return {"status": "unlocked"}
+        # Only send Enter if the system still shows a filled PIN field.
+        if android_unlock.read_pin_keys(adb, serial, filled=True) and android_unlock.locked(adb, serial):
+            self.held_keys.add(66)
+            self.driver.key(KEY_DOWN, 66)
+            self.driver.key(KEY_UP, 66)
+            self.held_keys.discard(66)
         for _ in range(6):
             self._pause(0.25)
             if not android_unlock.locked(adb, serial):

@@ -120,10 +120,12 @@ actor AndroidDeviceConnection: DeviceConnection {
             }
             return status
         }
-        let result = try await perform("prepareUnlock", [:])
+        let result = try await perform("prepareUnlock", ["stage": "wake"])
         guard result == .needsPasscode else { return result }
         let identity = try await unlockIdentity()
-        guard let pin = try await takePIN(identity) else { return .needsPasscode }
+        guard let pin = try await takePIN(identity) else {
+            return try await perform("prepareUnlock", ["stage": "keypad"])
+        }
         return try await perform("submitUnlockPIN", ["identity": identity, "pin": pin])
     }
 

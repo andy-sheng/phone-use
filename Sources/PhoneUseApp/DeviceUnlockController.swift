@@ -160,8 +160,8 @@ actor DeviceUnlockController {
             if reserved[id] != nil { return .unconfirmed }
             throw error
         }
-        // On iOS needsUserUnlock is returned only before the first PIN tap.
-        if result == .unlocked || (!device.isAndroid && result == .needsUserUnlock), let credentialID = reserved[id] {
+        // These results are verified success or a stop before any PIN tap.
+        if [.unlocked, .alreadyUnlocked, .needsUserUnlock].contains(result), let credentialID = reserved[id] {
             try UnlockCredential(deviceID: credentialID).setPending(false)
         }
         return result
