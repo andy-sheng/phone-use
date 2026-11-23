@@ -255,9 +255,12 @@ class AdbDriver:
         self._control: AndroidControl | None = None
         self._lock = threading.Lock()
 
-    def capture(self):
+    def capture(self, physical_id: str | None = None):
+        command = [self.adb_path, "-s", self.serial, "exec-out", "screencap"]
+        if physical_id is not None:
+            command.extend(["-d", physical_id])
         try:
-            result = subprocess.run([self.adb_path, "-s", self.serial, "exec-out", "screencap"],
+            result = subprocess.run(command,
                                     capture_output=True, timeout=SCREENSHOT_TIMEOUT, check=False)
         except subprocess.TimeoutExpired as error:
             raise RpcError("timeout", "Android screenshot timed out; reopen the device before retrying") from error

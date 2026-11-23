@@ -141,7 +141,7 @@ class FakeDriver:
         if self.fail == f"{name}-timeout":
             raise RpcError("timeout", f"{name} timed out")
 
-    def capture(self):
+    def capture(self, physical_id=None):
         self.calls.append(("capture",))
         self._maybe_fail("capture")
         return self.image
@@ -253,6 +253,25 @@ class DeviceTests(unittest.TestCase):
             self.device.command({"action": "touch", "phase": "moved", "x": "0.2", "y": "0.2"})
         self.assertEqual(self.driver.calls[-1], ("up",))
         self.assertFalse(any(call[0] == "move" for call in self.driver.calls))
+
+    def test_cold_unlock_can_wake_a_sleeping_display_before_any_coordinate_input(self):
+        sleeping = DisplayGeometry(1188, 2790, 0, "123", False)
+        def read_geometry(adb, serial, *, allow_inactive=False):
+            if allow_inactive:
+                return sleeping
+            raise RpcError("displayCheckFailed", "No active viewport")
+        driver = FakeDriver()
+        device = AndroidDevice("/adb", "serial", driver_factory=lambda *_: driver, geometry_reader=read_geometry)
+        self.addCleanup(device.close)
+        display = device.start()["display"]
+        self.assertEqual((display["pixelWidth"], display["pixelHeight"]), (1188, 2790))
+        self.assertNotIn(("capture",), driver.calls)
+        with self.assertRaisesRegex(RpcError, "No active viewport"):
+            device.command({"action": "tap", "x": "0.5", "y": "0.5"})
+        with patch("devicehubd.android_worker.android_unlock.shell") as shell, \
+             patch("devicehubd.android_worker.android_unlock.locked", return_value=False):
+            self.assertEqual(device.command({"action": "prepareUnlock"}), {"status": "already_unlocked"})
+            shell.assert_called_once_with("/adb", "serial", "input", "keyevent", "KEYCODE_WAKEUP")
 
     def test_screenshot_must_match_the_input_display_when_opening(self):
         driver = FakeDriver()

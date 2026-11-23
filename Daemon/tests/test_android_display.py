@@ -14,7 +14,17 @@ class DisplayGeometryTests(unittest.TestCase):
   Viewport INTERNAL: displayId=0, orientation=0, logicalFrame=[0, 0, 480, 640], isActive=[0]
   Viewport INTERNAL: displayId=0, uniqueId=local:123, orientation=1, logicalFrame=[0, 0, 2400, 1080], physicalFrame=[0, 0, 2400, 1080], deviceSize=[1080, 2400], isActive=[1]
 """
-        self.assertEqual(parse_display_geometry(output), DisplayGeometry(2400, 1080, 1))
+        self.assertEqual(parse_display_geometry(output), DisplayGeometry(2400, 1080, 1, "123"))
+
+    def test_sleeping_default_viewport_is_only_used_when_requested_and_no_active_match_exists(self):
+        sleeping = "Viewport INTERNAL: displayId=0, uniqueId=local:123, orientation=0, logicalFrame=[0, 0, 1188, 2790], isActive=[0]"
+        secondary = sleeping.replace("displayId=0", "displayId=2").replace("isActive=[0]", "isActive=[1]")
+        output = sleeping + "\n" + secondary
+        with self.assertRaises(RpcError):
+            parse_display_geometry(output)
+        self.assertEqual(parse_display_geometry(output, allow_inactive=True), DisplayGeometry(1188, 2790, 0, "123", False))
+        active = sleeping.replace("isActive=[0]", "isActive=[1]")
+        self.assertTrue(parse_display_geometry(output + "\n" + active, allow_inactive=True).active)
 
     def test_older_viewport_format_and_nonzero_frame_origin(self):
         self.assertEqual(parse_display_geometry("Viewport: displayId=0, orientation=2, logicalFrame=[10, 20, 1090, 2420]"),

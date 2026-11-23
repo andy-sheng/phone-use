@@ -63,6 +63,11 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0], ["/adb", "-s", "serial", "exec-out", "screencap"])
         self.assertEqual(image.size, (4, 2))
 
+    def test_screenshot_targets_the_physical_display_associated_with_the_default_viewport(self):
+        with patch.object(control.subprocess, "run", return_value=self.run_result(stdout=screencap(4, 2))) as run:
+            control.AdbDriver("/adb", "serial").capture("4627039422300187648")
+        self.assertEqual(run.call_args.args[0][-3:], ["screencap", "-d", "4627039422300187648"])
+
     def test_screenshot_timeout_is_reported_as_timeout(self):
         with patch.object(control.subprocess, "run", side_effect=subprocess.TimeoutExpired("adb", 20)):
             with self.assertRaises(RpcError) as caught:

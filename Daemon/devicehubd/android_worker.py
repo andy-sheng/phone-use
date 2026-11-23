@@ -88,8 +88,13 @@ class AndroidDevice:
 
     def start(self) -> dict[str, Any]:
         self.driver = self._factory(self.adb_path, self.serial)
-        self._capture(initial=True)
-        self._check_geometry()
+        geometry = self._geometry_reader(self.adb_path, self.serial, allow_inactive=True)
+        self.physical_id = geometry.physical_id
+        self.width, self.height, self._rotation = geometry.width, geometry.height, geometry.rotation
+        # A sleeping display has no live frame. Open from its viewport so prepareUnlock can wake it.
+        if geometry.active:
+            self._capture()
+            self._check_geometry()
         # Start the input channel now so the first touch does not wait for it. Its failure only
         # surfaces when input is requested; screenshots and launches never need it.
         self._input_starting = threading.Thread(target=self._start_input_quietly, name="android-input-start",
@@ -111,16 +116,14 @@ class AndroidDevice:
                 self.failed = True
             raise
 
-    def _capture(self, *, initial: bool = False):
-        image = self._call(self.driver.capture)
+    def _capture(self):
+        image = self._call(self.driver.capture, self.physical_id)
         width, height = image.size
         if width <= 0 or height <= 0:
             raise RpcError("invalidScreenshot", "Screenshot dimensions do not match the native display")
-        if initial:
-            self.width, self.height = width, height
         # Screenshots validate their own dimensions. Coordinate-bearing input
         # separately checks live display metadata, including 180-degree turns.
-        elif self.geometry_changed or (width, height) != (self.width, self.height):
+        if self.geometry_changed or (width, height) != (self.width, self.height):
             self.geometry_changed = True
             with contextlib.suppress(Exception):
                 self.release()
