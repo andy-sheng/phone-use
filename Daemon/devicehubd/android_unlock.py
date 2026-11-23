@@ -23,9 +23,9 @@ def shell(adb, serial, *args, tty=False):
 def identity(adb, serial):
     # Emulator port numbers and wireless debugging addresses can be reassigned to other devices.
     value = shell(adb, serial, "settings", "get", "secure", "android_id").strip()
-    if not re.fullmatch(r"[0-9a-fA-F]{16}", value):
+    if not re.fullmatch(r"[0-9a-fA-F]{1,16}", value):
         raise RpcError("unlockUnavailable", "Cannot identify this Android user for credential storage")
-    return value.lower()
+    return value.lower().zfill(16)
 
 
 def locked(adb, serial):

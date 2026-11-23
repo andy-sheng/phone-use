@@ -7,6 +7,14 @@ from devicehubd.protocol import RpcError
 
 
 class UnlockTests(unittest.TestCase):
+    def test_identity_normalizes_unpadded_android_ids(self):
+        for raw in ("123456789ABCDEF", "0123456789abcdef"):
+            with patch.object(android_unlock, "shell", return_value=raw):
+                self.assertEqual(android_unlock.identity("adb", "serial"), "0123456789abcdef")
+        for raw in ("null", "", "123456789abcdef01"):
+            with patch.object(android_unlock, "shell", return_value=raw), self.assertRaises(RpcError):
+                android_unlock.identity("adb", "serial")
+
     def test_android_keyguard_state_is_explicit(self):
         prefix = "DisplayPolicy\n  KeyguardServiceDelegate\n    showing="
         self.assertTrue(android_unlock.parse_keyguard(prefix + "true\n"))
