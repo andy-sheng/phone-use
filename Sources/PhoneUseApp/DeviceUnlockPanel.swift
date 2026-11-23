@@ -4,10 +4,8 @@ import SwiftUI
 struct DeviceUnlockPanel: View {
     let device: DeviceSummary
     let credentialStatus: UnlockCredential.Status?
+    let editPasscode: () -> Void
     let refreshCredentials: () -> Void
-    @State private var pin = ""
-    @State private var showsPIN = false
-    @State private var revealedPIN: String?
     @State private var message = ""
     @State private var busy = false
 
@@ -32,65 +30,32 @@ struct DeviceUnlockPanel: View {
                     }
                 }.disabled(!device.isReady)
             }
-            HStack {
-                Group {
-                    if showsPIN {
-                        TextField("4 位或 6 位数字密码", text: Binding(
-                            get: { revealedPIN ?? pin },
-                            set: { revealedPIN = nil; pin = $0 }))
-                    } else {
-                        SecureField("解锁密码", text: $pin, prompt: Text(verbatim: credentialStatus?.hasPIN == true
-                                    ? "******" : "4 位或 6 位数字密码"))
+            HStack(alignment: .firstTextBaseline) {
+                Text(credentialStatus == .pending ? "上次输入未确认" : credentialStatus?.rawValue ?? "密码状态未知")
+                    .foregroundStyle(credentialStatus == .pending ? .orange : .secondary)
+                    .help(credentialStatus?.rawValue ?? "密码状态未知")
+                Spacer()
+                Button(credentialStatus?.hasPIN == true ? "更改密码…" : "设置密码…") {
+                    message = ""
+                    editPasscode()
+                }
+                if credentialStatus?.hasPIN == true {
+                    Button("移除", role: .destructive) {
+                        run {
+                            try await DeviceUnlockController.shared.configure(device, pin: nil)
+                            return ""
+                        }
                     }
-                }
-                .textFieldStyle(.roundedBorder)
-                Button {
-                    revealedPIN = nil
-                    showsPIN.toggle()
-                } label: {
-                    Image(systemName: showsPIN ? "eye.slash" : "eye")
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel(showsPIN ? "隐藏密码" : "显示密码")
-                .help(showsPIN ? "隐藏密码" : "显示密码")
-                Button("保存") {
-                    let value = revealedPIN ?? pin
-                    clearPIN()
-                    run { try await DeviceUnlockController.shared.configure(device, pin: value); return "" }
-                }.disabled(!DeviceSession.validUnlockPIN(revealedPIN ?? pin))
-                Button("移除") {
-                    clearPIN()
-                    run { try await DeviceUnlockController.shared.configure(device, pin: nil); return "" }
                 }
             }
             .disabled(!canEdit)
-            Text("保存在本机钥匙串。保存后，MCP 可解锁这台设备。")
-                .font(.caption).foregroundStyle(.secondary)
-            Text([credentialStatus?.rawValue ?? "", message].filter { !$0.isEmpty }.joined(separator: " · "))
-                .font(.caption)
+            if !message.isEmpty {
+                Text(message).font(.caption)
+            }
         }
         .padding()
         .disabled(busy)
-        .task(id: showsPIN) {
-            guard showsPIN, pin.isEmpty else { return }
-            do {
-                let saved = try await DeviceUnlockController.shared.savedPIN(device)
-                guard !Task.isCancelled, showsPIN, pin.isEmpty else { return }
-                revealedPIN = saved
-            } catch {
-                guard !Task.isCancelled else { return }
-                message = String(describing: error)
-                showsPIN = false
-            }
-        }
-        .onDisappear { clearPIN() }
         .onAppear(perform: refreshCredentials)
-    }
-
-    private func clearPIN() {
-        showsPIN = false
-        revealedPIN = nil
-        pin = ""
     }
 
     private func run(_ action: @escaping () async throws -> String) {

@@ -40,7 +40,8 @@ struct PhoneUseWindow: View {
             case .settings:
                 VStack(spacing: 0) {
                     if let device = model.selectedDevice {
-                        DeviceUnlockPanel(device: device, credentialStatus: credentialStates[device.id]) {
+                        DeviceUnlockPanel(device: device, credentialStatus: credentialStates[device.id],
+                                          editPasscode: { passcodeDevice = device }) {
                             credentialRevision += 1
                         }
                         .id(device.id)

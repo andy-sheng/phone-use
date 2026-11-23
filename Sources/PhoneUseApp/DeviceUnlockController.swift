@@ -133,10 +133,6 @@ actor DeviceUnlockController {
         return result
     }
 
-    func savedPIN(_ device: DeviceSummary) async throws -> String? {
-        try await UnlockCredential(deviceID: device.unlockCredentialID()).savedPIN()
-    }
-
     func configure(_ device: DeviceSummary, pin: String?) async throws {
         guard active.insert(device.id).inserted else { throw DeviceHubError.serviceFailed("设备正在解锁。") }
         defer { active.remove(device.id) }
