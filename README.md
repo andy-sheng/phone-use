@@ -207,21 +207,21 @@ CLI 可先运行 `phone-use list` 查找设备，再执行 `phone-use --device <
 
 ## 应用沙箱文件
 
-选择就绪的 iPhone 或 iPad，打开工具栏「…」菜单中的「应用沙箱…」，搜索并选择应用，再点击「在 Finder 中打开」。
-应用列表按需加载设备上安装的真实应用图标；图标不可用时显示默认图标。
+选择就绪的 iPhone、iPad、Android 真机或 Android 模拟器，打开工具栏「…」菜单中的「应用沙箱…」，搜索并选择应用，再点击「在 Finder 中打开」。
+iOS 列表按需加载应用图标；Android 列表显示当前用户安装的包名和访问状态。
 沙箱会挂载成 Finder 原生的只读卷，可使用列表/分栏浏览、快速查看、拖拽复制到 Mac。
 重复打开同一应用会复用挂载；在 Finder 或应用选择弹窗中「弹出」即可断开。
 关闭选择弹窗不会卸载卷；设备连接结束或守护进程退出时会清理挂载。
 
-Finder 挂载通过现有设备连接上的 House Arrest/AFC 服务，以本机回环地址的 WebDAV 提供，
+iOS 使用 House Arrest/AFC，Android 使用经授权的 ADB 和系统 `run-as`。两者都通过本机回环地址的 WebDAV 提供只读卷，
 每个卷使用随机访问地址，仅允许读取，不需要安装 Samba 或额外的文件系统驱动。
 目录和文件内容可能被 Finder 缓存，设备端文件变化后可弹出并重新挂载刷新。
-应用列表仍通过 Xcode/CoreDevice 获取，需本机提供 `devicectl` 且能识别目标设备。
+iOS 应用列表通过 Xcode/CoreDevice 获取，需本机提供 `devicectl` 且能识别目标设备。
 应用是否开放容器以实际请求结果为准，开发签名或 Debug 名称本身并不保证权限。
-Finder 挂载暂不支持模拟器和 Android；任意系统路径、Keychain、iCloud Drive 和第三方文件提供器
+Android 仅能读取系统允许 `run-as` 的可调试应用，可浏览 `files`、`databases` 等应用目录。Finder 挂载暂不支持 iOS 模拟器；任意系统路径、Keychain、iCloud Drive 和第三方文件提供器
 不在此功能范围内。
 
-MCP 保留独立的 CoreDevice 文件接口，不依赖 Finder 挂载，沿用设备选择规则，也可显式传入 `device`：
+MCP 通过 CoreDevice 或 ADB 读取文件，不依赖 Finder 挂载，沿用设备选择规则，也可显式传入 `device`：
 
 - `list_apps`：可选 `search`，返回应用及容器访问权限。
 - `list_sandbox_files`：必填 `bundle_id`，`path` 默认为 `.`；返回文件类型、大小、修改时间，
@@ -230,7 +230,7 @@ MCP 保留独立的 CoreDevice 文件接口，不依赖 Finder 挂载，沿用�
 - `download_sandbox_file`：另传 `destination`（运行 PhoneUse 的 Mac 上的绝对文件路径），
   下载成功后返回 `local_path`。不递归下载目录，不跟随所选符号链接。
 
-例如先列出应用，再用返回的 Bundle ID 浏览 `Library`。所有远端路径都相对应用数据容器，
+例如先列出应用，再用返回的 Bundle ID 浏览 iOS 的 `Library`，或用 Android 包名浏览 `files`。所有远端路径都相对应用数据容器，
 不接受绝对路径或 `..`。运行中的 SQLite 数据库可能依赖 WAL/SHM；单独下载 `.db` 文件不代表
 取得了一份一致的数据库备份。
 

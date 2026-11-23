@@ -136,6 +136,10 @@ PhoneUse 在读取钥匙串后，从一次系统界面快照确认空密码框�
 
 旋转和折叠使用当前设备会话；返回的 `width`、`height` 单位为 points。改变屏幕形态前会结束目标设备上的录屏；有 MCP 录屏时，结果的 `saved_recording.local_path` 提供文件路径。下一次触摸前应重新截图。
 
+### 应用沙箱文件
+
+对就绪的 Android 真机或模拟器，先调用 `list_apps`，选择 `containerAccessible: true` 的包名作为 `bundle_id`。随后可用 `list_sandbox_files` 浏览根目录或子目录、用 `read_sandbox_file` 读取最多 64 KiB 的 UTF-8 文本、用 `download_sandbox_file` 将单个文件保存到 Mac 上尚不存在的绝对路径。Android 使用当前用户授权的 ADB 和 `run-as`，iOS 使用 CoreDevice。两者都可以在设备预览关闭时读取。
+
 ### 设备设置
 
 `get_device_settings` 的 `group` 可取 `appearance`、`voice_over`、`audio`、`locations`。各组独立读取，并返回当前后端 `source`。外观值和可用选项依赖设备及 Xcode 版本，位置组返回可用的模拟位置预设。

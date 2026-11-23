@@ -169,6 +169,38 @@ public actor DaemonClient {
         try await callIgnoringResult("stopMirror", ["udid": udid])
     }
 
+    static func withClient<T>(_ body: (DaemonClient) async throws -> T) async throws -> T {
+        let client = try await connect()
+        do {
+            let result = try await body(client)
+            await client.close()
+            return result
+        } catch {
+            await client.close()
+            throw error
+        }
+    }
+
+    func androidSandboxApps(_ udid: String) async throws -> [SandboxApp] {
+        try await call("androidSandboxApps", ["udid": udid], as: [SandboxApp].self)
+    }
+
+    func androidSandboxFiles(_ udid: String, package: String, directory: String) async throws -> [SandboxFile] {
+        try await call("androidSandboxList", ["udid": udid, "bundleID": package, "path": directory], as: [SandboxFile].self)
+    }
+
+    struct AndroidFileChunk: Decodable {
+        let data: Data
+        let user: String
+    }
+
+    func androidSandboxRead(_ udid: String, package: String, path: String, offset: Int64,
+                            size: Int, user: String?) async throws -> AndroidFileChunk {
+        var params: [String: Any] = ["udid": udid, "bundleID": package, "path": path, "offset": offset, "size": size]
+        if let user { params["user"] = user }
+        return try await call("androidSandboxRead", params, as: AndroidFileChunk.self)
+    }
+
     public func mountSandbox(_ udid: String, bundleID: String, label: String) async throws -> SandboxMount {
         try await call("mountSandbox", ["udid": udid, "bundleID": bundleID, "label": label], as: SandboxMount.self)
     }

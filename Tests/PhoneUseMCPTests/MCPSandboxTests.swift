@@ -55,6 +55,12 @@ final class MCPSandboxTests: XCTestCase {
         XCTAssertEqual((download["structuredContent"] as? [String: Any])?["local_path"] as? String, "/tmp/export.txt")
     }
 
+    func testAndroidUsesTheFileServiceWithoutStartingAPreview() async throws {
+        let access = try access(platform: "android")
+        let reply = try await result("read_sandbox_file", ["bundle_id": "example.app", "path": "files/note.txt"], access: access)
+        XCTAssertEqual((reply["structuredContent"] as? [String: Any])?["text"] as? String, "hello 世界")
+    }
+
     func testInvalidFileArgumentsFailBeforePreparingDevices() async throws {
         let invalid: [(String, [String: Any])] = [
             ("list_sandbox_files", [:]), ("list_sandbox_files", ["bundle_id": "app", "path": "../other"]),
@@ -73,8 +79,8 @@ final class MCPSandboxTests: XCTestCase {
         }
     }
 
-    func testPermissionAndUnsupportedPlatformErrorsDoNotBecomeEmptyListings() async throws {
-        for access in [try access(fails: true), try access(platform: "android")] {
+    func testPermissionErrorsOnBothPlatformsDoNotBecomeEmptyListings() async throws {
+        for access in [try access(fails: true), try access(platform: "android", fails: true)] {
             let result = try await result("list_sandbox_files", ["bundle_id": "example.app"], access: access)
             XCTAssertEqual(result["isError"] as? Bool, true)
             XCTAssertNil(result["structuredContent"])
@@ -85,7 +91,7 @@ final class MCPSandboxTests: XCTestCase {
         let env = ProcessInfo.processInfo.environment
         guard let udid = env["DEVICEHUB_SANDBOX_DEVICE"], let bundle = env["DEVICEHUB_SANDBOX_APP"],
               let path = env["DEVICEHUB_SANDBOX_FILE"] else { throw XCTSkip("Set DEVICEHUB_SANDBOX_DEVICE/APP/FILE") }
-        let device = try device(id: udid)
+        let device = try device(platform: udid.hasPrefix("android:") ? "android" : "ios", id: udid)
         let access = MCPDeviceAccess(devices: { [device] }, session: { _ in
             XCTFail("Sandbox access must not open a screen"); throw DeviceHubError.connectionClosed
         })

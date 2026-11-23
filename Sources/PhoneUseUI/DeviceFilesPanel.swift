@@ -32,6 +32,11 @@ final class DeviceFilesModel: ObservableObject {
     var selectedApp: SandboxApp? { apps.first { $0.id == selection } }
     var selectedMount: SandboxMount? { mounts.first { $0.bundleID == selection } }
 
+    var canOpen: Bool {
+        guard let selectedApp else { return false }
+        return device?.isAndroid != true || selectedApp.containerAccessible != false
+    }
+
     func stop() { generation = UUID(); isBusy = false }
 
     func load(_ device: DeviceSummary) async {
@@ -55,12 +60,13 @@ final class DeviceFilesModel: ObservableObject {
             self.mounts = mounts
         } catch {
             guard token == generation, !Task.isCancelled else { return }
-            self.error = "无法获取应用。请确认设备已解锁且 Xcode 能识别该设备。\n\(error)"
+            let hint = device.isAndroid ? "请确认设备已授权 ADB 调试。" : "请确认设备已解锁且 Xcode 能识别该设备。"
+            self.error = "无法获取应用。\(hint)\n\(error)"
         }
     }
 
     func loadIcon(_ app: SandboxApp) async {
-        guard let device, !iconRequests.contains(app.id) else { return }
+        guard let device, !device.isAndroid, !iconRequests.contains(app.id) else { return }
         let token = generation
         iconRequests.insert(app.id)
         let data = try? await fetchIcon(device, app)
@@ -77,7 +83,7 @@ final class DeviceFilesModel: ObservableObject {
     }
 
     func open() async {
-        guard !isBusy, let app = selectedApp, let volumes else { return }
+        guard !isBusy, canOpen, let app = selectedApp, let volumes else { return }
         let token = generation
         isBusy = true; error = nil
         defer { if token == generation { isBusy = false } }
@@ -132,7 +138,7 @@ public struct DeviceFilesPanel: View {
                     Button { Task { await model.load(device) } } label: { Image(systemName: "arrow.clockwise") }
                         .buttonStyle(.borderless).help("刷新应用").disabled(model.isBusy)
                 }
-                TextField("搜索应用名称或 Bundle ID", text: $search).textFieldStyle(.roundedBorder)
+                TextField(device.isAndroid ? "搜索应用包名" : "搜索应用名称或 Bundle ID", text: $search).textFieldStyle(.roundedBorder)
             }.padding(20)
             Divider()
             List(selection: $model.selection) {
@@ -152,13 +158,17 @@ public struct DeviceFilesPanel: View {
                         .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(app.name).lineLimit(1)
-                            Text(app.bundleIdentifier).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            if app.name != app.bundleIdentifier {
+                                Text(app.bundleIdentifier).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
                         }
                         Spacer(minLength: 0)
                         if model.mounts.contains(where: { $0.bundleID == app.id }) {
                             Label("已挂载", systemImage: "externaldrive").font(.caption).foregroundStyle(.secondary)
                         } else if app.containerAccessible == true {
                             Text("可访问").font(.caption).foregroundStyle(.secondary)
+                        } else if device.isAndroid && app.containerAccessible == false {
+                            Text("不可访问").font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     .padding(.vertical, 5).tag(app.id).contentShape(Rectangle())
@@ -181,7 +191,7 @@ public struct DeviceFilesPanel: View {
                 }
                 HStack {
                     if model.isBusy { ProgressView().controlSize(.small) }
-                    Text("只读挂载，可预览或拖到 Mac 导出。")
+                    Text(device.isAndroid ? "支持允许 run-as 的可调试应用，可只读挂载并导出到 Mac。" : "只读挂载，可预览或拖到 Mac 导出。")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -192,7 +202,7 @@ public struct DeviceFilesPanel: View {
                     Spacer()
                     Button("关闭") { dismiss() }.keyboardShortcut(.cancelAction)
                     Button("在 Finder 中打开") { Task { await model.open() } }
-                        .keyboardShortcut(.defaultAction).disabled(model.selectedApp == nil || model.isBusy)
+                        .keyboardShortcut(.defaultAction).disabled(!model.canOpen || model.isBusy)
                 }
             }.padding(20)
         }

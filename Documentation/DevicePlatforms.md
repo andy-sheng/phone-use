@@ -251,13 +251,18 @@ simulator. Touch delivery and the live preview were checked by hand on an iOS 27
 
 ## App sandbox files
 
-`DeviceFiles` in PhoneUseKit provides read-only app-container access through the existing
-`DeviceCtl` runner. MCP uses this service for `list_apps`, `list_sandbox_files`, `read_sandbox_file` and
+`DeviceFiles` in PhoneUseKit provides read-only app-container access through CoreDevice on iOS and ADB on Android. MCP uses this service for `list_apps`, `list_sandbox_files`, `read_sandbox_file` and
 `download_sandbox_file`. These operations resolve the shared device selection without
-opening a video/input session. Android is explicitly unsupported. CoreDevice must know the
+opening a video/input session. For iOS, CoreDevice must know the
 device; daemon-only wireless pairing is not a fallback route for this feature.
 
-App availability comes from `containerAccessible`, not `builtByDeveloper`. Missing access
+Android lists installed packages and version codes for the current user and probes container
+access with Android's `run-as`. The package name is the app identifier. File operations use
+the package UID, standard Android shell utilities and binary-safe ADB shell transport.
+Listings include dotfiles. Downloads read bounded byte ranges from regular files and reject
+paths that leave the selected container or traverse a symbolic link.
+
+On iOS, app availability comes from `containerAccessible`, not `builtByDeveloper`. Missing access
 metadata stays unknown. Directory listings are non-recursive; devicectl's entry paths are
 relative to the requested directory, and the service returns container-relative paths.
 Absolute paths and parent traversal are rejected. Only regular readable files can be read or
@@ -270,7 +275,11 @@ Offline tests cover path parsing, reported permissions, preview limits, download
 MCP validation/dispatch/pagination. Read-only
 integration tests can be enabled with `DEVICEHUB_SANDBOX_DEVICE`, `DEVICEHUB_SANDBOX_APP`
 and `DEVICEHUB_SANDBOX_FILE`; they list the app/container and download the chosen file to
-a temporary location, without launching or modifying the app.
+a temporary location, without launching or modifying the app. For Android, supply the full
+`android:<serial>` identifier and the debuggable package name. An optional
+`DEVICEHUB_SANDBOX_SHA256` checks the downloaded bytes. With no device, set
+`PHONEUSE_TEST_ANDROID_FINDER=1` to exercise a real read-only macOS mount against the
+local ADB fixture in `test_android_sandbox.py`.
 
 ## Apple device workspace actions
 
@@ -391,11 +400,15 @@ kept separate so offline regression tests never inject input into a connected ph
 PhoneUse's toolbar More menu exposes “应用沙箱…”, which opens the shared `DeviceFilesPanel`
 app picker, then opens
 an actual Finder volume instead of embedding a custom file browser. `DeviceSandboxVolumes`
-calls the daemon's `mountSandbox`, `sandboxMounts` and `unmountSandbox` RPCs. Only physical
-iOS devices are supported. Listing/ejecting mounts does not create a worker; mounting reuses
+calls the daemon's `mountSandbox`, `sandboxMounts` and `unmountSandbox` RPCs. Physical iOS devices and authorized Android devices/emulators are supported.
+On iOS, listing/ejecting mounts does not create a worker; mounting reuses
 the device worker's RSD connection and opens House Arrest for the selected app. It requires
 no screen/video session. The app list still comes from CoreDevice; its reported access flag
 is a hint, while House Arrest determines whether the container can actually be mounted.
+
+Android mounts use the same read-only DAV server and mount lifecycle with an ADB-backed file
+provider. The daemon owns the mounts independently of its screen worker and closes them after
+disconnection. Each mounted volume stays bound to its original Android user and package.
 
 `sandbox_mounts.py` serves AFC through pymobiledevice3's existing WebDAV dependencies on
 an ephemeral loopback port. Each volume has a random URL prefix; RPC replies expose only

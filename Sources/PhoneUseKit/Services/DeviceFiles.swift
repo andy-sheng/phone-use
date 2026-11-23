@@ -29,27 +29,35 @@ public protocol DeviceFileAccess: Sendable {
     func download(bundleID: String, path: String, to destination: URL) async throws
 }
 
-/// Read-only app-container access using the same CoreDevice route as Xcode's device window.
-/// A daemon-only pairing is insufficient: CoreDevice must also know this device.
+/// Read-only app-container access through CoreDevice on iOS or ADB run-as on Android.
 public struct DeviceFiles: DeviceFileAccess {
     public static let maximumTextBytes = 65_536
-    private let identifier: String
-    private let run: @Sendable ([String], Int) async throws -> [String: Any]
+    private enum Backend {
+        case coreDevice(String, @Sendable ([String], Int) async throws -> [String: Any])
+        case android(String)
+    }
+    private let backend: Backend
 
     public init(device: DeviceSummary) throws {
-        guard !device.isAndroid else {
-            throw DeviceHubError.capabilityUnavailable("App sandbox browsing is currently available for iOS devices only")
-        }
         guard device.isReady else { throw DeviceHubError.deviceNotReady(device.name) }
-        self.init(identifier: device.deviceIdentifier, run: { try await DeviceCtl.run($0, timeout: $1) })
+        backend = device.isAndroid ? .android(device.udid)
+            : .coreDevice(device.deviceIdentifier, { try await DeviceCtl.run($0, timeout: $1) })
     }
 
     init(identifier: String, run: @escaping @Sendable ([String], Int) async throws -> [String: Any]) {
-        self.identifier = identifier
-        self.run = run
+        backend = .coreDevice(identifier, run)
     }
 
     public func apps() async throws -> [SandboxApp] {
+        switch backend {
+        case .android(let udid):
+            return try await DaemonClient.withClient { try await $0.androidSandboxApps(udid) }
+        case let .coreDevice(identifier, run):
+            return try await Self.coreDeviceApps(identifier, run: run)
+        }
+    }
+
+    private static func coreDeviceApps(_ identifier: String, run: ([String], Int) async throws -> [String: Any]) async throws -> [SandboxApp] {
         let result = try await run(["device", "info", "apps", "--device", identifier], 30)
         guard let rows = result["apps"] as? [[String: Any]] else { throw malformed() }
         return try rows.map { row in
@@ -61,7 +69,17 @@ public struct DeviceFiles: DeviceFileAccess {
 
     public func list(bundleID: String, path: String = ".") async throws -> [SandboxFile] {
         let path = try Self.relativePath(path)
-        let arguments = try ["device", "info", "files"] + domain(bundleID)
+        switch backend {
+        case .android(let udid):
+            return try await DaemonClient.withClient { try await $0.androidSandboxFiles(udid, package: bundleID, directory: path) }
+        case let .coreDevice(identifier, run):
+            return try await Self.coreDeviceFiles(identifier, bundleID: bundleID, path: path, run: run)
+        }
+    }
+
+    private static func coreDeviceFiles(_ identifier: String, bundleID: String, path: String,
+                                        run: ([String], Int) async throws -> [String: Any]) async throws -> [SandboxFile] {
+        let arguments = try ["device", "info", "files"] + domain(identifier, bundleID)
             + ["--subdirectory", path, "--no-recurse"]
         let result: [String: Any]
         do { result = try await run(arguments, 30) }
@@ -112,7 +130,7 @@ public struct DeviceFiles: DeviceFileAccess {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: directory) }
         let local = directory.appendingPathComponent("content")
-        try await copy(bundleID: bundleID, path: file.path, to: local)
+        try await copy(bundleID: bundleID, file: file, to: local)
         let handle = try FileHandle(forReadingFrom: local)
         defer { try? handle.close() }
         let data = try handle.read(upToCount: Self.maximumTextBytes + 1) ?? Data()
@@ -139,7 +157,7 @@ public struct DeviceFiles: DeviceFileAccess {
         try manager.createDirectory(at: staging, withIntermediateDirectories: false)
         defer { try? manager.removeItem(at: staging) }
         let local = staging.appendingPathComponent("content")
-        try await copy(bundleID: bundleID, path: file.path, to: local)
+        try await copy(bundleID: bundleID, file: file, to: local)
         try Task.checkCancellation()
         try manager.moveItem(at: local, to: destination)
     }
@@ -158,16 +176,43 @@ public struct DeviceFiles: DeviceFileAccess {
         return file
     }
 
-    private func copy(bundleID: String, path: String, to destination: URL) async throws {
-        _ = try await run(["device", "copy", "from"] + domain(bundleID)
-                         + ["--source", path, "--destination", destination.path], 120)
+    private func copy(bundleID: String, file: SandboxFile, to destination: URL) async throws {
+        switch backend {
+        case let .coreDevice(identifier, run):
+            _ = try await run(["device", "copy", "from"] + Self.domain(identifier, bundleID)
+                              + ["--source", file.path, "--destination", destination.path], 120)
+        case .android(let udid):
+            guard let size = file.size, size >= 0 else { throw DeviceHubError.serviceFailed("Unknown Android file size.") }
+            try Data().write(to: destination, options: .withoutOverwriting)
+            let output = try FileHandle(forWritingTo: destination)
+            defer { try? output.close() }
+            try await DaemonClient.withClient { client in
+                var offset: Int64 = 0
+                var user: String?
+                repeat {
+                    try Task.checkCancellation()
+                    // Include one byte past the listed end to detect growth, even for empty files.
+                    let remaining = size - offset
+                    let count = Int(min(remaining, 512 * 1024 - 1)) + 1
+                    let chunk = try await client.androidSandboxRead(udid, package: bundleID, path: file.path,
+                                                                   offset: offset, size: count, user: user)
+                    guard chunk.data.count == min(Int64(count), remaining) else {
+                        throw DeviceHubError.serviceFailed("The Android file changed during the copy. Retry.")
+                    }
+                    try output.write(contentsOf: chunk.data)
+                    user = chunk.user
+                    offset += Int64(chunk.data.count)
+                    if chunk.data.count < count { break }
+                } while true
+            }
+        }
         let values = try destination.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
         guard values.isRegularFile == true, values.isSymbolicLink != true else {
             throw DeviceHubError.serviceFailed("The device did not return a regular file.")
         }
     }
 
-    private func domain(_ bundleID: String) throws -> [String] {
+    private static func domain(_ identifier: String, _ bundleID: String) throws -> [String] {
         guard !bundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !bundleID.contains("\0") else {
             throw DeviceHubError.serviceFailed("An app bundle identifier is required.")
         }
@@ -175,5 +220,4 @@ public struct DeviceFiles: DeviceFileAccess {
     }
 
     private static func malformed() -> DeviceHubError { .serviceFailed("Unexpected device file-service response. Update Xcode and retry.") }
-    private func malformed() -> DeviceHubError { Self.malformed() }
 }

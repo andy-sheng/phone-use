@@ -39,9 +39,9 @@ enum MCPToolCatalog {
         }
         func fields(_ extra: [String: Any]) -> [String: Any] { common.merging(extra) { _, new in new } }
         let sandbox: [String: Any] = ["device": device,
-            "bundle_id": ["type": "string", "minLength": 1, "description": "App bundle identifier from list_apps."],
+            "bundle_id": ["type": "string", "minLength": 1, "description": "iOS bundle identifier or Android package name from list_apps."],
             "path": ["type": "string", "minLength": 1, "description": "Path relative to the app data container. Use '.' for its root; absolute paths and '..' are rejected."]]
-        let fileScope = " iOS only, through Xcode/CoreDevice; CoreDevice must know the device. Access depends on app signing and container permissions, not merely a Debug label. No device files are modified. Does not require a screen preview."
+        let fileScope = " Read-only, without a screen preview. iOS uses Xcode/CoreDevice. Android uses authorized ADB and run-as for debuggable packages in the current user profile."
 
         let string: [String: Any] = ["type": "string", "minLength": 1]
         let flag: [String: Any] = ["type": "boolean"]

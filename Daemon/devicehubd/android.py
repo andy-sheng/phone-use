@@ -97,6 +97,9 @@ class AndroidDiscovery:
         return parse_devices(output)
 
     async def command(self, *arguments: str, timeout: float = 8) -> str:
+        return (await self.command_bytes(*arguments, timeout=timeout)).decode("utf-8", errors="replace")
+
+    async def command_bytes(self, *arguments: str, timeout: float = 8) -> bytes:
         if not self.adb_path:
             raise FileNotFoundError("ADB not found; install Android platform-tools or set DEVICEHUB_ADB")
         process = await asyncio.create_subprocess_exec(
@@ -111,7 +114,7 @@ class AndroidDiscovery:
             raise
         if process.returncode:
             raise ConnectionError(stderr.decode("utf-8", errors="replace").strip() or "ADB command failed")
-        return stdout.decode("utf-8", errors="replace")
+        return stdout
 
     async def version(self, serial: str) -> str | None:
         return (await self.command("-s", serial, "shell", "getprop", "ro.build.version.release")).strip() or None

@@ -18,6 +18,7 @@ through CoreSimulator; ``openDevice`` acknowledges them without starting a worke
 """
 
 import asyncio
+import base64
 import contextlib
 import json
 import logging
@@ -37,7 +38,7 @@ from pymobiledevice3.services.mobile_image_mounter import (
     image_type_for_device,
 )
 
-from devicehubd import VERSION, identity, protocol
+from devicehubd import VERSION, android_sandbox, identity, protocol
 from devicehubd.app_install import install_apk, package_file
 from devicehubd.android_unlock import parse_identity, parse_keyguard
 from devicehubd.android import AndroidAttachment, AndroidDiscovery
@@ -260,6 +261,7 @@ class Supervisor:
         self._probing: set[str] = set()
         self._cache: dict[str, dict[str, Any]] = _load_cache()
         self.android = AndroidDiscovery()
+        self.android_mounts: dict[str, android_sandbox.AndroidMounts] = {}
         self._android_seen: dict[str, AndroidAttachment] = {}
         self._android_failures = 0
         self.simulators = SimulatorDiscovery()
@@ -334,6 +336,9 @@ class Supervisor:
             if record.is_simulator and udid not in simulators:
                 del self.records[udid]
                 changed = True
+        for udid in list(self.android_mounts):
+            if udid not in android or android[udid].state != "device":
+                await self.android_mounts.pop(udid).close()
         if changed:
             await self.broadcast()
 
@@ -851,6 +856,40 @@ class Supervisor:
         async with worker.command_lock:
             return await worker.call(method, {}, timeout=35)
 
+    async def android_files(self, method, params):
+        record = self._record(params.get("udid"))
+        serial = record.adb_serial
+        if record.platform != "android" or record.adb_state != "device" or not serial:
+            raise RpcError("notReady", "A ready, authorized ADB device is required")
+        if method == "androidSandboxApps":
+            return await android_sandbox.apps(self.android, serial)
+        if method in {"mountSandbox", "sandboxMounts", "unmountSandbox"}:
+            if method == "sandboxMounts" and record.udid not in self.android_mounts:
+                return {"mounts": []}
+            user = await android_sandbox.current_user(self.android, serial)
+            manager = self.android_mounts.get(record.udid)
+            if manager and manager.user != user:
+                del self.android_mounts[record.udid]
+                await manager.close()
+                manager = self.android_mounts.get(record.udid)
+            if method == "sandboxMounts":
+                return {"mounts": manager.snapshot() if manager else []}
+            if method == "unmountSandbox":
+                if manager:
+                    await manager.unmount(params.get("token"))
+                return {}
+            if manager is None:
+                manager = self.android_mounts[record.udid] = android_sandbox.AndroidMounts(self.android, serial, user)
+            return await manager.mount(params.get("bundleID"), params.get("label"))
+        user = await android_sandbox.current_user(self.android, serial)
+        sandbox = android_sandbox.AndroidSandbox(self.android, serial, params.get("bundleID"), user)
+        if method == "androidSandboxList":
+            return await sandbox.files(params.get("path", "."))
+        if params.get("user", user) != user:
+            raise RpcError("deviceChanged", "The active Android user changed during the download")
+        data = await sandbox.read(params.get("path"), params.get("offset"), params.get("size"))
+        return {"data": base64.b64encode(data).decode("ascii"), "user": user}
+
     async def dispatch(self, method: str, params: dict[str, Any], writer: asyncio.StreamWriter) -> Any:
         udid = params.get("udid")
         if method == "hello":
@@ -932,6 +971,10 @@ class Supervisor:
             self._ios_record(udid)
             worker = await self._worker(udid)
             return await worker.call("startMirror", {}, timeout=60)
+        if method in {"androidSandboxApps", "androidSandboxList", "androidSandboxRead"} or (
+                method in {"mountSandbox", "sandboxMounts", "unmountSandbox"} and
+                isinstance(udid, str) and udid.startswith("android:")):
+            return await self.android_files(method, params)
         if method in {"mountSandbox", "sandboxMounts", "unmountSandbox", "appIcon"}:
             self._ios_record(udid)
             worker = await self._worker(udid) if method in {"mountSandbox", "appIcon"} else self.workers.get(udid or "")
@@ -996,7 +1039,9 @@ class Supervisor:
             worker.stop()
         if self._wireless_owner is not None:
             await self.stop_wireless_pairing(self._wireless_owner)
-        await asyncio.gather(*(worker.wait_closed() for worker in workers), return_exceptions=True)
+        await asyncio.gather(*(worker.wait_closed() for worker in workers),
+                             *(manager.close() for manager in self.android_mounts.values()), return_exceptions=True)
+        self.android_mounts.clear()
 
     def kill_workers(self) -> None:
         """Last resort on daemon exit, safe from any thread: never leave device workers orphaned."""

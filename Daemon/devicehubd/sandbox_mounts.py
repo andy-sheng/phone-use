@@ -132,6 +132,9 @@ class SandboxMounts:
         self.watcher: asyncio.Task | None = None
         self.pending: set[asyncio.Task] = set()
 
+    async def open_container(self, bundle_id):
+        return await HouseArrestService.create(self.rsd, bundle_id)
+
     def snapshot(self):
         return [{key: item[key] for key in ("id", "bundleID", "path")} for item in self.mounts.values()]
 
@@ -160,12 +163,14 @@ class SandboxMounts:
             afc = server = mount_path = None
             try:
                 async with asyncio.timeout(35):
-                    afc = await HouseArrestService.create(self.rsd, bundle_id)
+                    afc = await self.open_container(bundle_id)
                     await afc.listdir("/")  # Verify container access before starting any local listener.
                     secret = secrets.token_urlsafe(32)
                     server = await serve(afc, secret)
                     self.root.mkdir(parents=True, exist_ok=True)
-                    mount_path = Path(tempfile.mkdtemp(prefix="sandbox-", dir=self.root))
+                    # The mount table reports physical paths (e.g. /private/var for /var).
+                    # Resolve the parent before mounting; stat on a live DAV volume can block.
+                    mount_path = Path(tempfile.mkdtemp(prefix="sandbox-", dir=self.root.resolve()))
                     url = f"http://127.0.0.1:{server.port}/{secret}/"
                     status = await command("/sbin/mount_webdav", "-S", "-o", "rdonly,nobrowse", "-v", label, url, str(mount_path))
                     if status != 0 or not await is_mounted(mount_path):

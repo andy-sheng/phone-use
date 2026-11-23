@@ -358,7 +358,6 @@ extension MCPCommand {
         case .listApps, .listSandboxFiles, .readSandboxFile, .downloadSandboxFile: break
         default: return nil
         }
-        guard !selected.isAndroid else { throw ToolFailure(message: "App sandbox tools currently support iOS only.") }
         let files = try access.files(selected)
         func encoded<T: Encodable>(_ value: T) throws -> Any {
             try JSONSerialization.jsonObject(with: JSONEncoder().encode(value))

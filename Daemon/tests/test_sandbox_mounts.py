@@ -210,7 +210,9 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         worker.call.assert_awaited_once_with("mountSandbox", {"bundleID": "app", "label": "App"}, timeout=45)
 
 
-@unittest.skipUnless(os.environ.get("DEVICEHUB_SANDBOX_DEVICE") and os.environ.get("DEVICEHUB_SANDBOX_APP")
+@unittest.skipUnless(os.environ.get("DEVICEHUB_SANDBOX_DEVICE")
+                     and not os.environ["DEVICEHUB_SANDBOX_DEVICE"].startswith("android:")
+                     and os.environ.get("DEVICEHUB_SANDBOX_APP")
                      and os.environ.get("DEVICEHUB_SANDBOX_FILE"), "Requires an explicitly selected physical device/app/file")
 class DeviceMountIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_rsd_mount_read_and_unmount(self):

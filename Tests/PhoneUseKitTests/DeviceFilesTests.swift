@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import XCTest
 @testable import PhoneUseKit
@@ -122,18 +123,24 @@ final class DeviceFilesTests: XCTestCase {
             throw XCTSkip("Set DEVICEHUB_SANDBOX_DEVICE/APP/FILE for read-only device validation")
         }
         let device = try JSONDecoder().decode(DeviceSummary.self, from: JSONSerialization.data(withJSONObject: [
+            "platform": udid.hasPrefix("android:") ? "android" : "ios",
             "udid": udid, "name": "Sandbox test", "connection": "usb", "state": "ready", "session": "closed",
         ]))
         let service = try DeviceFiles(device: device)
         let apps = try await service.apps()
         XCTAssertNotNil(apps.first { $0.bundleIdentifier == bundle })
         let entries = try await service.list(bundleID: bundle)
-        XCTAssertTrue(entries.contains { $0.name == "Library" && $0.kind == .directory })
+        let top = try XCTUnwrap(path.split(separator: "/").first)
+        XCTAssertTrue(entries.contains { $0.name == String(top) })
         let destination = try temporaryDirectory().appendingPathComponent("download")
         try await service.download(bundleID: bundle, path: path, to: destination)
-        let handle = try FileHandle(forReadingFrom: destination)
-        defer { try? handle.close() }
-        XCTAssertFalse(try XCTUnwrap(handle.read(upToCount: 16)).isEmpty)
+        if let expected = environment["DEVICEHUB_SANDBOX_SHA256"] {
+            let data = try Data(contentsOf: destination, options: .mappedIfSafe)
+            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            XCTAssertEqual(digest, expected)
+        } else {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+        }
         if let text = try? String(contentsOf: destination, encoding: .utf8), text.utf8.count <= DeviceFiles.maximumTextBytes,
            !text.contains("\0") {
             let preview = try await service.readText(bundleID: bundle, path: path)

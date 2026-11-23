@@ -385,6 +385,10 @@ public struct DeviceWorkspace<Panel: View>: View {
                 .disabled(!device.isReady || !allowsInput || isManagingSelection)
                 Divider()
                 if device.isAndroid {
+                    if let browseSandbox {
+                        Button("应用沙箱…", systemImage: "folder") { browseSandbox(device) }
+                            .disabled(!device.isReady)
+                    }
                     launchMenuItem
                     Divider()
                     Button("重新连接画面") { Task { await screen.reconnect() } }
