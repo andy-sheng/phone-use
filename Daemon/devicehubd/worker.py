@@ -26,6 +26,7 @@ from pymobiledevice3.services.mobile_image_mounter import auto_mount
 
 from devicehubd import protocol
 from devicehubd.app_icons import AppIcons
+from devicehubd.app_install import install_ipa, package_file
 from devicehubd.ios_ui import IOSUI, selector_from
 from devicehubd.ios_keyboard import text_keys, type_keys
 from devicehubd.lifetime import WORKER_EXIT_DEADLINE, exit_after
@@ -336,6 +337,13 @@ class Worker:
                 if self._sandbox_mounts is None:
                     self._sandbox_mounts = SandboxMounts(self.rsd)
                 result = await self._sandbox_mounts.mount(params.get("bundleID"), params.get("label"))
+            elif method == "installApp":
+                try:
+                    async with asyncio.timeout(600):
+                        await install_ipa(self.rsd, package_file(params.get("path"), ".ipa"))
+                except TimeoutError as error:
+                    raise RpcError("installTimeout", "Installation timed out. Check the device for the installed app.") from error
+                result = {}
             elif method == "appIcon":
                 if self._app_icons is None:
                     self._app_icons = AppIcons(self.rsd)

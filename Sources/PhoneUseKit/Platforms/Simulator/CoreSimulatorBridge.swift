@@ -509,7 +509,7 @@ enum SimulatorTools {
     static func simctl(_ arguments: [String], developerDirectory: String, timeout: Duration? = nil) async throws -> String {
         let data = try await withThrowingTaskGroup(of: Data.self) { group in
             group.addTask {
-                try await run("/usr/bin/xcrun", ["simctl"] + arguments, environment: ["DEVELOPER_DIR": developerDirectory])
+                try await HostCommand.run("/usr/bin/xcrun", ["simctl"] + arguments, environment: ["DEVELOPER_DIR": developerDirectory])
             }
             if let timeout {
                 group.addTask {
@@ -536,36 +536,5 @@ enum SimulatorTools {
         guard process.terminationStatus == 0 else { return nil }
         let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? nil : text
-    }
-
-    private static func run(_ executable: String, _ arguments: [String], environment: [String: String]) async throws -> Data {
-        let process = Process()
-        let output = Pipe()
-        let errors = Pipe()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        process.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 }
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = output
-        process.standardError = errors
-        let finished = ProcessTermination(process)
-        try Task.checkCancellation()
-        try process.run()
-        return try await withTaskCancellationHandler {
-            // Drain both pipes so a chatty child can never block on a full buffer.
-            async let stdout = Task.detached { output.fileHandleForReading.readDataToEndOfFile() }.value
-            async let stderr = Task.detached { errors.fileHandleForReading.readDataToEndOfFile() }.value
-            let (data, message) = await (stdout, stderr)
-            let status = await finished.wait()
-            try Task.checkCancellation()
-            guard status == 0 else {
-                let detail = String(decoding: message, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                throw DeviceHubError.serviceFailed(detail.isEmpty ? "simctl \(arguments.dropFirst().first ?? "") failed" : detail)
-            }
-            return data
-        } onCancel: {
-            // Stop only our command-line waiter, never the simulator or CoreSimulatorService.
-            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-        }
     }
 }

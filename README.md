@@ -193,6 +193,18 @@ MCP 也可通过 `list_devices` → `select_device` → `connect_device` 完成�
 
 工具定义、模拟器 UI 树与文本输入、手势、坐标单位及旧调用兼容见 [MCP 操作约定](Documentation/MCP.md)。
 
+## 安装应用
+
+在 PhoneUse 或 Automation 中选中已就绪的设备，打开工具栏「更多（…）→ 安装应用」，选择「从本地文件安装…」或「从网络链接安装…」。网络链接支持 HTTP 和 HTTPS，由 Mac 下载，可使用局域网地址或带签名参数的直链。安装无需先打开投屏。
+
+| 目标 | 安装包 |
+| --- | --- |
+| iPhone / iPad 真机 | 该设备有权安装的已签名 `.ipa` |
+| 已启动的 iOS 模拟器 | 为 iOS Simulator 编译的 `.app`，网络安装请将一个模拟器版 `.app` 放在 ZIP 顶层再提供下载链接。 |
+| Android 真机或模拟器 | 一个可独立安装的 `.apk`，同签名兼容版本支持覆盖更新 |
+
+CLI 可先运行 `phone-use list` 查找设备，再执行 `phone-use --device <设备标识> install "/path/to/package"` 或 `phone-use --device <设备标识> install "https://example.com/build.apk"`。MCP 的 `install_app` 接受 `path`（Mac 上的绝对路径）或 `url`（下载链接），二选一。
+
 ## 应用沙箱文件
 
 选择就绪的 iPhone 或 iPad，打开工具栏「…」菜单中的「应用沙箱…」，搜索并选择应用，再点击「在 Finder 中打开」。

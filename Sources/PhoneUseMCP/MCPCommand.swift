@@ -49,6 +49,7 @@ struct MCPCommand {
         case gesture(MCPGesture, Duration)
         case button(HardwareButton, Duration?)
         case launchApp(String)
+        case installApp(URL)
         case listApps(String?)
         case listSandboxFiles(bundleID: String, path: String, offset: Int, limit: Int)
         case readSandboxFile(bundleID: String, path: String)
@@ -231,6 +232,17 @@ struct MCPCommand {
                 throw ToolFailure(message: "Unknown button '\(raw)'. See button in tools/list.")
             }
             action = .button(button, try duration())
+        case "install_app":
+            let path = try Self.string(arguments, "path", optional: true)
+            let url = try Self.string(arguments, "url", optional: true)
+            switch (path, url) {
+            case (let path?, nil) where path.hasPrefix("/"):
+                action = .installApp(URL(fileURLWithPath: path))
+            case (nil, let url?):
+                action = .installApp(try AppPackageDownload.url(url))
+            default:
+                throw ToolFailure(message: "Supply either an absolute local package path or an HTTP(S) download URL.")
+            }
         case "launch_app": action = .launchApp(try Self.string(arguments, "bundle_id")!)
         case "type_text":
             guard let text = arguments["text"] as? String, !text.isEmpty else {

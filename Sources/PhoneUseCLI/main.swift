@@ -15,6 +15,7 @@ usage: phone-use [--device <name|udid|android:serial|simulator:udid>] <command>
   longpress <x> <y> [ms]
   press <\(HardwareButton.allCases.map(\.rawValue).joined(separator: "|"))>
   screenshot <file.png>
+  install <package-path|http(s)-url>
   launch <bundle-id|package-name>
   bench                            screenshot polling rate
   serve [port]                     local web video preview (default: 8765)
@@ -137,6 +138,14 @@ func run() async throws {
             frames += 1
         }
         print("screenshots: \(String(format: "%.1f", Double(frames) / Date().timeIntervalSince(start))) fps")
+    case "install":
+        guard arguments.count == 2 else { print(usage); exit(2) }
+        let target = try await hub.device(for: deviceQuery, requireUnique: true)
+        let input = arguments[1]
+        let file = input.contains("://") && !input.hasPrefix("/")
+            ? try AppPackageDownload.url(input) : URL(fileURLWithPath: input)
+        try await hub.installApp(from: file, on: target)
+        print("Installed \(file.lastPathComponent) on \(target.name)")
     case "launch":
         try await hub.session(for: deviceQuery).launchApp(bundleID: argument(1))
     default:

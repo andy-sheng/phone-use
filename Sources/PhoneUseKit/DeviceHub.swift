@@ -60,8 +60,8 @@ public actor DeviceHub {
     }
 
     /// Resolves `query` like `session(for:)` without opening a session.
-    public func device(for query: String? = nil) async throws -> DeviceSummary {
-        try await resolve(query)
+    public func device(for query: String? = nil, requireUnique: Bool = false) async throws -> DeviceSummary {
+        try await resolve(query, requireUnique: requireUnique)
     }
 
     public func androidADBPath() async throws -> String {
@@ -96,20 +96,27 @@ public actor DeviceHub {
         try await daemon().mountDeveloperImage(udid)
     }
 
-    private func resolve(_ query: String?) async throws -> DeviceSummary {
+    private func resolve(_ query: String?, requireUnique: Bool = false) async throws -> DeviceSummary {
         let devices = try await self.devices()
-        guard let query, !query.isEmpty else {
-            guard let device = devices.first(where: \.isReady) ?? devices.first(where: \.isAttached) else {
-                throw DeviceHubError.deviceNotFound("<any connected device>")
+        let matches: [DeviceSummary]
+        if let query, !query.isEmpty {
+            let needle = query.lowercased()
+            if let exact = devices.first(where: { $0.udid.lowercased() == needle }) { return exact }
+            let identifiers = devices.filter { $0.deviceIdentifier.lowercased() == needle }
+            if identifiers.isEmpty {
+                let names = devices.filter { $0.name.lowercased() == needle }
+                matches = names.isEmpty ? devices.filter { $0.name.lowercased().contains(needle) } : names
+            } else {
+                matches = identifiers
             }
-            return device
+        } else {
+            let ready = devices.filter(\.isReady)
+            matches = ready.isEmpty ? devices.filter(\.isAttached) : ready
         }
-        let needle = query.lowercased()
-        let match = devices.first { $0.udid.lowercased() == needle }
-            ?? devices.first { $0.deviceIdentifier.lowercased() == needle }
-            ?? devices.first { $0.name.lowercased() == needle }
-            ?? devices.first { $0.name.lowercased().contains(needle) }
-        guard let match else { throw DeviceHubError.deviceNotFound(query) }
+        guard let match = matches.first else { throw DeviceHubError.deviceNotFound(query ?? "<any connected device>") }
+        guard !requireUnique || matches.count == 1 else {
+            throw DeviceHubError.serviceFailed("Multiple devices match. Specify the exact device identifier.")
+        }
         return match
     }
 }

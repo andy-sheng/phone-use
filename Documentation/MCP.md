@@ -91,6 +91,7 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
 | `swipe` | `start_x, start_y, end_x, end_y, duration?` | 单指拖动，默认 **0.3 秒** |
 | `gesture` | `preset, duration?` | 四个滚动和四个边缘手势；滚动默认 **0.5 秒**，边缘默认 **0.3 秒** |
 | `button` | `button, duration?` | 硬件按钮，可指定按住时长 |
+| `install_app` | `path` 或 `url` | 选择 Mac 上的绝对路径或 HTTP(S) 直链。iOS 真机使用签名 IPA，Android 使用单个 APK。iOS 模拟器使用本地 .app 或顶层包含一个模拟器版 .app 的网络 ZIP。成功后返回目标设备标识、包文件名和 `installed: true`。 |
 | `launch_app` | `bundle_id` | iOS bundle ID 或 Android 包名/activity，启动或重新启动已安装的应用 |
 | `type_text` | `text`，可选元素选择器 | iOS 模拟器及 iOS 27+ 真机 HID 键盘输入；指定选择器时先激活文本框 |
 

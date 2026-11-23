@@ -135,6 +135,10 @@ public actor DaemonClient {
         try await callIgnoringResult("mountDeveloperImage", ["udid": udid])
     }
 
+    func installApp(_ udid: String, from file: URL) async throws {
+        try await callIgnoringResult("installApp", ["udid": udid, "path": file.path])
+    }
+
     public func openDevice(_ udid: String) async throws -> OpenedDevice {
         try await call("openDevice", ["udid": udid], as: OpenedDevice.self)
     }

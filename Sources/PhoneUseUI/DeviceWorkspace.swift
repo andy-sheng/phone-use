@@ -1,5 +1,6 @@
 import PhoneUseKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// One tab of the workspace's side panel. Each app supplies its own tabs and their content.
 public struct WorkspaceTab: Identifiable, Hashable, Sendable {
@@ -33,6 +34,7 @@ public struct DeviceWorkspace<Panel: View>: View {
     /// Screen points per view point, or nil to fit the window.
     @State private var zoom: CGFloat?
     @State private var fitScale: CGFloat = 1
+    @State private var installation: AppInstallationRequest?
     @State private var showingLaunch = false
     @State private var bundleID = ""
     @State private var managementAvailability: (key: String, simulator: Bool, physical: Set<IOSDeviceManagement.Action>)?
@@ -171,6 +173,7 @@ public struct DeviceWorkspace<Panel: View>: View {
                 model.selection = id
             }
         }
+        .sheet(item: $installation) { AppInstallationSheet(request: $0) }
         .sheet(item: $managementPrompt) { request in
             DeviceManagementPrompt(request) { performManagement(request, name: $0) }
         }
@@ -375,6 +378,12 @@ public struct DeviceWorkspace<Panel: View>: View {
     private var moreMenu: some View {
         Menu {
             if let device = model.selectedDevice {
+                Menu("安装应用", systemImage: "square.and.arrow.down") {
+                    Button("从本地文件安装…") { choosePackage(for: device) }
+                    Button("从网络链接安装…") { installation = AppInstallationRequest(device: device, file: nil) }
+                }
+                .disabled(!device.isReady || !allowsInput || isManagingSelection)
+                Divider()
                 if device.isAndroid {
                     launchMenuItem
                     Divider()
@@ -398,6 +407,17 @@ public struct DeviceWorkspace<Panel: View>: View {
         .help("更多设备操作")
         .disabled(model.selectedDevice == nil)
         .popover(isPresented: $showingLaunch, arrowEdge: .bottom) { launchPopover }
+    }
+
+    private func choosePackage(for device: DeviceSummary) {
+        let panel = NSOpenPanel()
+        panel.prompt = "安装"
+        panel.message = "安装到 \(device.name) · \(device.appPackageDescription)"
+        panel.allowedContentTypes = [device.isSimulator ? .applicationBundle : UTType(filenameExtension: device.appPackageExtension)!]
+        panel.treatsFilePackagesAsDirectories = false
+        if panel.runModal() == .OK, let file = panel.url {
+            installation = AppInstallationRequest(device: device, file: file)
+        }
     }
 
     private var launchMenuItem: some View {

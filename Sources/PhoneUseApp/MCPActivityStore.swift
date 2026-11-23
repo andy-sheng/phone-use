@@ -32,8 +32,18 @@ final class MCPActivityStore: ObservableObject {
         let params = request["params"] as? [String: Any] ?? [:]
         let args = params["arguments"] as? [String: Any] ?? [:]
         // Unlock has no secret argument. Discard unknown fields even on malformed client requests.
-        let displayedArguments: Any = params["name"] as? String == "unlock_device"
-            ? args.filter { $0.key == "device" } : (params["arguments"] ?? [:])
+        let displayedArguments: Any
+        switch params["name"] as? String {
+        case "unlock_device":
+            displayedArguments = args.filter { $0.key == "device" }
+        case "install_app" where args["url"] != nil:
+            // Signed build links can contain credentials in either the query or the path.
+            var summary = args
+            summary["url"] = (args["url"] as? String).flatMap { URL(string: $0)?.host } ?? "下载链接"
+            displayedArguments = summary
+        default:
+            displayedArguments = params["arguments"] ?? [:]
+        }
         let token = UUID()
         let start = ProcessInfo.processInfo.systemUptime
         calls.insert(Call(id: token, name: Self.bounded(params["name"] as? String ?? "未知工具", limit: 200),

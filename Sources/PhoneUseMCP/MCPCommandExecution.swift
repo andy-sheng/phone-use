@@ -33,6 +33,9 @@ struct MCPDeviceAccess: Sendable {
     var webPreview: @Sendable (String, UInt16) async throws -> URL = { _, _ in
         throw ToolFailure(message: "Web preview discovery is not configured")
     }
+    var installApp: @Sendable (URL, DeviceSummary) async throws -> Void = { file, device in
+        try await DeviceHub.shared.installApp(from: file, on: device)
+    }
     var operations = MCPDeviceOperations()
     var recordings = MCPRecordings()
     var previewWorkflow = MCPWebPreviewWorkflow()
@@ -113,7 +116,7 @@ extension MCPCommand {
             let statuses = await access.lockStatuses(for: devices)
             let rows = devices.enumerated().map { index, device in
                 let row = encoded[index].merging(statuses[index].fields(canUnlock: workspace?.unlock != nil)) { _, new in new }
-                var capabilities = ["screenshot", "tap", "long_press", "swipe", "touch_path", "gesture", "button", "launch_app"]
+                var capabilities = ["screenshot", "tap", "long_press", "swipe", "touch_path", "gesture", "button", "launch_app", "install_app"]
                 if workspace?.unlock != nil { capabilities.append("unlock_device") }
                 if device.isSimulator { capabilities.append("start_recording") }
                 if !device.isAndroid { capabilities += ["describe_ui", "element_targeting", "list_management_actions"] }
@@ -142,7 +145,7 @@ extension MCPCommand {
         }
         let exclusive: Bool
         switch action {
-        case .touchPath, .geometry, .unlockDevice: exclusive = true
+        case .touchPath, .geometry, .unlockDevice, .installApp: exclusive = true
         case .management(let op, _, _): exclusive = op != .available
         default: exclusive = false
         }
@@ -158,6 +161,9 @@ extension MCPCommand {
             let result = try await unlock(selected)
             return try mcpObject(["device": selected.udid, "status": result.rawValue,
                                   "unlock_verified": result == .unlocked || result == .alreadyUnlocked])
+        case .installApp(let file):
+            try await access.installApp(file, selected)
+            return try mcpObject(["device": selected.udid, "package": file.lastPathComponent, "installed": true])
         case .settings(let command): return try await command.execute(selected)
         case .geometry(let change):
             guard selected.isSimulator else { throw DeviceHubError.capabilityUnavailable("Simulator geometry on this device") }

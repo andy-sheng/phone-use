@@ -112,6 +112,11 @@ public enum SimulatorLifecycle {
         return URL(fileURLWithPath: entry.dataPath, isDirectory: true).deletingLastPathComponent()
     }
 
+    static func install(_ app: URL, on device: DeviceSummary) async throws {
+        let (id, developer) = try target(device)
+        try await SimulatorTools.simctl(["install", id, app.path], developerDirectory: developer)
+    }
+
     private static func target(_ device: DeviceSummary) throws -> (String, String) {
         guard device.isSimulator, UUID(uuidString: device.deviceIdentifier) != nil else {
             throw DeviceHubError.capabilityUnavailable("Managing this device as an iOS simulator")

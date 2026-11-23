@@ -38,6 +38,7 @@ from pymobiledevice3.services.mobile_image_mounter import (
 )
 
 from devicehubd import VERSION, identity, protocol
+from devicehubd.app_install import install_apk, package_file
 from devicehubd.android_unlock import parse_identity, parse_keyguard
 from devicehubd.android import AndroidAttachment, AndroidDiscovery
 from devicehubd.protocol import RpcError
@@ -868,6 +869,18 @@ class Supervisor:
                 return {"identity": parse_identity(output)}
             output = await self.android.command("-s", record.adb_serial, "shell", "dumpsys", "window", "policy", timeout=3)
             return {"locked": parse_keyguard(output)}
+        if method == "installApp":
+            record = self._record(udid)
+            if record.state != "ready" or record.is_simulator:
+                raise RpcError("deviceNotReady", "Installation requires a ready physical device or Android emulator")
+            if record.platform == "android":
+                if not record.adb_serial:
+                    raise RpcError("deviceNotReady", "Missing Android device serial")
+                await install_apk(self.android, record.adb_serial, package_file(params.get("path"), ".apk"))
+                return {}
+            path = package_file(params.get("path"), ".ipa")
+            worker = await self._worker(udid)
+            return await worker.call(method, {"path": str(path)}, timeout=615)
         if method == "androidTools":
             # Clients that drive Android themselves must use this same adb: a second adb
             # version would restart the shared server and drop every device connection.

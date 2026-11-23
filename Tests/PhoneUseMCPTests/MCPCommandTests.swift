@@ -81,6 +81,33 @@ final class MCPCommandTests: XCTestCase {
         return try XCTUnwrap(reply?["result"] as? [String: Any])
     }
 
+    func testInstallUsesSelectedDeviceAndAbsoluteHostPathWithoutOpeningPreview() async throws {
+        let device = try testDevice()
+        var access = MCPDeviceAccess(devices: { [device] }, session: { _ in
+            XCTFail("Installation opened a preview session")
+            throw DeviceHubError.connectionClosed
+        })
+        access.installApp = { file, target in
+            XCTAssertEqual(file.path, "/tmp/My Game.app")
+            XCTAssertEqual(target.udid, device.udid)
+        }
+        XCTAssertThrowsError(try MCPCommand(name: "install_app", arguments: ["path": "My Game.app"]))
+        let command = try MCPCommand(name: "install_app", arguments: ["path": "/tmp/My Game.app", "device": device.udid])
+        let result = try await command.execute(access: access)
+        XCTAssertEqual((result["structuredContent"] as? [String: Any])?["installed"] as? Bool, true)
+    }
+
+    func testInstallAcceptsOneLocalOrRemoteSource() throws {
+        let link = "https://example.test/build?signature=abc"
+        let command = try MCPCommand(name: "install_app", arguments: ["url": link])
+        guard case .installApp(let url) = command.action else { return XCTFail("Expected an installation") }
+        XCTAssertEqual(url.absoluteString, link)
+        for arguments in [[:], ["path": "/tmp/app.apk", "url": link], ["url": "file:///tmp/app.apk"],
+                          ["url": "ftp://example.test/app.ipa"], ["url": "https:///missing-host"]] {
+            XCTAssertThrowsError(try MCPCommand(name: "install_app", arguments: arguments))
+        }
+    }
+
     func testUnlockResolvesSelectedDeviceAndHasNoCredentialArguments() async throws {
         let device = try testDevice()
         let access = MCPDeviceAccess(devices: { [device] }, session: { _ in
@@ -103,7 +130,7 @@ final class MCPCommandTests: XCTestCase {
         let reply = MCPServer.localReply(to: ["id": 1, "method": "tools/list"])!
         let tools = (reply["result"] as! [String: Any])["tools"] as! [[String: Any]]
         let names = Set(tools.compactMap { $0["name"] as? String })
-        XCTAssertEqual(names, Set(MCPManagement.allCases.map(\.rawValue)).union(["list_simulator_options", "create_simulator", "rotate_simulator", "set_simulator_posture", "touch_path", "get_device_settings", "set_appearance", "set_location", "set_audio", "select_device", "connect_device", "get_web_preview", "list_devices", "unlock_device", "start_recording", "stop_recording", "screenshot", "describe_ui", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "type_text", "list_apps", "list_sandbox_files", "read_sandbox_file", "download_sandbox_file"]))
+        XCTAssertEqual(names, Set(MCPManagement.allCases.map(\.rawValue)).union(["list_simulator_options", "create_simulator", "rotate_simulator", "set_simulator_posture", "touch_path", "get_device_settings", "set_appearance", "set_location", "set_audio", "select_device", "connect_device", "get_web_preview", "list_devices", "unlock_device", "start_recording", "stop_recording", "screenshot", "describe_ui", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "install_app", "type_text", "list_apps", "list_sandbox_files", "read_sandbox_file", "download_sandbox_file"]))
         XCTAssertNotNil(MCPServer.encode(reply), "every schema must remain JSON serializable")
         let handoffTools = tools.filter { ($0["description"] as? String)?.contains("handoff") == true }
         XCTAssertEqual(handoffTools.compactMap { $0["name"] as? String }, ["connect_device"])
