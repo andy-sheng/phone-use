@@ -49,6 +49,8 @@ public struct DeviceWorkspace<Panel: View>: View {
     @Binding private var showsPanel: Bool
     private let allowsInput: Bool
     private let badgedTabs: Set<String>
+    private let devicesWithPasscode: Set<String>
+    private let configurePasscode: ((DeviceSummary) -> Void)?
     private let browseSandbox: ((DeviceSummary) -> Void)?
     private let panel: (WorkspaceTab, ScreenModel) -> Panel
 
@@ -59,6 +61,7 @@ public struct DeviceWorkspace<Panel: View>: View {
     ///   - panel: the side panel's content for the selected tab.
     public init(title: String, tabs: [WorkspaceTab], selectedTab: Binding<String>, showsPanel: Binding<Bool>,
                 allowsInput: Bool = true, badgedTabs: Set<String> = [],
+                devicesWithPasscode: Set<String> = [], configurePasscode: ((DeviceSummary) -> Void)? = nil,
                 browseSandbox: ((DeviceSummary) -> Void)? = nil,
                 @ViewBuilder panel: @escaping (WorkspaceTab, ScreenModel) -> Panel) {
         self.title = title
@@ -67,6 +70,8 @@ public struct DeviceWorkspace<Panel: View>: View {
         _showsPanel = showsPanel
         self.allowsInput = allowsInput
         self.badgedTabs = badgedTabs
+        self.devicesWithPasscode = devicesWithPasscode
+        self.configurePasscode = configurePasscode
         self.browseSandbox = browseSandbox
         self.panel = panel
     }
@@ -186,14 +191,7 @@ public struct DeviceWorkspace<Panel: View>: View {
             let available = matching(model.availableDevices)
             let unavailable = showsUnavailable ? matching(model.unavailableDevices) : []
             Section("Available") {
-                ForEach(available) { device in
-                    DeviceRow(device: device)
-                        .contextMenu {
-                            if canRemoveSimulator(device) {
-                                managementItem(.remove, device: device, prompts: true, destructive: true)
-                            }
-                        }
-                }
+                ForEach(available) { deviceRow($0) }
                 if available.isEmpty {
                     Text(isFiltering || !search.isEmpty
                          ? "没有符合条件的设备"
@@ -204,7 +202,7 @@ public struct DeviceWorkspace<Panel: View>: View {
             }
             if !unavailable.isEmpty {
                 Section("Unavailable") {
-                    ForEach(unavailable) { DeviceRow(device: $0) }
+                    ForEach(unavailable) { deviceRow($0) }
                 }
             }
         }
@@ -242,6 +240,19 @@ public struct DeviceWorkspace<Panel: View>: View {
                 .help("筛选设备")
             }
         }
+    }
+
+    private func deviceRow(_ device: DeviceSummary) -> some View {
+        DeviceRow(device: device, hasPasscode: devicesWithPasscode.contains(device.id))
+            .contextMenu {
+                if let configurePasscode {
+                    Button("设置解锁密码…", systemImage: "key") { configurePasscode(device) }
+                        .disabled(device.isAndroid && !device.isReady)
+                }
+                if canRemoveSimulator(device) {
+                    managementItem(.remove, device: device, prompts: true, destructive: true)
+                }
+            }
     }
 
     // MARK: Detail
@@ -832,6 +843,7 @@ private struct ControlBarButton: View {
 
 private struct DeviceRow: View {
     let device: DeviceSummary
+    let hasPasscode: Bool
 
     var body: some View {
         HStack(spacing: 10) {
@@ -867,6 +879,13 @@ private struct DeviceRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
+            if hasPasscode {
+                Image(systemName: "key.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help("已保存解锁密码")
+                    .accessibilityLabel("已保存解锁密码")
+            }
             Text(device.productVersion ?? "")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)

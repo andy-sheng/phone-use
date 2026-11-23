@@ -8,14 +8,19 @@ struct UnlockCredential {
     let deviceID: String
     private static let pending = "pending device verification"
 
+    private static let serviceQuery: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: "cn.andysheng.phoneuse.device-unlock",
+        kSecAttrSynchronizable as String: false,
+    ]
+
     private var query: [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: "cn.andysheng.phoneuse.device-unlock",
-         kSecAttrAccount as String: deviceID,
-         kSecAttrSynchronizable as String: false]
+        var query = Self.serviceQuery
+        query[kSecAttrAccount as String] = deviceID
+        return query
     }
 
-    private func check(_ status: OSStatus) throws {
+    private static func check(_ status: OSStatus) throws {
         guard status == errSecSuccess else {
             throw DeviceHubError.serviceFailed("无法访问本机钥匙串（\(status)）。")
         }
@@ -28,25 +33,39 @@ struct UnlockCredential {
         if status == errSecItemNotFound {
             var item = query.merging(values) { _, new in new }
             item[kSecAttrLabel as String] = "PhoneUse 设备解锁"
-            try check(SecItemAdd(item as CFDictionary, nil))
-        } else { try check(status) }
+            try Self.check(SecItemAdd(item as CFDictionary, nil))
+        } else { try Self.check(status) }
     }
 
     func remove() throws {
         let status = SecItemDelete(query as CFDictionary)
-        if status != errSecItemNotFound { try check(status) }
+        if status != errSecItemNotFound { try Self.check(status) }
     }
 
-    func status() throws -> String {
-        var lookup = query
+    enum Status: String {
+        case missing = "未保存密码"
+        case saved = "已保存密码"
+        case pending = "上次输入未确认，请核对后重新保存密码。"
+
+        var hasPIN: Bool { self != .missing }
+    }
+
+    /// List metadata only; displaying badges never requests the PIN data.
+    static func savedStatuses() throws -> [String: Status] {
+        var lookup = serviceQuery
         lookup[kSecReturnAttributes as String] = true
+        lookup[kSecMatchLimit as String] = kSecMatchLimitAll
         var result: CFTypeRef?
         let status = SecItemCopyMatching(lookup as CFDictionary, &result)
-        if status == errSecItemNotFound { return "未保存密码" }
+        if status == errSecItemNotFound { return [:] }
         try check(status)
-        let attributes = result as? [String: Any]
-        return attributes?[kSecAttrComment as String] as? String == Self.pending
-            ? "上次输入未确认，请核对后重新保存密码。" : "已保存密码"
+        var statuses = [String: Status]()
+        for attributes in result as? [[String: Any]] ?? [] {
+            if let account = attributes[kSecAttrAccount as String] as? String {
+                statuses[account] = attributes[kSecAttrComment as String] as? String == pending ? .pending : .saved
+            }
+        }
+        return statuses
     }
 
     private func savedItem() throws -> [String: Any]? {
@@ -56,7 +75,7 @@ struct UnlockCredential {
         var value: CFTypeRef?
         let status = SecItemCopyMatching(lookup as CFDictionary, &value)
         if status == errSecItemNotFound { return nil }
-        try check(status)
+        try Self.check(status)
         guard let item = value as? [String: Any] else { throw DeviceHubError.serviceFailed("请重新保存设备密码。") }
         return item
     }
@@ -81,12 +100,12 @@ struct UnlockCredential {
         // if two signed copies of PhoneUse are running in different processes.
         var available = query
         available[kSecAttrComment as String] = ""
-        try check(SecItemUpdate(available as CFDictionary, [kSecAttrComment: Self.pending] as CFDictionary))
+        try Self.check(SecItemUpdate(available as CFDictionary, [kSecAttrComment: Self.pending] as CFDictionary))
         return pin
     }
 
     func setPending(_ pending: Bool) throws {
-        try check(SecItemUpdate(query as CFDictionary, [kSecAttrComment: pending ? Self.pending : ""] as CFDictionary))
+        try Self.check(SecItemUpdate(query as CFDictionary, [kSecAttrComment: pending ? Self.pending : ""] as CFDictionary))
     }
 }
 
@@ -95,23 +114,33 @@ actor DeviceUnlockController {
     private var active = Set<String>()
     private var reserved = [String: String]()
 
-    private func credentialID(_ device: DeviceSummary) async throws -> String {
-        guard device.isAndroid else { return device.id }
-        return try await DeviceHub.shared.session(for: device.id).unlockCredentialID()
-    }
-
-    func status(_ device: DeviceSummary) async throws -> String {
-        try await UnlockCredential(deviceID: credentialID(device)).status()
+    func statuses(for devices: [DeviceSummary]) async throws -> [String: UnlockCredential.Status] {
+        let saved = try UnlockCredential.savedStatuses()
+        var result = [String: UnlockCredential.Status]()
+        for device in devices {
+            try Task.checkCancellation()
+            if !device.isAndroid {
+                result[device.id] = saved[device.id] ?? .missing
+            } else if !saved.keys.contains(where: { $0.hasPrefix(device.id + ":user:") }) {
+                result[device.id] = .missing
+            } else if !device.isReady {
+                // The device has a saved PIN. Its current user can be verified again when connected.
+                result[device.id] = .saved
+            } else if let account = try? await device.unlockCredentialID() {
+                result[device.id] = saved[account] ?? .missing
+            }
+        }
+        return result
     }
 
     func savedPIN(_ device: DeviceSummary) async throws -> String? {
-        try await UnlockCredential(deviceID: credentialID(device)).savedPIN()
+        try await UnlockCredential(deviceID: device.unlockCredentialID()).savedPIN()
     }
 
     func configure(_ device: DeviceSummary, pin: String?) async throws {
         guard active.insert(device.id).inserted else { throw DeviceHubError.serviceFailed("设备正在解锁。") }
         defer { active.remove(device.id) }
-        let item = try await UnlockCredential(deviceID: credentialID(device))
+        let item = try await UnlockCredential(deviceID: device.unlockCredentialID())
         if let pin { try item.save(pin) } else { try item.remove() }
     }
 

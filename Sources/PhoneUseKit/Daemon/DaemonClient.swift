@@ -81,6 +81,12 @@ public actor DaemonClient {
         return updates
     }
 
+    /// Reads the current Android user's identity without opening a preview or input session.
+    func androidUnlockIdentity(_ udid: String) async throws -> String {
+        struct Reply: Decodable { let identity: String }
+        return try await call("androidUnlockIdentity", ["udid": udid], as: Reply.self).identity
+    }
+
     func androidScreenLocked(_ udid: String) async throws -> Bool {
         struct Status: Decodable { let locked: Bool }
         return try await call("androidLockState", ["udid": udid], as: Status.self).locked

@@ -8,6 +8,8 @@ struct PhoneUseWindow: View {
     @EnvironmentObject private var model: DeviceListModel
     @AppStorage("inspector.visible") private var showsPanel = true
     @AppStorage("inspector.tab") private var selectedTab = Tab.uiTree.rawValue
+    @State private var credentialStates: [String: UnlockCredential.Status] = [:]
+    @State private var credentialRevision = 0
     @State private var filesDevice: DeviceSummary?
 
     enum Tab: String, CaseIterable {
@@ -26,6 +28,12 @@ struct PhoneUseWindow: View {
     var body: some View {
         DeviceWorkspace(title: "PhoneUse", tabs: Tab.allCases.map(\.workspaceTab),
                         selectedTab: $selectedTab, showsPanel: $showsPanel,
+                        devicesWithPasscode: Set(credentialStates.filter { $0.value.hasPIN }.keys),
+                        configurePasscode: { device in
+                            model.selection = device.id
+                            selectedTab = Tab.settings.rawValue
+                            showsPanel = true
+                        },
                         browseSandbox: { filesDevice = $0 }) { tab, screen in
             switch Tab(rawValue: tab.id) ?? .settings {
             case .uiTree:
@@ -35,7 +43,10 @@ struct PhoneUseWindow: View {
             case .settings:
                 VStack(spacing: 0) {
                     if let device = model.selectedDevice {
-                        DeviceUnlockPanel(device: device).id(device.id)
+                        DeviceUnlockPanel(device: device, credentialStatus: credentialStates[device.id]) {
+                            credentialRevision += 1
+                        }
+                        .id(device.id)
                         Divider()
                     }
                     if model.selectedDevice?.isAndroid == true {
@@ -51,6 +62,17 @@ struct PhoneUseWindow: View {
                     ContentUnavailableView("未选择设备", systemImage: "iphone")
                 }
             }
+        }
+        .onChange(of: model.devices.map { "\($0.id)|\($0.state.rawValue)" }, initial: true) {
+            credentialRevision += 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            credentialRevision += 1
+        }
+        .task(id: credentialRevision) {
+            let statuses = try? await DeviceUnlockController.shared.statuses(for: model.devices)
+            guard !Task.isCancelled else { return }
+            credentialStates = statuses ?? [:]
         }
         .sheet(item: $filesDevice) { DeviceFilesPanel(device: $0) }
         .onAppear { if selectedTab == "files" { selectedTab = Tab.uiTree.rawValue } }

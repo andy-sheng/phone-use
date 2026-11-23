@@ -435,6 +435,18 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.supervisor.android.adb_path = "/adb"
         self.supervisor.simulators.attached = AsyncMock(return_value=[])
 
+    async def test_credential_identity_does_not_open_a_session(self):
+        record = DeviceRecord(udid="android:serial", connection="usb", platform="android",
+                              adb_serial="serial", adb_state="device")
+        self.supervisor.records[record.udid] = record
+        self.supervisor._worker = AsyncMock()
+        self.supervisor.android.command = AsyncMock(return_value="123456789abcdef\n")
+        result = await self.supervisor.dispatch("androidUnlockIdentity", {"udid": record.udid}, None)
+        self.assertEqual(result, {"identity": "0123456789abcdef"})
+        self.supervisor.android.command.assert_awaited_once_with(
+            "-s", "serial", "shell", "settings", "get", "secure", "android_id", timeout=3)
+        self.supervisor._worker.assert_not_awaited()
+
     async def test_read_lock_state_without_opening_worker(self):
         record = DeviceRecord(udid="android:serial", connection="usb", platform="android",
                               adb_serial="serial", adb_state="device")

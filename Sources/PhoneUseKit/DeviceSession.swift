@@ -24,14 +24,14 @@ public final class DeviceSession: @unchecked Sendable {
 
     public func unlockCredentialID() async throws -> String {
         guard let android = connection as? AndroidDeviceConnection else { return device.id }
-        return "\(device.id):user:\(try await android.unlockIdentity())"
+        return device.unlockCredentialID(androidUser: try await android.unlockIdentity())
     }
 
     func unlockAndroid(takePIN: @Sendable (String) async throws -> String?) async throws -> DeviceUnlockResult {
         guard let android = connection as? AndroidDeviceConnection else {
             throw DeviceHubError.capabilityUnavailable("Android keyguard")
         }
-        return try await android.unlock { identity in try await takePIN("\(self.device.id):user:\(identity)") }
+        return try await android.unlock { identity in try await takePIN(self.device.unlockCredentialID(androidUser: identity)) }
     }
 
     func tapPasscodeKey(_ point: CGPoint) async throws {

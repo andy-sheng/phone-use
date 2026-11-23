@@ -29,6 +29,15 @@ public struct DeviceLockStatus: Sendable {
 }
 
 extension DeviceSummary {
+    /// Keychain account shared by the settings panel and unlock requests.
+    func unlockCredentialID(androidUser: String) -> String { "\(id):user:\(androidUser)" }
+
+    public func unlockCredentialID() async throws -> String {
+        guard isAndroid else { return id }
+        let user = try await DeviceHub.shared.daemon().androidUnlockIdentity(id)
+        return unlockCredentialID(androidUser: user)
+    }
+
     func physicalLockStatus() async throws -> DeviceLockStatus {
         let info = try await DeviceCtl.run(["device", "info", "lockState", "--device", deviceIdentifier], timeout: 5)
         return DeviceLockStatus(physicalInfo: info)

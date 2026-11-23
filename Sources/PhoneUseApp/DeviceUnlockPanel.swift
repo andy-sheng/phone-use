@@ -3,12 +3,15 @@ import SwiftUI
 
 struct DeviceUnlockPanel: View {
     let device: DeviceSummary
+    let credentialStatus: UnlockCredential.Status?
+    let refreshCredentials: () -> Void
     @State private var pin = ""
     @State private var showsPIN = false
     @State private var revealedPIN: String?
-    @State private var credentialStatus = ""
     @State private var message = ""
     @State private var busy = false
+
+    private var canEdit: Bool { !device.isAndroid || device.isReady }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -36,7 +39,8 @@ struct DeviceUnlockPanel: View {
                             get: { revealedPIN ?? pin },
                             set: { revealedPIN = nil; pin = $0 }))
                     } else {
-                        SecureField("4 位或 6 位数字密码", text: $pin)
+                        SecureField("解锁密码", text: $pin, prompt: Text(verbatim: credentialStatus?.hasPIN == true
+                                    ? "******" : "4 位或 6 位数字密码"))
                     }
                 }
                 .textFieldStyle(.roundedBorder)
@@ -59,9 +63,10 @@ struct DeviceUnlockPanel: View {
                     run { try await DeviceUnlockController.shared.configure(device, pin: nil); return "" }
                 }
             }
+            .disabled(!canEdit)
             Text("保存在本机钥匙串。保存后，MCP 可解锁这台设备。")
                 .font(.caption).foregroundStyle(.secondary)
-            Text([credentialStatus, message].filter { !$0.isEmpty }.joined(separator: " · "))
+            Text([credentialStatus?.rawValue ?? "", message].filter { !$0.isEmpty }.joined(separator: " · "))
                 .font(.caption)
         }
         .padding()
@@ -79,21 +84,13 @@ struct DeviceUnlockPanel: View {
             }
         }
         .onDisappear { clearPIN() }
-        .task {
-            // Resolving an Android user opens the device. Wait for an explicit action there.
-            if !device.isAndroid { await refresh() }
-        }
+        .onAppear(perform: refreshCredentials)
     }
 
     private func clearPIN() {
         showsPIN = false
         revealedPIN = nil
         pin = ""
-    }
-
-    private func refresh() async {
-        do { credentialStatus = try await DeviceUnlockController.shared.status(device) }
-        catch { credentialStatus = String(describing: error) }
     }
 
     private func run(_ action: @escaping () async throws -> String) {
@@ -103,7 +100,7 @@ struct DeviceUnlockPanel: View {
             defer { busy = false }
             do { message = try await action() }
             catch { message = String(describing: error) }
-            await refresh()
+            refreshCredentials()
         }
     }
 }
