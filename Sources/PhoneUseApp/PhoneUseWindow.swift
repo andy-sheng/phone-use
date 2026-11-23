@@ -10,6 +10,7 @@ struct PhoneUseWindow: View {
     @AppStorage("inspector.tab") private var selectedTab = Tab.uiTree.rawValue
     @State private var credentialStates: [String: UnlockCredential.Status] = [:]
     @State private var credentialRevision = 0
+    @State private var passcodeDevice: DeviceSummary?
     @State private var filesDevice: DeviceSummary?
 
     enum Tab: String, CaseIterable {
@@ -29,11 +30,7 @@ struct PhoneUseWindow: View {
         DeviceWorkspace(title: "PhoneUse", tabs: Tab.allCases.map(\.workspaceTab),
                         selectedTab: $selectedTab, showsPanel: $showsPanel,
                         devicesWithPasscode: Set(credentialStates.filter { $0.value.hasPIN }.keys),
-                        configurePasscode: { device in
-                            model.selection = device.id
-                            selectedTab = Tab.settings.rawValue
-                            showsPanel = true
-                        },
+                        configurePasscode: { passcodeDevice = $0 },
                         browseSandbox: { filesDevice = $0 }) { tab, screen in
             switch Tab(rawValue: tab.id) ?? .settings {
             case .uiTree:
@@ -73,6 +70,11 @@ struct PhoneUseWindow: View {
             let statuses = try? await DeviceUnlockController.shared.statuses(for: model.devices)
             guard !Task.isCancelled else { return }
             credentialStates = statuses ?? [:]
+        }
+        .sheet(item: $passcodeDevice) { device in
+            DevicePasscodeSheet(device: device, hasPasscode: credentialStates[device.id]?.hasPIN == true) {
+                credentialRevision += 1
+            }
         }
         .sheet(item: $filesDevice) { DeviceFilesPanel(device: $0) }
         .onAppear { if selectedTab == "files" { selectedTab = Tab.uiTree.rawValue } }

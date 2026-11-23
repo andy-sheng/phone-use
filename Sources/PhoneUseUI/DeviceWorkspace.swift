@@ -872,6 +872,14 @@ private struct DeviceRow: View {
                             .accessibilityLabel(device.platformName)
                             .fixedSize()
                     }
+                    if hasPasscode {
+                        Image(systemName: "key.fill")
+                            .font(.caption)
+                            .fixedSize()
+                            .foregroundStyle(.secondary)
+                            .help("已保存解锁密码")
+                            .accessibilityLabel("已保存解锁密码")
+                    }
                 }
                 Text(subtitle)
                     .font(.caption)
@@ -879,13 +887,6 @@ private struct DeviceRow: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
-            if hasPasscode {
-                Image(systemName: "key.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .help("已保存解锁密码")
-                    .accessibilityLabel("已保存解锁密码")
-            }
             Text(device.productVersion ?? "")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
