@@ -104,7 +104,7 @@ struct PreviewLockControls<Content: View>: View {
             }
         } message: { notice in
             switch notice {
-            case .missingPasscode: Text("请先为「\(device.name)」设置解锁密码。")
+            case .missingPasscode: Text("请在「设置密码」里选择「无密码」，或填写「\(device.name)」已有的数字密码。")
             case .unknown: Text("「\(device.name)」未报告锁屏状态。请根据设备屏幕选择操作。")
             case .message(let message): Text(message)
             }
@@ -113,7 +113,7 @@ struct PreviewLockControls<Content: View>: View {
 
     private var alertTitle: String {
         switch notice {
-        case .missingPasscode: "尚未设置解锁密码"
+        case .missingPasscode: "检查设备解锁设置"
         case .unknown: "无法确认锁屏状态"
         default: "设备锁屏操作"
         }

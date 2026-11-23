@@ -33,7 +33,7 @@ struct PhoneUseWindow: View {
                         configurePasscode: { passcodeDevice = $0 },
                         unlockDevice: { device in
                             defer { credentialRevision += 1 }
-                            return try await DeviceUnlockController.shared.unlock(device, requireSavedPasscode: true)
+                            return try await DeviceUnlockController.shared.unlock(device, requireConfiguration: true)
                         },
                         browseSandbox: { filesDevice = $0 }) { tab, screen in
             switch Tab(rawValue: tab.id) ?? .settings {
@@ -77,7 +77,7 @@ struct PhoneUseWindow: View {
             credentialStates = statuses ?? [:]
         }
         .sheet(item: $passcodeDevice) { device in
-            DevicePasscodeSheet(device: device, hasPasscode: credentialStates[device.id]?.hasPIN == true) {
+            DevicePasscodeSheet(device: device, status: credentialStates[device.id]) {
                 credentialRevision += 1
             }
         }

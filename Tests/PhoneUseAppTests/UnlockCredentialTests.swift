@@ -10,9 +10,32 @@ final class UnlockCredentialTests: XCTestCase {
                 "connection": "usb", "state": "ready", "session": "closed",
             ])
             let device = try JSONDecoder().decode(DeviceSummary.self, from: data)
-            let result = try await DeviceUnlockController().unlock(device, requireSavedPasscode: true)
+            let result = try await DeviceUnlockController().unlock(device, requireConfiguration: true)
             XCTAssertEqual(result, .needsPasscode)
         }
+    }
+
+    func testSimulatorDefaultsToPasswordlessAndExplicitChoiceAllowsPhysicalDevice() {
+        XCTAssertFalse(UnlockCredential.Status.missing.requiresConfiguration(isSimulator: true))
+        XCTAssertTrue(UnlockCredential.Status.missing.requiresConfiguration(isSimulator: false))
+        XCTAssertFalse(UnlockCredential.Status.noPasscode.requiresConfiguration(isSimulator: false))
+        XCTAssertFalse(UnlockCredential.Status.noPasscode.hasPIN)
+    }
+
+    func testNoPasscodeSettingReplacesPINAndCanBeCleared() throws {
+        let item = UnlockCredential(deviceID: "test-" + UUID().uuidString)
+        defer { try? item.remove() }
+        try item.save("0123")
+        _ = try item.reserve()
+        try item.apply(.noPasscode)
+        try item.setPending(false)
+        XCTAssertEqual(try UnlockCredential.savedStatuses()[item.deviceID], .noPasscode)
+        XCTAssertNil(try item.reserve())
+        XCTAssertNil(try item.savedPIN())
+        try item.apply(.pin("0321"))
+        XCTAssertEqual(try item.reserve(), "0321")
+        try item.apply(.remove)
+        XCTAssertNil(try UnlockCredential.savedStatuses()[item.deviceID])
     }
 
     func testLocalCredentialIsPerDeviceAndFailedAttemptsStayReserved() throws {

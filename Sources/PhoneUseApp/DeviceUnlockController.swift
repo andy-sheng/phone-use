@@ -6,6 +6,7 @@ import Security
 /// same item reserves an attempt across app restarts and clients if delivery is interrupted.
 struct UnlockCredential {
     let deviceID: String
+    private static let noPasscode = "no device passcode"
     private static let pending = "pending device verification"
 
     private static let serviceQuery: [String: Any] = [
@@ -26,9 +27,25 @@ struct UnlockCredential {
         }
     }
 
+    enum Setting {
+        case pin(String), noPasscode, remove
+    }
+
+    func apply(_ setting: Setting) throws {
+        switch setting {
+        case .pin(let pin): try save(pin)
+        case .noPasscode: try write(data: Data(), comment: Self.noPasscode)
+        case .remove: try remove()
+        }
+    }
+
     func save(_ pin: String) throws {
         guard DeviceSession.validUnlockPIN(pin) else { throw DeviceHubError.serviceFailed("请输入 4 位或 6 位数字密码。") }
-        let values: [String: Any] = [kSecValueData as String: Data(pin.utf8), kSecAttrComment as String: ""]
+        try write(data: Data(pin.utf8), comment: "")
+    }
+
+    private func write(data: Data, comment: String) throws {
+        let values: [String: Any] = [kSecValueData as String: data, kSecAttrComment as String: comment]
         let status = SecItemUpdate(query as CFDictionary, values as CFDictionary)
         if status == errSecItemNotFound {
             var item = query.merging(values) { _, new in new }
@@ -44,10 +61,15 @@ struct UnlockCredential {
 
     enum Status: String {
         case missing = "未保存密码"
+        case noPasscode = "已设为无锁屏密码"
         case saved = "已保存密码"
         case pending = "上次输入未确认，请核对后重新保存密码。"
 
-        var hasPIN: Bool { self != .missing }
+        var hasPIN: Bool { self == .saved || self == .pending }
+
+        func requiresConfiguration(isSimulator: Bool) -> Bool {
+            self == .missing && !isSimulator
+        }
     }
 
     /// List metadata only; displaying badges never requests the PIN data.
@@ -62,7 +84,11 @@ struct UnlockCredential {
         var statuses = [String: Status]()
         for attributes in result as? [[String: Any]] ?? [] {
             if let account = attributes[kSecAttrAccount as String] as? String {
-                statuses[account] = attributes[kSecAttrComment as String] as? String == pending ? .pending : .saved
+                switch attributes[kSecAttrComment as String] as? String {
+                case pending: statuses[account] = .pending
+                case noPasscode: statuses[account] = .noPasscode
+                default: statuses[account] = .saved
+                }
             }
         }
         return statuses
@@ -87,11 +113,12 @@ struct UnlockCredential {
     }
 
     func savedPIN() throws -> String? {
-        try savedItem().map(decodedPIN)
+        guard let item = try savedItem(), item[kSecAttrComment as String] as? String != Self.noPasscode else { return nil }
+        return try decodedPIN(item)
     }
 
     func reserve() throws -> String? {
-        guard let item = try savedItem() else { return nil }
+        guard let item = try savedItem(), item[kSecAttrComment as String] as? String != Self.noPasscode else { return nil }
         guard item[kSecAttrComment as String] as? String != Self.pending else {
             throw DeviceHubError.serviceFailed("上次密码输入未确认。请在 PhoneUse 设备设置中核对并重新保存密码。")
         }
@@ -105,7 +132,10 @@ struct UnlockCredential {
     }
 
     func setPending(_ pending: Bool) throws {
-        try Self.check(SecItemUpdate(query as CFDictionary, [kSecAttrComment: pending ? Self.pending : ""] as CFDictionary))
+        var match = query
+        match[kSecAttrComment as String] = pending ? "" : Self.pending
+        let status = SecItemUpdate(match as CFDictionary, [kSecAttrComment: pending ? Self.pending : ""] as CFDictionary)
+        if status != errSecItemNotFound { try Self.check(status) }
     }
 }
 
@@ -125,7 +155,9 @@ actor DeviceUnlockController {
                 result[device.id] = .missing
             } else if !device.isReady {
                 // The device has a saved PIN. Its current user can be verified again when connected.
-                result[device.id] = .saved
+                if saved.contains(where: { $0.key.hasPrefix(device.id + ":user:") && $0.value.hasPIN }) {
+                    result[device.id] = .saved
+                }
             } else if let account = try? await device.unlockCredentialID() {
                 result[device.id] = saved[account] ?? .missing
             }
@@ -133,11 +165,11 @@ actor DeviceUnlockController {
         return result
     }
 
-    func configure(_ device: DeviceSummary, pin: String?) async throws {
+    func configure(_ device: DeviceSummary, setting: UnlockCredential.Setting) async throws {
         guard active.insert(device.id).inserted else { throw DeviceHubError.serviceFailed("设备正在解锁。") }
         defer { active.remove(device.id) }
         let item = try await UnlockCredential(deviceID: device.unlockCredentialID())
-        if let pin { try item.save(pin) } else { try item.remove() }
+        try item.apply(setting)
     }
 
     private func reserve(_ credentialID: String, device: String) throws -> String? {
@@ -146,20 +178,19 @@ actor DeviceUnlockController {
         return pin
     }
 
-    func unlock(_ device: DeviceSummary, requireSavedPasscode: Bool = false) async throws -> DeviceUnlockResult {
+    func unlock(_ device: DeviceSummary, requireConfiguration: Bool = false) async throws -> DeviceUnlockResult {
         let id = device.id
         guard active.insert(id).inserted else { throw DeviceHubError.serviceFailed("设备正在解锁。") }
         defer {
             active.remove(id)
             reserved.removeValue(forKey: id)
         }
-        if requireSavedPasscode {
-            switch try await statuses(for: [device])[id] {
-            case nil: throw DeviceHubError.serviceFailed("无法读取当前设备用户的密码状态，请重新连接后再试。")
-            case .missing: return .needsPasscode
-            case .pending: throw DeviceHubError.serviceFailed(UnlockCredential.Status.pending.rawValue)
-            case .saved: break
+        if requireConfiguration {
+            guard let status = try await statuses(for: [device])[id] else {
+                throw DeviceHubError.serviceFailed("无法读取当前设备用户的密码状态，请重新连接后再试。")
             }
+            if status.requiresConfiguration(isSimulator: device.isSimulator) { return .needsPasscode }
+            if status == .pending { throw DeviceHubError.serviceFailed(status.rawValue) }
         }
         try Task.checkCancellation()
         let session = try await DeviceHub.shared.session(for: id)

@@ -12,6 +12,12 @@ struct DeviceUnlockPanel: View {
 
     private var canEdit: Bool { !device.isAndroid || device.isReady }
 
+    private var statusLabel: String {
+        if credentialStatus == .pending { return "上次输入未确认" }
+        if device.isSimulator && credentialStatus == .missing { return "默认按无密码解锁" }
+        return credentialStatus?.rawValue ?? "密码状态未知"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
@@ -25,18 +31,18 @@ struct DeviceUnlockPanel: View {
                 }.disabled(!device.isReady)
             }
             HStack(alignment: .firstTextBaseline) {
-                Text(credentialStatus == .pending ? "上次输入未确认" : credentialStatus?.rawValue ?? "密码状态未知")
+                Text(statusLabel)
                     .foregroundStyle(credentialStatus == .pending ? .orange : .secondary)
-                    .help(credentialStatus?.rawValue ?? "密码状态未知")
+                    .help(statusLabel)
                 Spacer()
                 Button(credentialStatus?.hasPIN == true ? "更改密码…" : "设置密码…") {
                     message = ""
                     editPasscode()
                 }
-                if credentialStatus?.hasPIN == true {
+                if let credentialStatus, credentialStatus != .missing {
                     Button("移除", role: .destructive) {
                         run {
-                            try await DeviceUnlockController.shared.configure(device, pin: nil)
+                            try await DeviceUnlockController.shared.configure(device, setting: .remove)
                             return ""
                         }
                     }
