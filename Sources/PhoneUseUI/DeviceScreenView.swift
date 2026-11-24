@@ -1,57 +1,6 @@
 import PhoneUseKit
 import SwiftUI
 
-/// Selection shows an idle screen until the user explicitly opens its preview.
-struct DeviceConnectionView: View {
-    let device: DeviceSummary
-    let isConnecting: Bool
-    let status: String?
-    let error: String?
-    let connect: () -> Void
-    let cancel: () -> Void
-
-    var body: some View {
-        VStack(spacing: 14) {
-            if isConnecting {
-                ProgressView()
-                    .controlSize(.small)
-                Text(status ?? "正在连接…")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                Button("取消", action: cancel)
-                    .glassButton()
-                    .accessibilityIdentifier("device.connection.cancel")
-            } else {
-                Image(systemName: device.deviceIcon)
-                    .font(.system(size: 52, weight: .ultraLight))
-                    .foregroundStyle(.tertiary)
-                    .padding(.bottom, 4)
-                Text(device.name)
-                    .font(.title3.weight(.semibold))
-                    .multilineTextAlignment(.center)
-                Text(error ?? "连接后即可查看并操作设备屏幕")
-                    .font(.callout)
-                    .foregroundStyle(error == nil ? Color.secondary : Color.orange)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(5)
-                    .frame(maxWidth: 360)
-                Button(error == nil ? "连接" : "重试", action: connect)
-                    .glassButton(prominent: true)
-                    .controlSize(.large)
-                    .padding(.top, 4)
-                    .accessibilityIdentifier("device.connect")
-            }
-        }
-        .padding(.horizontal, 32)
-        .padding(.vertical, 28)
-        .frame(minWidth: 260)
-        .glassCard(cornerRadius: 28)
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
 /// The live device screen in a device frame. Device controls live in the window toolbar.
 struct DeviceScreenView: View {
     @ObservedObject var screen: ScreenModel

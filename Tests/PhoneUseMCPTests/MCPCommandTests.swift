@@ -287,7 +287,17 @@ final class MCPCommandTests: XCTestCase {
         let bad = try await result("button", ["button": "siri"], session: session)
         XCTAssertEqual(bad["isError"] as? Bool, true)
         let ui = try await result("describe_ui", [:], session: session)
-        XCTAssertEqual(ui["isError"] as? Bool, true)
+        XCTAssertNil(ui["isError"])
+        XCTAssertEqual(session.calls.last, "tree")
+        let list = try await result("list_devices", [:], session: session)
+        let rows = (list["structuredContent"] as? [String: Any])?["devices"] as? [[String: Any]]
+        let capabilities = try XCTUnwrap(rows?.first?["capabilities"] as? [String])
+        XCTAssertTrue(capabilities.contains("describe_ui"))
+        XCTAssertFalse(capabilities.contains("element_targeting"))
+        XCTAssertFalse(capabilities.contains("type_text"))
+        let targeted = try await result("tap", ["id": "save"], session: session)
+        XCTAssertEqual(targeted["isError"] as? Bool, true)
+        XCTAssertEqual(session.calls.last, "tree")
     }
 
     func testGesturesSelectorsAndTextReachTheSharedSession() async throws {

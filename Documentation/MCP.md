@@ -14,7 +14,7 @@ PhoneUseKit 的共享设备会话执行；无需另装 sim-use、idb、XcodeBuil
    当前选中设备不可用时不会静默换到另一台设备。
    连接成功后会重新查询 `lock_state`。若为 `locked`，先按 `unlock_hint` 解锁，再启动应用或发送输入。若为 `unknown`，先观察当前界面。黑屏本身无法确认锁屏状态。
 3. iOS 模拟器和真机中的开发签名应用优先用 `describe_ui` 读取界面，并用 `id`、`label` 或 `label_contains` 定位。
-   真机中的系统/App Store/TestFlight 应用、Android 或自绘控件使用 `screenshot`，根据返回图像的坐标操作。
+   Android 可用同一工具读取当前窗口，按控件的像素坐标点击。iOS 真机中的系统/App Store/TestFlight 应用或未暴露无障碍节点的自绘控件使用 `screenshot`，根据返回图像的坐标操作。
 4. 操作后再次读取 UI 树或截图验证。返回 `input_sent: true` 仅表示输入已发送，
    `ui_change_verified` 仍为 `false`，不表示页面或字段已经按预期变化。
 
@@ -70,7 +70,7 @@ iOS 模拟器录制开始时的活动屏幕。iOS 真机按连接能力使用原
 ## 工具
 
 PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `describe_ui` 文本。
-先连接所选 iOS 设备，面板打开时每次读取完成后刷新：模拟器间隔 1 秒、真机间隔 3 秒，错误后至少等待 5 秒。支持暂停、立即刷新和复制。
+先连接所选设备。面板打开时，每次读取完成后，iOS 模拟器间隔 1 秒刷新，iOS 真机和 Android 设备间隔 3 秒刷新，错误后至少等待 5 秒。支持暂停、立即刷新和复制。
 切换页签、隐藏面板或进入紧凑窗口后停止读取；切换设备时清空旧内容，并忽略旧请求的迟到结果。
 读取失败会显示错误及上次成功更新时间，后续刷新继续尝试。它复用预览会话，单纯选中设备不会建立连接。
 
@@ -84,7 +84,7 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
 | `start_recording` | `device?` | 开始录制 MP4，返回 `recording_id`、设备标识和 Mac 上的 `local_path` |
 | `stop_recording` | `recording_id` | 按开始时返回的 ID 停止录制，等待文件写完后返回 `local_path` |
 | `screenshot` | `device?` | JPEG 图像、尺寸、平台、坐标单位与原点 |
-| `describe_ui` | `device?`, `format?: outline/json` | iOS 模拟器或真机开发签名应用的 UI 树；默认简洁文本，不附加原始私有对象 |
+| `describe_ui` | `device?`, `format?: outline/json` | 读取 Android 当前窗口、iOS 模拟器或 iOS 真机开发签名应用的 UI 树，默认返回简洁文本 |
 | `tap` | `x, y` 或一个元素选择器；`duration?` | 坐标点击支持可选按住时长；元素点击使用实时无障碍激活 |
 | `long_press` | `x, y, duration?` | 长按，默认 **0.8 秒** |
 | `touch_path` | `points, duration?, return_screen?` | 单指沿多个坐标连续拖动，全程一次按下和抬起 |
@@ -161,13 +161,17 @@ PhoneUse 在读取钥匙串后，从一次系统界面快照确认空密码框�
 - `screenshot` 返回的一个图像像素对应一个输入坐标：iOS 为 **points**，Android 为 **pixels**。
   原点为左上角，X 向右、Y 向下。坐标和截图使用同一尺寸。
 - iOS 坐标为设备的**原生竖屏 framebuffer** 坐标，Android 为当前显示坐标。
-  这与 sim-use 默认的方向校准 UI 坐标有区别；不要将横屏 UI 树的 frame 直接当作截图坐标。
-- 模拟器 `describe_ui` 的 frame 使用无障碍 UI 点坐标，`coordinateSpace` 为
+  这与 sim-use 默认的方向校准 UI 坐标有区别；不要将 iOS 模拟器横屏 UI 树的 frame 直接当作截图坐标。
+- Android 真机和模拟器通过 ADB 的 UI Automator 读取当前窗口。返回的 `coordinateSpace` 为
+  `display-pixels`，`frame` 与当前方向的截图使用同一像素坐标系，可取控件中心作为 `tap(x, y)` 的输入。
+  `type` 和 `id` 分别来自控件类名和资源 ID。`label` 优先使用内容描述，其次使用可见文本，两者不同时文本在 `value` 中。
+  密码控件省略描述和文本。
+- iOS 模拟器 `describe_ui` 的 frame 使用无障碍 UI 点坐标，`coordinateSpace` 为
   `accessibility-ui-points`。元素点击走无障碍激活，不靠猜测旋转或换算 frame。
 - 元素包含 `type`、`id`、`label`、`value`、`enabled`、`frame`、`depth`。
   安全文本框不返回其值。遍历最多 500 个元素、32 层；到达上限会返回 `truncated: true`。
   读取有超时限制，不自动重启模拟器或它的无障碍服务。
-- 真机使用 `coordinateSpace: unavailable`，不返回 `frame` 或 `value`，未报告的启用状态省略 `enabled`。
+- iOS 真机使用 `coordinateSpace: unavailable`，不返回 `frame` 或 `value`，未报告的启用状态省略 `enabled`。
   保留设备返回的角色名称用于 `element_type` 匹配，不通过坐标推测元素位置。
   层级查询使用 `_AXHierarchyElementsAttribute`，不移动检查器焦点，也不会为读取树主动滚动页面。
   真机读取/操作最多执行 30 秒（含排队，不含有限的清理时间）；截断树不能证明匹配唯一，因此拒绝按元素操作。
@@ -176,7 +180,7 @@ PhoneUse 在读取钥匙串后，从一次系统界面快照确认空密码框�
 
 ### 元素选择器和输入
 
-`tap` 和 `type_text` 接受以下三者之一：
+iOS 上的 `tap` 和 `type_text` 接受以下三者之一：
 
 ```json
 {"id": "login.email"}
@@ -247,7 +251,7 @@ iOS 真机的 UI 树和元素定位需要设备已配对、解锁、启用开发
 真机 `type_text` 使用当前依赖提供的临时 Universal HID 键盘，要求 **iOS 27+** 的屏幕流认证。
 它复用已有屏幕流，不停止其他消费者的流；临时硬件键盘可能暂时收起屏幕键盘，结束时释放按键并关闭键盘连接。
 不指定选择器时可向已聚焦输入框发送按键；指定选择器仍受开发签名限制。发送失败不自动重试。
-Android 暂不支持 UI 树、元素定位和直接文本输入，原有截图、坐标输入、按钮与应用启动能力不变。
+Android 可用 `describe_ui` 或截图定位，点击使用像素坐标，文本通过屏幕键盘输入。
 Framework 不依赖 MCP 或第三方工具，PhoneUse 和 Automation 仍保持相互独立。
 
 ## 参考来源

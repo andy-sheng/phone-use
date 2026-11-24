@@ -78,8 +78,6 @@ public struct DeviceUIOutlinePanel: View {
         self.screen = screen
     }
 
-    private var supportsOutline: Bool { device.map { !$0.isAndroid } ?? false }
-
     private var isConnected: Bool {
         guard let device else { return false }
         return device.isReady && screen.isShowingDevice(device.id) && screen.stream != nil
@@ -94,7 +92,7 @@ public struct DeviceUIOutlinePanel: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("describe_ui").font(.headline.monospaced())
-                    Text(!supportsOutline || !isConnected ? "等待可用的 iOS 连接" : isPaused ? "已暂停" : (device?.isSimulator == true ? "实时刷新 · 间隔 1 秒" : "实时刷新 · 间隔 3 秒"))
+                    Text(!isConnected ? "等待设备连接" : isPaused ? "已暂停" : (device?.isSimulator == true ? "实时刷新 · 间隔 1 秒" : "实时刷新 · 间隔 3 秒"))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -102,10 +100,10 @@ public struct DeviceUIOutlinePanel: View {
                     Label(isPaused ? "继续刷新" : "暂停刷新", systemImage: isPaused ? "play.fill" : "pause.fill")
                 }
                 .help(isPaused ? "继续刷新" : "暂停刷新")
-                .disabled(!isConnected || !supportsOutline)
+                .disabled(!isConnected)
                 Button { refreshGeneration += 1 } label: { Label("立即刷新", systemImage: "arrow.clockwise") }
                     .help("立即刷新")
-                    .disabled(isPaused || !isConnected || !supportsOutline || model.isRefreshing)
+                    .disabled(isPaused || !isConnected || model.isRefreshing)
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(model.outline, forType: .string)
@@ -129,8 +127,8 @@ public struct DeviceUIOutlinePanel: View {
             }
         }
         .task(id: pollingKey) {
-            guard let device, supportsOutline, isConnected, !isPaused else {
-                model.stop(clear: !isPaused || !isConnected || !supportsOutline)
+            guard let device, isConnected, !isPaused else {
+                model.stop(clear: !isPaused || !isConnected)
                 return
             }
             await model.run(deviceID: device.id, pollInterval: device.isSimulator ? .seconds(1) : .seconds(3)) { try await screen.uiTree(for: device.id) }
@@ -142,9 +140,6 @@ public struct DeviceUIOutlinePanel: View {
     private var content: some View {
         if device == nil {
             ContentUnavailableView("未选择设备", systemImage: "iphone")
-        } else if !supportsOutline {
-            ContentUnavailableView("此设备暂不支持界面结构", systemImage: "list.bullet.indent",
-                                   description: Text("describe_ui 支持 iOS；真机需要开发签名应用。"))
         } else if !isConnected {
             ContentUnavailableView("连接后查看界面结构", systemImage: "link",
                                    description: Text("开始查看设备屏幕后自动刷新。"))

@@ -1,8 +1,8 @@
 import PhoneUseKit
 import SwiftUI
 
-/// The idle Apple device stage, shared by simulator startup and physical screen sharing.
-struct AppleDeviceStandbyView: View {
+/// The device stage before starting a simulator or opening a screen preview.
+struct DeviceStandbyView: View {
     let device: DeviceSummary
     let isConnecting: Bool
     let status: String?
@@ -20,7 +20,8 @@ struct AppleDeviceStandbyView: View {
                 Text(device.name)
                     .font(.title3.weight(.semibold))
                     .multilineTextAlignment(.center)
-                Text([device.osDescription, device.isSimulator ? "Simulator" : nil]
+                Text([device.osDescription ?? device.platformName,
+                      device.isSimulator || device.connection == "emulator" ? device.connectionDescription : nil]
                     .compactMap { $0 }.joined(separator: " · "))
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -74,7 +75,7 @@ struct AppleDeviceStandbyView: View {
                     .padding(.bottom, 6)
             }
             .overlay(alignment: .top) {
-                if !device.isPad {
+                if frame == .iPhone {
                     Capsule().fill(.black.opacity(0.85)).frame(width: 20, height: 5).padding(.top, 6)
                 }
             }

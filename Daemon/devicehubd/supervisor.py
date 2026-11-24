@@ -39,9 +39,10 @@ from pymobiledevice3.services.mobile_image_mounter import (
 )
 
 from devicehubd import VERSION, android_sandbox, identity, protocol
-from devicehubd.app_install import install_apk, package_file
-from devicehubd.android_unlock import parse_identity, parse_keyguard
 from devicehubd.android import AndroidAttachment, AndroidDiscovery
+from devicehubd.android_ui import DUMP_COMMAND, ui_tree
+from devicehubd.android_unlock import parse_identity, parse_keyguard
+from devicehubd.app_install import install_apk, package_file
 from devicehubd.protocol import RpcError
 from devicehubd.simulator import SIMULATOR, SimulatorAttachment, SimulatorDiscovery
 from devicehubd.transports import (
@@ -191,6 +192,7 @@ class WorkerHandle:
     next_id: int = 1
     info: dict[str, Any] = field(default_factory=dict)
     command_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    hierarchy_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     stopping: bool = False
     stop_task: Optional[asyncio.Task[None]] = None
 
@@ -821,8 +823,20 @@ class Supervisor:
         if record.platform != "android":
             raise RpcError("unsupported", "androidCommand requires an Android device")
         worker = await self._worker(record.udid)
-        # Queue one operation at a time even when GUI and automation share a device.
-        async with worker.command_lock:
+        action = params.get("action")
+        if action == "describeUI":
+            # UI Automator waits for idle. Keep preview touches and key releases responsive.
+            try:
+                async with asyncio.timeout(15), worker.hierarchy_lock:
+                    dump = await self.android.command("-s", record.adb_serial, "shell", "-tt", *DUMP_COMMAND, timeout=10)
+                    return ui_tree(dump)
+            except TimeoutError:
+                raise RpcError("timeout", "Android UI hierarchy timed out. Retry when the screen is settled.") from None
+            except OSError:
+                raise RpcError("uiHierarchyUnavailable", "Cannot read the UI hierarchy through ADB. Check the device connection.") from None
+        # Unlock also uses UI Automator, which allows only one inspection at a time.
+        inspection = worker.hierarchy_lock if action in {"prepareUnlock", "submitUnlockPIN"} else contextlib.nullcontext()
+        async with inspection, worker.command_lock:
             try:
                 result = await worker.call("androidCommand", params, timeout=65)
                 if params.get("action") in {"rotate", "restoreRotation"} and "display" in result:

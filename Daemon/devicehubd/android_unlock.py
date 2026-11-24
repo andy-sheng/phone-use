@@ -1,8 +1,8 @@
 """System keyguard checks. Only fixed, non-secret arguments are passed to ADB."""
 import re
 import subprocess
-import xml.etree.ElementTree as ET
 
+from devicehubd.android_ui import DUMP_COMMAND, hierarchy_root
 from devicehubd.protocol import RpcError
 
 
@@ -56,12 +56,8 @@ def pin_prompt_visible(adb, serial):
 
 def pin_keys(dump, *, filled=False):
     """Pixel centers from a single SystemUI layout. Require an empty entry before typing."""
-    start, end = dump.find("<hierarchy"), dump.find("</hierarchy>")
-    if start < 0 or end < start:
-        return None
-    try:
-        root = ET.fromstring(dump[start:end + len("</hierarchy>")])
-    except ET.ParseError:
+    root = hierarchy_root(dump)
+    if root is None:
         return None
     prefix = "com.android.systemui:id/"
     keys = {}
@@ -103,5 +99,5 @@ def pin_keys(dump, *, filled=False):
 
 def read_pin_keys(adb, serial, *, filled=False):
     # /dev/tty returns XML over ADB without leaving a UI dump on device storage.
-    dump = shell(adb, serial, "uiautomator", "dump", "/dev/tty", tty=True)
+    dump = shell(adb, serial, *DUMP_COMMAND, tty=True)
     return pin_keys(dump, filled=filled)

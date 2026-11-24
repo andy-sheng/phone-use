@@ -117,6 +117,12 @@ actor AndroidDeviceConnection: DeviceConnection {
         _ = try await request("press", params)
     }
 
+    func uiTree() async throws -> UITree {
+        try requireOpen()
+        let data = try await request("describeUI", [:])
+        return try JSONDecoder().decode(UITree.self, from: data)
+    }
+
     func screenshot() async throws -> CGImage {
         try requireUsableDisplay()
         let expected = display

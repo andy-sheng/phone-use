@@ -301,23 +301,16 @@ public struct DeviceWorkspace<Panel: View>: View {
             } else if let request = managingDevice, request.device.id == device.id, request.action.interruptsPreview {
                 ProgressView(request.action.title)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if !device.isAndroid && (device.isReady || device.canStartSimulator) {
-                AppleDeviceStandbyView(device: device,
-                                       isConnecting: screen.isShowingDevice(device.id) && screen.isConnecting,
-                                       status: screen.isShowingDevice(device.id) ? screen.status : nil,
-                                       error: screen.isShowingDevice(device.id) ? screen.connectionError : nil,
-                                       connect: { requestPreview(device) },
-                                       cancel: { screen.cancelConnection() })
-            } else if !device.isReady {
+            } else if device.isReady || device.canStartSimulator {
+                DeviceStandbyView(device: device,
+                                  isConnecting: screen.isShowingDevice(device.id) && screen.isConnecting,
+                                  status: screen.isShowingDevice(device.id) ? screen.status : nil,
+                                  error: screen.isShowingDevice(device.id) ? screen.connectionError : nil,
+                                  connect: { requestPreview(device) },
+                                  cancel: { screen.cancelConnection() })
+            } else {
                 DeviceSetupView(device: device, pairWirelessly: { showingPairing = true })
                     .padding(isCompact ? 16 : 24)
-            } else {
-                DeviceConnectionView(device: device,
-                                     isConnecting: screen.isShowingDevice(device.id) && screen.isConnecting,
-                                     status: screen.isShowingDevice(device.id) ? screen.status : nil,
-                                     error: screen.isShowingDevice(device.id) ? screen.connectionError : nil,
-                                     connect: { requestPreview(device) },
-                                     cancel: { screen.cancelConnection() })
             }
         } else {
             placeholder

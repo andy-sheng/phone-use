@@ -56,7 +56,7 @@ public struct UIElement: Codable, Sendable {
 public struct UITree: Codable, Sendable {
     public let elements: [UIElement]
     public let truncated: Bool
-    /// Simulator AX frames are visual UI points; physical AX Audit uses "unavailable".
+    /// Android frames use display pixels, simulator frames use UI points, and physical iOS omits geometry.
     public let coordinateSpace: String
 
     public var outline: String {

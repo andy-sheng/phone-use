@@ -589,6 +589,22 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(method=method), self.assertRaises(RpcError):
                 await self.supervisor.dispatch(method, {"udid": record.udid}, None)
 
+    async def test_describe_ui_reads_the_selected_device_outside_the_input_queue(self):
+        record = self.android_record()
+        worker = SimpleNamespace(command_lock=asyncio.Lock(), hierarchy_lock=asyncio.Lock())
+        self.supervisor._worker = AsyncMock(return_value=worker)
+        command = AsyncMock(return_value='<hierarchy><node class="View" /></hierarchy>')
+        self.supervisor.android.command = command
+        async with worker.command_lock:
+            tree = await asyncio.wait_for(self.supervisor.dispatch(
+                "androidCommand", {"action": "describeUI", "udid": record.udid}, None), 1)
+        self.assertEqual(tree["elements"], [{"type": "View", "depth": 0}])
+        command.assert_awaited_once_with("-s", "x", "shell", "-tt", "uiautomator", "dump", "/dev/tty", timeout=10)
+        command.side_effect = TimeoutError()
+        with self.assertRaisesRegex(RpcError, "timed out"):
+            await self.supervisor.android_command({"action": "describeUI", "udid": record.udid})
+        self.assertFalse(worker.hierarchy_lock.locked())
+
     async def test_timeout_stops_worker_without_retry(self):
         record = self.android_record()
         worker = SimpleNamespace(command_lock=asyncio.Lock(), call=AsyncMock(side_effect=asyncio.TimeoutError), stop=MagicMock())

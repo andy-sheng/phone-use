@@ -116,13 +116,13 @@ extension MCPCommand {
             let statuses = await access.lockStatuses(for: devices)
             let rows = devices.enumerated().map { index, device in
                 let row = encoded[index].merging(statuses[index].fields(canUnlock: workspace?.unlock != nil)) { _, new in new }
-                var capabilities = ["screenshot", "tap", "long_press", "swipe", "touch_path", "gesture", "button", "launch_app", "install_app"]
+                var capabilities = ["screenshot", "describe_ui", "tap", "long_press", "swipe", "touch_path", "gesture", "button", "launch_app", "install_app"]
                 if workspace?.unlock != nil { capabilities.append("unlock_device") }
                 if device.isSimulator { capabilities.append("start_recording") }
-                if !device.isAndroid { capabilities += ["describe_ui", "element_targeting", "list_management_actions"] }
+                if !device.isAndroid { capabilities += ["element_targeting", "list_management_actions"] }
                 if device.isSimulator || !device.isAndroid && device.osMajorVersion >= 27 { capabilities.append("type_text") }
                 return row.merging(["capabilities": capabilities, "selected": device.udid == selection,
-                    "ui_scope": device.isAndroid ? "unavailable" : device.isSimulator ? "accessibility" : "development-signed foreground app (get-task-allow=true); no element geometry",
+                    "ui_scope": device.isAndroid ? "active window accessibility" : device.isSimulator ? "accessibility" : "development-signed foreground app (get-task-allow=true); no element geometry",
                     "coordinate_unit": device.isAndroid ? "pixels" : "points"]) { _, new in new }
             }
             return ["content": [mcpText(try json(rows))], "structuredContent": ["devices": rows]]
@@ -276,9 +276,9 @@ extension MCPCommand {
             if selected.isAndroid && button == .siri || !selected.isAndroid && (button == .back || button == .appSwitch) {
                 throw ToolFailure(message: "Button \(button.rawValue) is unavailable on \(selected.platform.rawValue). back/recents are Android-only; siri is iOS-only.")
             }
-        case .describeUI, .activate, .typeText:
+        case .activate, .typeText:
             guard !selected.isAndroid else {
-                throw ToolFailure(message: "UI trees, element targeting and direct text input are currently unavailable on Android. Use screenshot, coordinate tap and the on-screen keyboard for this device.")
+                throw ToolFailure(message: "Element targeting and direct text input are currently unavailable on Android. Use display-pixel taps and the on-screen keyboard for this device.")
             }
         default: break
         }
@@ -334,7 +334,7 @@ extension MCPCommand {
         default: throw ToolFailure(message: "Unsupported action")
         }
         if postDelay > .zero { try await Task.sleep(for: postDelay) }
-        var content = [mcpText(summary + " Verify the resulting UI with describe_ui (supported iOS apps) or screenshot before the next action.")]
+        var content = [mcpText(summary + " Verify the resulting UI with describe_ui or screenshot before the next action.")]
         var output: [String: Any] = ["device": selected.udid, "input_sent": true, "ui_change_verified": false]
         if returnScreen {
             do {
