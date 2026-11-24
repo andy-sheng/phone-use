@@ -53,8 +53,8 @@ final class CompactLayoutTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.setContentSize(CGSize(width: 1040, height: 720))
         window.toolbar = NSToolbar(identifier: "CompactLayoutTests")
+        window.toolbarStyle = .unified
         window.title = "Test Device"
-        window.subtitle = "USB · 60 fps"
         window.titlebarAppearsTransparent = false
         window.titlebarSeparatorStyle = .line
         window.center()
@@ -63,6 +63,9 @@ final class CompactLayoutTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(550))
         window.contentView?.layoutSubtreeIfNeeded()
 
+        // Set the subtitle after the hosting controller finishes its initial window layout.
+        window.subtitle = "USB · 60 fps"
+        let originalSubtitle = window.subtitle
         let originalBackground = window.backgroundColor
         let originalFullSizeContent = window.styleMask.contains(.fullSizeContentView)
         let original = window.frame
@@ -91,7 +94,7 @@ final class CompactLayoutTests: XCTestCase {
                 XCTAssertEqual(window.backgroundColor, .underPageBackgroundColor)
                 XCTAssertTrue(window.toolbar?.isVisible == true)
                 XCTAssertEqual(window.title, "Test Device")
-                XCTAssertEqual(window.subtitle, "USB · 60 fps")
+                XCTAssertEqual(window.subtitle, originalSubtitle)
             }
 
             controller.setCompact(false, screenAspectRatio: ratio, reduceMotion: reduceMotion)
