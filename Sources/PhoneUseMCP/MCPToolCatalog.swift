@@ -61,7 +61,29 @@ enum MCPToolCatalog {
             if op.needsIdentifier { fields["device"] = ["type": "string", "description": "Exact device identifier from list_devices."] }
             return tool(op.rawValue, op.description, fields, required: required, action: op != .available, destructive: op.disruptive)
         }
-        return management + [
+        let webSession: [String: Any] = ["device": device, "session_id": string]
+        let cursor: [String: Any] = ["type": "integer", "minimum": 0, "default": 0]
+        let webTools = [
+            tool("describe_web_protocol", "List WebKit domains or look up command signatures and events for one domain. Uses this Mac's installed Safari declarations closest to the iOS version. Actual availability is determined by the target.",
+                 ["device": device, "domain": string], action: false),
+            tool("send_web_command", "Send a native WebKit Inspector Domain.command, with a JSON params object. Look up its signature with describe_web_protocol. Target defaults to the page (Browser and Target use root). Returns result or a data_id for read_web_data.",
+                 webSession.merging(["method": string, "params": ["type": "object"], "target": string]) { _, new in new },
+                 required: ["session_id", "method"], destructive: true),
+            tool("read_web_events", "Read protocol notifications after a cursor, optionally filtered by domain. Enable the relevant domain first. Each event carries its target and parameters in result or data_id. Use next_cursor for the next call.",
+                 webSession.merging(["after": cursor, "domain": string]) { _, new in new }, required: ["session_id"], action: false),
+            tool("read_web_data", "Read a chunk of a large reply or event by data_id. Concatenate text in next_offset order until length, then JSON-decode it. Data expires on eviction or final detach.",
+                 webSession.merging(["data_id": string, "offset": cursor]) { _, new in new }, required: ["session_id", "data_id"], action: false),
+            tool("get_web_dom", "Get the DOM document and initial child nodes. Use nodeId with DOM commands and get_web_css_styles.",
+                 webSession, required: ["session_id"], action: false),
+            tool("get_web_css_styles", "Read computed CSS properties of a DOM node. Use a fresh node_id from get_web_dom or DOM.querySelector.",
+                 webSession.merging(["node_id": ["type": "integer", "minimum": 1]]) { _, new in new }, required: ["session_id", "node_id"], action: false),
+            tool("start_web_network", "Enable Network notifications for the page. Read request and response events with read_web_events and domain Network.",
+                 webSession, required: ["session_id"]),
+            tool("get_web_response_body", "Read a completed network response by the requestId reported in Network events. The reply identifies base64-encoded bodies.",
+                 webSession.merging(["request_id": string]) { _, new in new }, required: ["session_id", "request_id"], action: false),
+            tool("reload_web_page", "Reload the attached web page.", webSession, required: ["session_id"], destructive: true),
+        ]
+        return management + webTools + [
             tool("unlock_device", "Unlock the selected iOS or Android device or simulator without a PIN when possible, or with the PIN saved by its owner in PhoneUse on this Mac. Never supply a PIN. Check status; if manual intervention is required, stop and ask the user.", ["device": device]),
             tool("list_simulator_options", "List installed iOS runtimes and their compatible iPhone and iPad models. Use their identifiers with create_simulator.",
                  [:], action: false),
@@ -99,6 +121,17 @@ enum MCPToolCatalog {
             tool("list_devices", "List attached iOS/Android devices and custom, active or previously used iOS simulators, including shut down simulators (connection: simulator). Each row reports lock_state separately from connection readiness (locked, unlocked or unknown). start_simulator can boot one. Use select_device to choose a device, then connect_device to connect it and request its UI preview.", [:], action: false),
             tool("select_device", "Select a discovered device in PhoneUse, like clicking its sidebar row. Does not connect. May select a device that still needs setup. Selection is shared with the UI and all MCP clients; subsequent calls without device use this selection.", ["device": device], required: ["device"]),
             tool("connect_device", "Connect the specified or currently selected ready device and request its PhoneUse preview, like the UI Connect button. Waits for the device session to open and reuses it when available. Pairing, trust and Developer Mode are handled separately. Without a selection, only one ready device may be chosen. Read the result before continuing. It refreshes lock_state; when locked, follow unlock_hint before launching apps or sending input. It checks the existing web preview and provides the one-time handoff to your agent's built-in web preview when a verified URL is available. The device connection can succeed independently of the web preview.", ["device": device]),
+            tool("list_web_pages", "List inspectable Safari tabs and WebViews on a physical iPhone or iPad. Enable Web Inspector in Safari settings on the device. Returns page_id, bundle_id, title, URL and attachment status.",
+                 ["device": device], action: false),
+            tool("attach_web_page", "Attach to a page from list_web_pages and start buffering console events. Returns a page-specific session_id for reading logs, evaluating JavaScript and detaching.",
+                 ["device": device, "page_id": string], required: ["page_id"]),
+            tool("read_web_console", "Read up to 32 console events after a cursor. Start at zero. Pass next_cursor on the next call. dropped counts evicted events and has_more indicates another batch.",
+                 ["device": device, "session_id": string, "after": ["type": "integer", "minimum": 0, "default": 0]],
+                 required: ["session_id"], action: false),
+            tool("evaluate_web_javascript", "Execute JavaScript in the attached page. May modify page state. Returns the WebKit type and a by-value result when available (32 KiB maximum). Expressions are synchronous and limited to 8192 UTF-8 bytes.",
+                 ["device": device, "session_id": string, "expression": string], required: ["session_id", "expression"], destructive: true),
+            tool("detach_web_page", "Release the Web Inspector session and its console buffer so another debugger or page can attach.",
+                 ["device": device, "session_id": string], required: ["session_id"]),
             tool("get_web_preview", "Verify an already running local web preview for this device and return its URL on the PhoneUse Mac. Use this when asked for the preview URL, to recheck after starting the service, or to use a custom port. A verified URL in the connect_device result can be used directly.",
                  ["device": device, "port": ["type": "integer", "minimum": 1, "maximum": 65535, "default": 8765,
                     "description": "Port of the existing phone-use serve process on the Mac running PhoneUse."]], action: false),

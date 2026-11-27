@@ -26,7 +26,7 @@ git lfs pull
 
 ## 开发运行
 
-需要 Apple silicon Mac、macOS 15 或更新版本、Xcode 和 Python 3.13。生成 Xcode 工程还需要 XcodeGen。Android 支持使用独立的 Android SDK Platform-Tools，无需安装 Android Studio；`setup-dev.sh` 会下载并校验固定版本的 ADB 和 scrcpy。
+需要 Apple silicon Mac、macOS 15 或更新版本、Xcode 和 Python 3.13。生成 Xcode 工程还需要 XcodeGen。Android 支持使用独立的 Android SDK Platform-Tools，无需安装 Android Studio；`setup-dev.sh` 会下载并校验固定版本的 ADB 和 scrcpy，并准备 PhoneUse 专用的 Node.js 和官方 Chrome DevTools MCP。发布版内置网页调试运行时。
 
 ```sh
 scripts/setup-dev.sh
@@ -185,7 +185,9 @@ Claude Desktop、Cursor 等使用 JSON 配置的客户端，在 MCP 配置中加
 
 已有配置如引用 `DeviceHub.app` 或 `devicehub-mcp`，需要更新为上述路径；设置页会将其显示为「指向其他位置」，点击「更新」即可。设备未就绪时，工具错误会提示助手请用户在 PhoneUse 中完成配对等准备。
 
-`phone-use-mcp` 只是转发层：`initialize`、`tools/list` 由它直接应答，工具调用通过 `~/Library/Application Support/DeviceHub/mcp.sock`（可用 `DEVICEHUB_MCP_SOCKET` 覆盖）转交应用，在应用进程内执行，与预览共用守护进程和设备会话。首次调用工具时若应用未运行，会以 `--background` 在后台启动应用，不显示窗口、不抢占焦点；点击 Dock 图标或「窗口」菜单可打开主窗口。没有窗口且没有 MCP 客户端连接时，应用在约一分钟后自动退出；有客户端连接时关闭主窗口不会退出应用。应用退出时尚未返回的调用会以工具错误结束，下一次调用会重新连接并按需再次启动应用。
+默认目录提供 5 个常用设备工具和 `search_tools`、`run_tool`。需要调试网页、操作应用或管理模拟器时，先检索操作，再按返回的参数调用。已有客户端需要完整目录时可传入 `--all-tools`。
+
+`initialize`、`tools/list` 和工具检索由 `phone-use-mcp` 本地应答。原生工具调用通过 `~/Library/Application Support/DeviceHub/mcp.sock`（可用 `DEVICEHUB_MCP_SOCKET` 覆盖）转交应用，在应用进程内执行，与预览共用守护进程和设备会话。首次调用工具时若应用未运行，会以 `--background` 在后台启动应用，不显示窗口、不抢占焦点；点击 Dock 图标或「窗口」菜单可打开主窗口。没有窗口且没有 MCP 客户端连接时，应用在约一分钟后自动退出；有客户端连接时关闭主窗口不会退出应用。应用退出时尚未返回的调用会以工具错误结束，下一次调用会重新连接并按需再次启动应用。
 
 `DEVICEHUB_APP` 可指定要启动的 `.app` 或 `phone-use-app` 可执行文件；SwiftPM 构建中默认使用同目录的 `phone-use-app`。命令行 `phone-use` 仍直接连接守护进程，需要应用已在运行。
 

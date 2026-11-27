@@ -1002,7 +1002,7 @@ class Supervisor:
             if worker is not None:
                 await worker.call("stopMirror", {})
             return {}
-        if method in WORKER_SETTINGS_METHODS | WORKER_UI_METHODS:
+        if method in WORKER_SETTINGS_METHODS | WORKER_UI_METHODS | {"webInspector"}:
             self._ios_record(udid)
             worker = await self._worker(udid)
             forwarded = {key: value for key, value in params.items() if key != "udid"}

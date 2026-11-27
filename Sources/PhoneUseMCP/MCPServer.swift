@@ -11,6 +11,8 @@ public enum MCPServer {
     public static let name = "phone-use"
     public static let version = "0.3.0"
 
+    public static var toolDefinitions: [[String: Any]] { MCPToolCatalog.definitions }
+
     /// Answers requests that need no device: `initialize`, `ping` and `tools/list`.
     /// Returns nil for notifications and for `tools/call`.
     public static func localReply(to message: [String: Any]) -> [String: Any]? {
@@ -22,7 +24,7 @@ public enum MCPServer {
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": [String: Any]()],
                 "serverInfo": ["name": name, "version": version],
-                "instructions": "Call list_devices. For a shut down simulator, call start_simulator by identifier and wait for ready. Select the device with select_device, then call connect_device. " + MCPWebPreview.workflowInstructions + " Check lock_state in list_devices and again in connect_device. When locked, follow unlock_hint before launching apps or sending input. When lock_state is unknown, inspect the current UI first. A black screenshot alone cannot establish the lock state. Selection is shared with the UI and all clients; pass device explicitly when agents run concurrently. Observe with describe_ui (Android or iOS; physical iOS requires a development-signed foreground app) or screenshot. Prefer fresh id/label selectors for iOS element taps. Verify the resulting UI after every action; input delivery is not proof of a UI change. Coordinates are iOS native portrait points or Android display pixels; durations and delays are seconds. Physical iOS UI trees and selectors require get-task-allow=true and omit geometry. Physical US-keyboard type_text requires iOS 27+ (500 characters per call); simulator typing accepts 10000 characters.",
+                "instructions": "When search_tools is available, use it to find additional operations and their arguments, then invoke them with run_tool. Call list_devices. For a shut down simulator, call start_simulator by identifier and wait for ready. Select the device with select_device, then call connect_device. " + MCPWebPreview.workflowInstructions + " Check lock_state in list_devices and again in connect_device. When locked, follow unlock_hint before launching apps or sending input. When lock_state is unknown, inspect the current UI first. A black screenshot alone cannot establish the lock state. Selection is shared with the UI and all clients; pass device explicitly when agents run concurrently. Observe with describe_ui (Android or iOS; physical iOS requires a development-signed foreground app) or screenshot. Prefer fresh id/label selectors for iOS element taps. Verify the resulting UI after every action; input delivery is not proof of a UI change. Coordinates are iOS native portrait points or Android display pixels; durations and delays are seconds. Physical iOS UI trees and selectors require get-task-allow=true and omit geometry. Physical US-keyboard type_text requires iOS 27+ (500 characters per call); simulator typing accepts 10000 characters.",
             ])
         case "ping":
             return result(id, [:])

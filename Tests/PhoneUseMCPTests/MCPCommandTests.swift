@@ -126,11 +126,53 @@ final class MCPCommandTests: XCTestCase {
         XCTAssertEqual(output["unlock_verified"] as? Bool, false)
     }
 
+    func testWebInspectorRoutesPageEvaluationWithoutOpeningPreview() async throws {
+        let device = try testDevice("usb-one", connection: "usb")
+        var access = MCPDeviceAccess(devices: { [device] }, session: { _ in
+            XCTFail("Web Inspector should use the device worker directly")
+            throw DeviceHubError.connectionClosed
+        })
+        let token = UUID().uuidString
+        access.webInspector = { id, request in
+            XCTAssertEqual(id, device.udid)
+            guard case .evaluate(let session, let expression) = request else {
+                XCTFail("Expected Web Inspector evaluation"); throw DeviceHubError.connectionClosed
+            }
+            XCTAssertEqual(session, token)
+            XCTAssertEqual(expression, "document.title")
+            return Data(#"{"type":"string","value":"Fixture"}"#.utf8)
+        }
+        let command = try MCPCommand(name: "evaluate_web_javascript", arguments: [
+            "device": device.udid, "session_id": token, "expression": "document.title",
+        ])
+        let result = try await command.execute(access: access)
+        let output = try XCTUnwrap(result["structuredContent"] as? [String: Any])
+        XCTAssertEqual(output["device"] as? String, device.udid)
+        XCTAssertEqual(output["value"] as? String, "Fixture")
+    }
+
+    func testWebProtocolPreservesNestedParametersAndRejectsInvalidRequests() throws {
+        let token = UUID().uuidString
+        let args: [String: Any] = ["session_id": token, "method": "Debugger.setBreakpoint",
+                                   "params": ["location": ["scriptId": "7", "lineNumber": 2]], "target": "page:1"]
+        let command = try MCPCommand(name: "send_web_command", arguments: args)
+        guard case .webInspector(.command(let session, let method, let data, let target)) = command.action else {
+            return XCTFail("Expected native protocol command")
+        }
+        XCTAssertEqual(session, token)
+        XCTAssertEqual(method, "Debugger.setBreakpoint")
+        XCTAssertEqual(target, "page:1")
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: data) as? NSDictionary), args["params"] as? NSDictionary)
+        for bad in [["method": "DOM"], ["params": [1]], ["params": NSNull()]] as [[String: Any]] {
+            XCTAssertThrowsError(try MCPCommand(name: "send_web_command", arguments: args.merging(bad) { _, new in new }))
+        }
+    }
+
     func testCatalogAndLegacyAliases() throws {
         let reply = MCPServer.localReply(to: ["id": 1, "method": "tools/list"])!
         let tools = (reply["result"] as! [String: Any])["tools"] as! [[String: Any]]
         let names = Set(tools.compactMap { $0["name"] as? String })
-        XCTAssertEqual(names, Set(MCPManagement.allCases.map(\.rawValue)).union(["list_simulator_options", "create_simulator", "rotate_simulator", "set_simulator_posture", "touch_path", "get_device_settings", "set_appearance", "set_location", "set_audio", "select_device", "connect_device", "get_web_preview", "list_devices", "unlock_device", "start_recording", "stop_recording", "screenshot", "describe_ui", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "install_app", "type_text", "list_apps", "list_sandbox_files", "read_sandbox_file", "download_sandbox_file"]))
+        XCTAssertEqual(names, Set(MCPManagement.allCases.map(\.rawValue)).union(["list_simulator_options", "create_simulator", "rotate_simulator", "set_simulator_posture", "touch_path", "get_device_settings", "set_appearance", "set_location", "set_audio", "select_device", "connect_device", "get_web_preview", "describe_web_protocol", "send_web_command", "read_web_events", "read_web_data", "get_web_dom", "get_web_css_styles", "start_web_network", "get_web_response_body", "reload_web_page", "list_web_pages", "attach_web_page", "read_web_console", "evaluate_web_javascript", "detach_web_page", "list_devices", "unlock_device", "start_recording", "stop_recording", "screenshot", "describe_ui", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "install_app", "type_text", "list_apps", "list_sandbox_files", "read_sandbox_file", "download_sandbox_file"]))
         XCTAssertNotNil(MCPServer.encode(reply), "every schema must remain JSON serializable")
         let handoffTools = tools.filter { ($0["description"] as? String)?.contains("handoff") == true }
         XCTAssertEqual(handoffTools.compactMap { $0["name"] as? String }, ["connect_device"])
@@ -142,6 +184,10 @@ final class MCPCommandTests: XCTestCase {
     func testInvalidArgumentsAreRejectedBeforePreparingOrOpeningDevices() async throws {
         let session = try TestSession()
         let invalid: [(String, [String: Any])] = [
+            ("attach_web_page", [:]), ("evaluate_web_javascript", ["session_id": UUID().uuidString]),
+            ("read_web_console", ["session_id": UUID().uuidString, "after": -1]),
+            ("read_web_console", ["session_id": UUID().uuidString, "after": 1.5]),
+            ("detach_web_page", ["session_id": "invalid"]),
             ("create_simulator", [:]), ("create_simulator", ["runtime": "iOS"]),
             ("create_simulator", ["device_type": "iPhone", "runtime": 17]),
             ("list_simulator_options", ["device": "unrelated"]),

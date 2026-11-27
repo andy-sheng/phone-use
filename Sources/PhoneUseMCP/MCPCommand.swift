@@ -40,6 +40,7 @@ struct MCPCommand {
         case touchPath([CGPoint], Duration)
         case startRecording, stopRecording(UUID)
         case webPreview(UInt16)
+        case webInspector(DaemonClient.WebInspectorRequest)
         case describeUI(json: Bool)
         case activate(UISelector)
         case typeText(String, UISelector?)
@@ -155,6 +156,10 @@ struct MCPCommand {
                 return CGPoint(x: x, y: y)
             }
             action = .touchPath(path, try duration(default: 0.5)!)
+        case "list_web_pages", "attach_web_page", "read_web_console", "evaluate_web_javascript", "detach_web_page",
+             "describe_web_protocol", "send_web_command", "read_web_events", "read_web_data", "get_web_dom",
+             "get_web_css_styles", "start_web_network", "get_web_response_body", "reload_web_page":
+            action = .webInspector(try Self.inspectorRequest(name, arguments))
         case "get_web_preview":
             let port = try Self.optionalNumber(arguments, "port", range: 1...65535) ?? 8765
             guard port.rounded() == port else { throw ToolFailure(message: "'port' must be an integer from 1 to 65535.") }

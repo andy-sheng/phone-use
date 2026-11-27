@@ -94,19 +94,42 @@ enum AppLauncher {
     }
 }
 
+if CommandLine.arguments.dropFirst().first == "chrome-devtools" {
+    do {
+        try await startChromeDevTools(arguments: Array(CommandLine.arguments.dropFirst(2)))
+    } catch {
+        FileHandle.standardError.write(Data("phone-use-mcp chrome-devtools: \(error)\n".utf8))
+        exit(1)
+    }
+}
+
 let standardOutput = StandardOutput()
+let arguments = CommandLine.arguments.dropFirst()
+let chromeCatalog = ChromeTools.loadCatalog()
+let discovery = ToolDiscovery(tools: MCPServer.toolDefinitions + chromeCatalog, full: arguments.contains("--all-tools"))
+let chromeTools = ChromeTools(catalog: chromeCatalog, arguments: arguments.filter { $0 != "--all-tools" }, output: standardOutput)
 let bridge = MCPBridge(launchApp: { try await AppLauncher.launch() },
                        output: { standardOutput.write($0) })
+
+func receive(_ data: Data) async {
+    switch discovery.route(data) {
+    case .reply(let message):
+        if let reply = MCPServer.encode(message) { standardOutput.write(reply) }
+    case .forward(let line):
+        if !(await chromeTools.receive(line)) { await bridge.receive(line) }
+    }
+}
 
 // Split on LF only: JSON may carry U+2028 and other characters `lines` would also break on.
 var line = Data()
 for try await byte in FileHandle.standardInput.bytes {
     if byte == 0x0A {
-        await bridge.receive(line)
+        await receive(line)
         line.removeAll(keepingCapacity: true)
     } else {
         line.append(byte)
     }
 }
-if !line.isEmpty { await bridge.receive(line) }
+if !line.isEmpty { await receive(line) }
+await chromeTools.finish()
 await bridge.finish()

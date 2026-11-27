@@ -33,6 +33,10 @@ targets:
     platform: macOS
     sources:
       - path: Sources/PhoneUseApp
+        excludes:
+          - Resources/phoneuse_chrome_mcp.py
+      - path: Sources/PhoneUseApp/Resources/phoneuse_chrome_mcp.py
+        buildPhase: resources
       # Icon Composer document; Xcode compiles it into Assets.car plus an .icns for macOS 15.
       - path: Support/AppIcon.icon
         type: file
@@ -109,6 +113,10 @@ targets:
           - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/python"
         script: |
           [[ "${DEVICEHUB_EMBED_DAEMON}" == "YES" ]] || exit 0
+          set -e
+          dest="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/chrome-mcp"
+          "${SRCROOT}/.venv-daemon/bin/python" "${SRCROOT}/scripts/prepare-chrome-mcp.py" --bundle-dir "$dest"
+          codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" --options runtime --entitlements "${SRCROOT}/Support/Node.entitlements" "$dest/node"
           exec /bin/zsh "${SRCROOT}/scripts/embed-daemon.sh" "${TARGET_BUILD_DIR}/${WRAPPER_NAME}" "${EXPANDED_CODE_SIGN_IDENTITY:--}"
 
   phone-use-mcp:

@@ -43,6 +43,8 @@ def sign(app, identity, entitlements=ROOT / "Support/DeviceHub.entitlements"):
         # can carry get-task-allow, which must never survive a release re-sign.
         options = (["--entitlements", str(ROOT / "Support/Python.entitlements")]
                    if path.parent == python_bin else ["--preserve-metadata=identifier"])
+        if path == app / "Contents/Resources/chrome-mcp/node":
+            options = ["--entitlements", str(ROOT / "Support/Node.entitlements")]
         run(*base, *options, str(path))
         if index % 25 == 0:
             print(f"Signed {index}/{len(native)} native files", flush=True)

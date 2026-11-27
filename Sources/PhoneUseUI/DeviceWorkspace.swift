@@ -4,11 +4,15 @@ import UniformTypeIdentifiers
 
 /// One tab of the workspace's side panel. Each app supplies its own tabs and their content.
 public struct WorkspaceTab: Identifiable, Hashable, Sendable {
+    public enum Placement: Sendable { case trailing, bottom, window }
+
+    public let placement: Placement
     public let id: String
     public let title: String
     public let systemImage: String
 
-    public init(id: String, title: String, systemImage: String) {
+    public init(id: String, title: String, systemImage: String, placement: Placement = .trailing) {
+        self.placement = placement
         self.id = id
         self.title = title
         self.systemImage = systemImage
@@ -46,6 +50,7 @@ public struct DeviceWorkspace<Panel: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var isCompact: Bool { compactWindow.isCompact }
 
+    private let showPanelWindow: () -> Void
     private let title: String
     private let tabs: [WorkspaceTab]
     @Binding private var selectedTab: String
@@ -64,11 +69,12 @@ public struct DeviceWorkspace<Panel: View>: View {
     ///   - badgedTabs: tab IDs whose toolbar button shows an activity dot.
     ///   - panel: the side panel's content for the selected tab.
     public init(title: String, tabs: [WorkspaceTab], selectedTab: Binding<String>, showsPanel: Binding<Bool>,
-                allowsInput: Bool = true, badgedTabs: Set<String> = [],
+                showPanelWindow: @escaping () -> Void = {}, allowsInput: Bool = true, badgedTabs: Set<String> = [],
                 devicesWithPasscode: Set<String> = [], configurePasscode: ((DeviceSummary) -> Void)? = nil,
                 unlockDevice: ((DeviceSummary) async throws -> DeviceUnlockResult)? = nil,
                 browseSandbox: ((DeviceSummary) -> Void)? = nil,
                 @ViewBuilder panel: @escaping (WorkspaceTab, ScreenModel) -> Panel) {
+        self.showPanelWindow = showPanelWindow
         self.title = title
         self.tabs = tabs
         _selectedTab = selectedTab
@@ -131,9 +137,12 @@ public struct DeviceWorkspace<Panel: View>: View {
         }
     }
 
+    private var selectedPanel: WorkspaceTab? { tabs.first { $0.id == selectedTab } ?? tabs.first }
+
     public var body: some View {
         DeviceWorkspaceView(isCompact: isCompact, isResizingWindow: compactWindow.isResizing,
-                            showsPanel: showsPanel && !isCompact) {
+                            showsPanel: showsPanel && !isCompact && selectedPanel?.placement != .window,
+                            panelAtBottom: selectedPanel?.placement == .bottom) {
             sidebar
         } detail: {
             detail
@@ -150,6 +159,12 @@ public struct DeviceWorkspace<Panel: View>: View {
             model.visibleScreen = screen
             defer { if model.visibleScreen === screen { model.visibleScreen = nil } }
             await model.run()
+        }
+        .onChange(of: tabs) { previous, current in
+            if isCompact, previous.contains(where: { $0.placement == .window && $0.id == selectedTab }),
+               current.contains(where: { $0.id == selectedTab && $0.placement == .bottom }) {
+                setCompact(false)
+            }
         }
         .task(id: managementKey) { await readManagementAvailability() }
         .task(id: screenKey) {
@@ -776,7 +791,7 @@ public struct DeviceWorkspace<Panel: View>: View {
         // Keep one panel child while switching tabs, so the panel does not animate in again
         // with each page's view identity.
         VStack(spacing: 0) {
-            if let tab = tabs.first(where: { $0.id == selectedTab }) ?? tabs.first {
+            if let tab = selectedPanel {
                 panel(tab, screen)
             }
         }
@@ -784,7 +799,17 @@ public struct DeviceWorkspace<Panel: View>: View {
     }
 
     /// Selecting a tab shows the inspector; selecting the current tab again hides it.
-    private func inspectorTabToggle(_ tab: WorkspaceTab) -> some View {
+    @ViewBuilder private func inspectorTabToggle(_ tab: WorkspaceTab) -> some View {
+        if tab.placement == .window {
+            Button(action: showPanelWindow) { Label(tab.title, systemImage: tab.systemImage) }
+                .labelStyle(.iconOnly)
+                .help("显示" + tab.title + "窗口")
+        } else {
+            panelToggle(tab)
+        }
+    }
+
+    private func panelToggle(_ tab: WorkspaceTab) -> some View {
         let isActive = showsPanel && selectedTab == tab.id
         return Toggle(isOn: Binding(
             get: { isActive },

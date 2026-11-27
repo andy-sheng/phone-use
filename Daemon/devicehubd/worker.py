@@ -33,6 +33,7 @@ from devicehubd.lifetime import WORKER_EXIT_DEADLINE, exit_after
 from devicehubd.protocol import RpcError
 from devicehubd.sandbox_mounts import SandboxMounts
 from devicehubd.transports import Tunnel, make_tunnel
+from devicehubd.web_inspector import DeviceWebInspector
 
 logger = logging.getLogger("devicehubd.worker")
 
@@ -98,6 +99,7 @@ class Worker:
         self._audit: Optional[AccessibilityAudit] = None
         self._audit_lock = asyncio.Lock()
         self._sandbox_mounts: SandboxMounts | None = None
+        self._web_inspector: DeviceWebInspector | None = None
         self._app_icons: AppIcons | None = None
 
     async def emit(self, message: dict[str, Any]) -> None:
@@ -333,6 +335,10 @@ class Worker:
         try:
             if method == "forward":
                 result: Any = {"port": await self.forward(params["service"])}
+            elif method == "webInspector":
+                if self._web_inspector is None:
+                    self._web_inspector = DeviceWebInspector(self.rsd)
+                result = await self._web_inspector.command(params)
             elif method == "mountSandbox":
                 if self._sandbox_mounts is None:
                     self._sandbox_mounts = SandboxMounts(self.rsd)
@@ -386,6 +392,8 @@ class Worker:
             await asyncio.sleep(1)
 
     async def close(self) -> None:
+        if self._web_inspector:
+            await self._web_inspector.close()
         if self._sandbox_mounts:
             await self._sandbox_mounts.close()
         await self.stop_mirror()

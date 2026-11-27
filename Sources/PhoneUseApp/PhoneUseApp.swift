@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Owned here rather than by a view, so MCP clients can use the daemon before any window opens.
     let model = DeviceListModel()
     let mcp = MCPHost()
+    let webInspector = WebInspectorWindow()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Launched as a bare SwiftPM executable, so opt into a Dock icon and focus explicitly.
@@ -79,7 +80,7 @@ struct PhoneUseMacApp: App {
 
     var body: some Scene {
         Window(Self.mainWindowTitle, id: Self.mainWindowID) {
-            PhoneUseWindow()
+            PhoneUseWindow(webInspector: appDelegate.webInspector)
                 .environmentObject(appDelegate.model)
                 .environmentObject(appDelegate.mcp.activity)
         }

@@ -10,11 +10,14 @@ struct DeviceWorkspaceView<Sidebar: View, Detail: View, Panel: View>: View {
     var isCompact = false
     var isResizingWindow = false
     let showsPanel: Bool
+    var panelAtBottom = false
     @ViewBuilder var sidebar: Sidebar
     @ViewBuilder var detail: Detail
     @ViewBuilder var panel: Panel
 
     @AppStorage("inspector.width") private var storedPanelWidth: Double = 400
+    @AppStorage("inspector.height") private var storedPanelHeight = 320.0
+    @State private var dragStartHeight: CGFloat?
     @State private var columns = NavigationSplitViewVisibility.all
     @State private var expandedSidebarWidth: CGFloat = 250
     @State private var expandedColumns = NavigationSplitViewVisibility.all
@@ -29,7 +32,7 @@ struct DeviceWorkspaceView<Sidebar: View, Detail: View, Panel: View>: View {
     private let dividerWidth = NSSplitView().dividerThickness
 
     private var detailMinimumWidth: CGFloat {
-        Self.previewMinimumWidth + (showsPanel ? Self.panelMinimumWidth + 2 * Self.panelMargin : 0)
+        Self.previewMinimumWidth + (showsPanel && !panelAtBottom ? Self.panelMinimumWidth + 2 * Self.panelMargin : 0)
     }
 
     /// The stored width, limited so the stage always keeps its minimum width.
@@ -53,17 +56,25 @@ struct DeviceWorkspaceView<Sidebar: View, Detail: View, Panel: View>: View {
             } detail: {
                 GeometryReader { available in
                     let width = panelWidth(in: available.size.width)
-                    ZStack(alignment: .trailing) {
-                        detail
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            // Views that ignore the safe area, like the stage background, still
-                            // extend beneath the panel.
-                            .safeAreaPadding(.trailing, showsPanel ? width + 2 * Self.panelMargin : 0)
-                        if showsPanel {
-                            floatingPanel(width: width, available: available.size.width)
-                                .padding(Self.panelMargin)
-                                // Callers animate the change, so layout stays deterministic.
-                                .transition(.move(edge: .trailing).combined(with: .opacity))
+                    VStack(spacing: 0) {
+                        ZStack(alignment: .trailing) {
+                            detail
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .safeAreaPadding(.trailing, showsPanel && !panelAtBottom ? width + 2 * Self.panelMargin : 0)
+                            if showsPanel && !panelAtBottom {
+                                floatingPanel(width: width, available: available.size.width)
+                                    .padding(Self.panelMargin)
+                                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                            }
+                        }
+                        if showsPanel && panelAtBottom {
+                            let height = panelHeight(storedPanelHeight, available: available.size.height)
+                            panel
+                                .frame(maxWidth: .infinity)
+                                .frame(height: height)
+                                .background(.background)
+                                .overlay(alignment: .top) { horizontalDivider(height: height, available: available.size.height) }
+                                .transition(.move(edge: .bottom))
                         }
                     }
                 }
@@ -79,6 +90,29 @@ struct DeviceWorkspaceView<Sidebar: View, Detail: View, Panel: View>: View {
         }
         .frame(minWidth: isCompact || isResizingWindow ? CompactLayout.minimumSize.width : 940,
                minHeight: isCompact || isResizingWindow ? CompactLayout.minimumSize.height - 60 : 680)
+    }
+
+    private func panelHeight(_ height: CGFloat, available: CGFloat) -> CGFloat {
+        // Keep both the preview controls and the inspector usable when resizing the window.
+        min(max(180, height), max(0, available - 220))
+    }
+
+    private func horizontalDivider(height: CGFloat, available: CGFloat) -> some View {
+        Divider()
+            .frame(height: 8)
+            .contentShape(Rectangle())
+            .offset(y: -4)
+            .onHover { inside in
+                if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+            }
+            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { drag in
+                    let start = dragStartHeight ?? height
+                    dragStartHeight = start
+                    storedPanelHeight = panelHeight(start - drag.translation.height, available: available)
+                }
+                .onEnded { _ in dragStartHeight = nil })
+            .accessibilityHidden(true)
     }
 
     private func floatingPanel(width: CGFloat, available: CGFloat) -> some View {

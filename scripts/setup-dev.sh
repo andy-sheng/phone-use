@@ -11,4 +11,5 @@ mkdir -p .build/pip-cache
 .venv-daemon/bin/python -m pip install --cache-dir .build/pip-cache --quiet -r Daemon/requirements.txt
 .venv-daemon/bin/python scripts/prepare-android-tools.py --download
 .venv-daemon/bin/python scripts/prepare-android-video.py --download
+.venv-daemon/bin/python scripts/prepare-chrome-mcp.py --download
 echo "daemon environment ready: $(.venv-daemon/bin/python -c 'import pymobiledevice3, sys; print(sys.version.split()[0])')"

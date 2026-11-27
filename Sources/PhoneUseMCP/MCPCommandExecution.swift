@@ -30,6 +30,9 @@ struct MCPDeviceAccess: Sendable {
     let session: @Sendable (String) async throws -> any MCPDeviceSession
     var lockStatus: @Sendable (DeviceSummary) async -> DeviceLockStatus = { _ in DeviceLockStatus(.unknown) }
     var files: @Sendable (DeviceSummary) throws -> any DeviceFileAccess = { try DeviceFiles(device: $0) }
+    var webInspector: @Sendable (String, DaemonClient.WebInspectorRequest) async throws -> Data = { id, request in
+        try await DeviceHub.shared.daemon().webInspector(id, request)
+    }
     var webPreview: @Sendable (String, UInt16) async throws -> URL = { _, _ in
         throw ToolFailure(message: "Web preview discovery is not configured")
     }
@@ -164,6 +167,16 @@ extension MCPCommand {
         case .installApp(let file):
             try await access.installApp(file, selected)
             return try mcpObject(["device": selected.udid, "package": file.lastPathComponent, "installed": true])
+        case .webInspector(let request):
+            guard !selected.isAndroid, !selected.isSimulator else {
+                throw ToolFailure(message: "Safari Web Inspector requires a physical iPhone or iPad.")
+            }
+            let data = try await access.webInspector(selected.udid, request)
+            guard var result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw ToolFailure(message: "Invalid Web Inspector reply.")
+            }
+            result["device"] = selected.udid
+            return try mcpObject(result)
         case .settings(let command): return try await command.execute(selected)
         case .geometry(let change):
             guard selected.isSimulator else { throw DeviceHubError.capabilityUnavailable("Simulator geometry on this device") }

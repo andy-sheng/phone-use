@@ -4,6 +4,16 @@ PhoneUse 的工具命名和操作参数以 **sim-use 0.16.0** 为主要参照，
 XcodeBuildMCP（现已改名为 MobileBuildMCP）的 UI 自动化定义。工具在应用进程内通过
 PhoneUseKit 的共享设备会话执行；无需另装 sim-use、idb、XcodeBuildMCP 或测试 runner。
 
+## 按需发现工具
+
+默认 `tools/list` 提供 7 个入口：`list_devices`、`select_device`、`connect_device`、`describe_ui`、`screenshot`、`search_tools` 和 `run_tool`。后文使用具体操作名。对尚未列出的操作，可以分步查找并执行：
+
+1. 调用 `search_tools`，传入 `{"group":"chrome","query":"console"}` 查看控制台相关操作。省略参数会得到各组的操作数。多项匹配每次最多返回 8 条名称和说明，用 `next_offset` 翻页。
+2. 传入 `{"query":"chrome_list_console_messages"}` 查看该操作的完整参数和注解。
+3. 向 `run_tool` 传入 `{"name":"chrome_list_console_messages","arguments":{"pageId":1}}`。这里的 1 是示例，实际编号取自 `chrome_list_pages`。返回值与直接调用相同。
+
+需要按工具名配置客户端权限或直接列出完整工具集时，在 `phone-use-mcp` 后面加 `--all-tools`。默认模式下客户端会将经 `run_tool` 发起的操作视为同一个可能修改设备或文件的工具。
+
 ## 发现、观察、操作、验证
 
 1. 调用 `list_devices`，查看设备状态及 `capabilities`。`state: ready` 表示可连接。另看 `lock_state` 判断屏幕是否锁定。自建或此前用过的关机模拟器也会列出，可用 `start_simulator` 启动。
@@ -81,6 +91,18 @@ PhoneUse 窗口右侧的“界面结构”页签会实时显示同一份 `descri
 | `connect_device` | `device?` | 连接设备、请求原生界面预览，并自动校验 Web 地址，返回浏览器下一步 |
 | `unlock_device` | `device?` | 使用 PhoneUse 为该设备保存的数字密码解锁，返回 `status` 和 `unlock_verified` |
 | `get_web_preview` | `device?`, `port?: 8765` | 检查已运行的本地 Web 服务，返回匹配设备的控制页地址 |
+| `list_web_pages` | `device?` | 枚举 iPhone / iPad 真机上可检查的 Safari 标签页和 App WebView，返回标题、URL 和 `page_id` |
+| `attach_web_page` | `page_id`, `device?` | 附加到页面并开始接收控制台事件，返回 `session_id` |
+| `read_web_console` | `session_id`, `after?: 0`, `device?` | 每次读取最多 32 条事件，下次传回 `next_cursor` |
+| `evaluate_web_javascript` | `session_id`, `expression`, `device?` | 在页面中执行 JavaScript，返回类型及可序列化的值 |
+| `detach_web_page` | `session_id`, `device?` | 释放页面及日志缓存 |
+| `describe_web_protocol` | `device?`, `domain?` | 列出 WebKit 域，或查看某个域的命令、参数、返回字段和事件 |
+| `send_web_command` | `session_id`, `method`, `params?`, `target?`, `device?` | 发送原生 WebKit 命令，返回 `result` 或大结果的 `data_id` |
+| `read_web_events` | `session_id`, `after?: 0`, `domain?`, `device?` | 按独立游标读取全部协议事件，支持按域筛选 |
+| `read_web_data` | `session_id`, `data_id`, `offset?: 0`, `device?` | 读取大结果或事件的下一段 JSON 文本 |
+| `get_web_dom` / `get_web_css_styles` | `session_id`, `device?`；样式另需 `node_id` | 获取文档节点或元素的计算样式 |
+| `start_web_network` / `get_web_response_body` | `session_id`, `device?`；响应体另需 `request_id` | 开始网络采集，或获取一个已完成请求的响应体 |
+| `reload_web_page` | `session_id`, `device?` | 重新加载已附加的页面 |
 | `start_recording` | `device?` | 开始录制 MP4，返回 `recording_id`、设备标识和 Mac 上的 `local_path` |
 | `stop_recording` | `recording_id` | 按开始时返回的 ID 停止录制，等待文件写完后返回 `local_path` |
 | `screenshot` | `device?` | JPEG 图像、尺寸、平台、坐标单位与原点 |
@@ -229,9 +251,48 @@ iOS 上的 `tap` 和 `type_text` 接受以下三者之一：
 `back/recents` 仅 Android 支持，`siri` 仅 iOS 支持；不支持的组合会在发送输入前拒绝。
 暂不提供 sim-use 的 Apple Pay 双击按钮。
 
+## 调试 iPhone 上的网页
+
+在 iPhone 的「设置 → App → Safari → 高级」开启「网页检查器」，打开目标网页。App 内的 WKWebView 需要允许检查。使用同一个 `device` 调用以下工具。
+
+1. 用 `list_web_pages` 按标题、URL 或 bundle ID 找到页面，将其 `page_id` 传给 `attach_web_page`。
+2. 用返回的 `session_id` 调用 `evaluate_web_javascript`。例如传入 `document.title` 读取标题，或传入 `({title: document.title, width: innerWidth})` 获取对象。求值同步返回，表达式上限为 8192 个 UTF-8 字节，结果上限为 32 KiB。
+3. 操作页面后调用 `read_web_console`。首次从 0 开始，再用 `next_cursor` 续读。`has_more` 表示还有下一批，`dropped` 表示该游标之后已被淘汰的条数。每个会话保留最近 256 个事件，可能包含 WebKit 在附加时回放的日志。
+4. 完成后用 `detach_web_page` 释放该页面的会话。不同页面可以同时连接。页面关闭或设备重连后，重新枚举并附加。
+
+网页调试区默认收起。在 PhoneUse 中选择真机，点工具栏的「网页调试」，再点目标页面。默认使用 Chrome DevTools，面板会通过 HTTPS 加载协议桥对应版本的 Chromium 官方前端。调试命令通过 Mac 本地的 Unix socket 发往设备。离线时可在页面列表上方选择「WebKit」，使用 macOS 自带的网页检查器。Chrome 面板可用的功能取决于 WebKit 目标和 CDP 协议桥。
+
+拖动面板上边缘可调整高度。点右上角的「在独立窗口中打开」可移出面板，点「停靠到主窗口下方」或关闭独立窗口可放回原位。当前页面和调试会话随面板移动。UI 和 MCP 共用页面的断点、脚本暂停等状态，断开面板后，已连接的 MCP 会话仍可使用。
+
+### 使用官方 Chrome DevTools MCP
+
+标准 `phone-use` 配置同时提供设备工具和官方 Chrome DevTools 网页工具。已配置的客户端更新 PhoneUse 后，重新连接 MCP 即可刷新工具目录。PhoneUse.app 内置 Apple silicon 版 Node.js 和固定版本的 `chrome-devtools-mcp`，首次调用也从应用包直接启动。工具发现可在未连接 iPhone 时完成。
+
+1. 调用 `chrome_list_pages`，从结果选择页面的数字编号。多台就绪的 iOS 真机同时连接时，在 MCP 启动参数中设置 `["--device", "设备 UDID"]`。可以用 `--page` 加上 `list_web_pages` 给出的 WebKit 页面 ID 限定目标。
+2. 将数字编号作为 `pageId` 传给 `chrome_evaluate_script`、`chrome_list_console_messages` 或 `chrome_list_network_requests`。
+3. 用 `chrome_take_snapshot` 读取主文档的无障碍树，再用 `chrome_click` 点击快照中的 `uid`。节点失效时重新取快照。工具会话与底部面板可以同时连接同一个网页。
+
+原有的独立入口 `phone-use-mcp chrome-devtools` 也使用内置运行时，并保留上游原始工具名。两个入口均关闭使用统计、更新检查和 CrUX 查询。
+
+官方工具目录由上游提供。iOS 端的执行能力取决于 WebKit 和协议转换，例如创建浏览器上下文、创建或关闭标签页、Chromium 专用性能分析均有平台限制。[官方项目与工具说明](https://github.com/ChromeDevTools/chrome-devtools-mcp)
+
+### WebKit 协议
+
+`describe_web_protocol` 读取 Mac 自带的 Safari 协议声明，返回所选声明文件及 iOS 版本。省略 `domain` 获取目录，传入 `Debugger`、`Network` 或 `Timeline` 等域名可查询签名。设备对命令的实际回复决定可用性。`send_web_command` 也能发送目录尚未收录的命令。页面列表的 `kind` 区分网页、JSContext 等目标，可用域因目标而异。
+
+例如，查看网络响应时依次调用以下工具。
+
+1. `start_web_network` 开始采集。重现操作后用 `read_web_events` 传入 `domain: "Network"`，从事件参数中取得 `requestId`。
+2. 等到对应的 `Network.loadingFinished` 后，调用 `get_web_response_body` 并传入该 `request_id`。`base64Encoded` 标明响应体的编码方式。
+3. 若返回 `data_id`，从偏移 0 调用 `read_web_data`，沿 `next_offset` 读取到 `length`，拼接全部 `text` 后解析 JSON。该方式同样适用于 DOM、堆快照等大结果。每个会话最多缓存 64 份大结果，总计 64 MiB。
+
+`send_web_command` 的 `params` 是 JSON 对象，上限为 24 KiB。默认目标是当前页面，`Browser` 和 `Target` 域默认走页面的根连接。也可用 `target: "root"` 或传入 `Target.targetCreated` 事件中的目标 ID。通常先启用相应的域，再执行操作及读取事件。例如发送 `Debugger.enable` 后，可用 `read_web_events` 查看脚本及暂停事件，再调用 `Debugger.resume`。协议事件与控制台日志各保留最近 256 条，游标独立。超过 30 秒仍无回复时，工具会报告超时，已送达的命令可能已执行。
+
+常用操作参考了 [Chrome DevTools MCP 工具目录](https://github.com/ChromeDevTools/chrome-devtools-mcp/blob/main/docs/tool-reference.md)。设备端方法和参数使用 [WebKit Inspector 协议](https://github.com/WebKit/WebKit/tree/main/Source/JavaScriptCore/inspector/protocol)。
+
 ## 兼容与边界
 
-`tools/list` 发布新名称，同时继续接受旧调用：
+完整目录使用新名称，直接调用仍可使用旧名称：
 
 | 旧调用 | 新调用 |
 | --- | --- |

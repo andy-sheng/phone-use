@@ -147,6 +147,47 @@ public actor DaemonClient {
         try await callIgnoringResult("closeDevice", ["udid": udid])
     }
 
+    public enum WebInspectorRequest: Sendable {
+        case list
+        case frontend(page: String, chrome: Bool = false)
+        case attach(page: String, client: String = "mcp")
+        case catalog(domain: String?)
+        case command(session: String, method: String, parameters: Data, target: String? = nil)
+        case events(session: String, after: Int, domain: String?)
+        case data(session: String, id: String, offset: Int)
+        case logs(session: String, after: Int)
+        case evaluate(session: String, expression: String)
+        case detach(session: String)
+    }
+
+    public func webInspector(_ udid: String, _ request: WebInspectorRequest) async throws -> Data {
+        var params: [String: Any]
+        switch request {
+        case .list: params = ["action": "list"]
+        case .frontend(let page, let chrome):
+            params = ["action": "frontend", "page_id": page, "engine": chrome ? "chrome" : "webkit"]
+        case .attach(let page, let client): params = ["action": "attach", "page_id": page, "client": client]
+        case .catalog(let domain):
+            params = ["action": "catalog"]
+            params["domain"] = domain
+        case .command(let session, let method, let parameters, let target):
+            params = ["action": "send", "method": method, "session_id": session,
+                      "params": try JSONSerialization.jsonObject(with: parameters)]
+            params["target"] = target
+        case .events(let session, let after, let domain):
+            params = ["action": "events", "session_id": session, "after": after]
+            params["domain"] = domain
+        case .data(let session, let id, let offset):
+            params = ["action": "data", "session_id": session, "data_id": id, "offset": offset]
+        case .logs(let session, let after): params = ["action": "logs", "session_id": session, "after": after]
+        case .evaluate(let session, let expression):
+            params = ["action": "evaluate", "session_id": session, "expression": expression]
+        case .detach(let session): params = ["action": "detach", "session_id": session]
+        }
+        params["udid"] = udid
+        return try await rawCall("webInspector", params)
+    }
+
     /// Android actions are sent once. A failed reply must never replay a gesture or launch.
     public func androidCommand(_ udid: String, action: String, params: [String: String] = [:]) async throws -> Data {
         var payload = params

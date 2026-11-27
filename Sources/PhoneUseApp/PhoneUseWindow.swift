@@ -4,9 +4,12 @@ import SwiftUI
 
 /// phone-use's main window: the shared device workspace with developer panels.
 struct PhoneUseWindow: View {
+    @ObservedObject var webInspector: WebInspectorWindow
+    @Environment(\.openWindow) private var openWindow
     @EnvironmentObject private var activity: MCPActivityStore
     @EnvironmentObject private var model: DeviceListModel
-    @AppStorage("inspector.visible") private var showsPanel = true
+    @AppStorage("inspector.visible") private var showsSidePanel = true
+    @State private var showsWebPanel = false
     @AppStorage("inspector.tab") private var selectedTab = Tab.uiTree.rawValue
     @State private var credentialStates: [String: UnlockCredential.Status] = [:]
     @State private var credentialRevision = 0
@@ -14,11 +17,12 @@ struct PhoneUseWindow: View {
     @State private var filesDevice: DeviceSummary?
 
     enum Tab: String, CaseIterable {
-        case uiTree, calls, settings, deviceInfo
+        case uiTree, web, calls, settings, deviceInfo
 
-        var workspaceTab: WorkspaceTab {
+        func workspaceTab(webDetached: Bool) -> WorkspaceTab {
             switch self {
             case .uiTree: WorkspaceTab(id: rawValue, title: "界面结构", systemImage: "list.bullet.indent")
+            case .web: WorkspaceTab(id: rawValue, title: "网页调试", systemImage: "safari", placement: webDetached ? .window : .bottom)
             case .calls: WorkspaceTab(id: rawValue, title: "调用记录", systemImage: "terminal")
             case .settings: WorkspaceTab(id: rawValue, title: "设备设置", systemImage: "slider.horizontal.3")
             case .deviceInfo: WorkspaceTab(id: rawValue, title: "设备信息", systemImage: "info.circle")
@@ -26,9 +30,19 @@ struct PhoneUseWindow: View {
         }
     }
 
+    private var panelVisibility: Binding<Bool> {
+        Binding {
+            selectedTab == Tab.web.rawValue ? showsWebPanel : showsSidePanel
+        } set: { visible in
+            if selectedTab == Tab.web.rawValue { showsWebPanel = visible }
+            else { showsSidePanel = visible }
+        }
+    }
+
     var body: some View {
-        DeviceWorkspace(title: "PhoneUse", tabs: Tab.allCases.map(\.workspaceTab),
-                        selectedTab: $selectedTab, showsPanel: $showsPanel,
+        DeviceWorkspace(title: "PhoneUse", tabs: Tab.allCases.map { $0.workspaceTab(webDetached: webInspector.isDetached) },
+                        selectedTab: $selectedTab, showsPanel: panelVisibility,
+                        showPanelWindow: webInspector.show,
                         devicesWithPasscode: Set(credentialStates.filter { $0.value.hasPIN }.keys),
                         configurePasscode: { passcodeDevice = $0 },
                         unlockDevice: { device in
@@ -39,6 +53,12 @@ struct PhoneUseWindow: View {
             switch Tab(rawValue: tab.id) ?? .settings {
             case .uiTree:
                 DeviceUIOutlinePanel(device: model.selectedDevice, screen: screen)
+            case .web:
+                WebInspectorDock(presentation: webInspector, model: model) {
+                    selectedTab = Tab.web.rawValue
+                    showsWebPanel = true
+                    openWindow(id: PhoneUseMacApp.mainWindowID)
+                }
             case .calls:
                 MCPActivityPanel(activity: activity)
             case .settings:

@@ -13,12 +13,16 @@ final class WorkspaceLayoutTests: XCTestCase {
         try checkResizing(screenAspectRatio: 852.0 / 393.0)
     }
 
-    private func checkResizing(screenAspectRatio: CGFloat) throws {
+    func testBottomInspectorSpansStageBelowPreviewAtMinimumAndExpandedSizes() throws {
+        try checkResizing(screenAspectRatio: 393.0 / 852.0, panelAtBottom: true)
+    }
+
+    private func checkResizing(screenAspectRatio: CGFloat, panelAtBottom: Bool = false) throws {
         _ = NSApplication.shared
         let sidebar = NSView()
         let panel = NSView()
         let screenLayer = CALayer()
-        var fixture = LayoutFixture(showsPanel: true, screenAspectRatio: screenAspectRatio,
+        var fixture = LayoutFixture(showsPanel: true, panelAtBottom: panelAtBottom, screenAspectRatio: screenAspectRatio,
                                     sidebar: sidebar, panel: panel, screenLayer: screenLayer)
         let host = NSHostingView(rootView: fixture)
 
@@ -58,8 +62,16 @@ final class WorkspaceLayoutTests: XCTestCase {
                     if showsPanel {
                         let panelRect = panel.convert(panel.bounds, to: host)
                         assertContained(panelRect, in: host.bounds, context)
-                        XCTAssertGreaterThanOrEqual(panelRect.width, 340, context)
-                        XCTAssertLessThanOrEqual(screenRect.maxX, panelRect.minX, context)
+                        XCTAssertGreaterThanOrEqual(panelRect.width, panelAtBottom ? 300 : 340, context)
+                        if panelAtBottom {
+                            XCTAssertEqual(panelRect.maxX, host.bounds.maxX, accuracy: 2, context)
+                            XCTAssertEqual(panelRect.minX, sidebarRect.maxX, accuracy: 2, context)
+                            let panelIsBelow = host.isFlipped ? screenRect.maxY <= panelRect.minY : panelRect.maxY <= screenRect.minY
+                            XCTAssertTrue(panelIsBelow, context)
+                            XCTAssertGreaterThanOrEqual(panelRect.height, 180, context)
+                        } else {
+                            XCTAssertLessThanOrEqual(screenRect.maxX, panelRect.minX, context)
+                        }
                     }
                 }
             }
@@ -93,13 +105,14 @@ final class WorkspaceLayoutTests: XCTestCase {
 
 private struct LayoutFixture: View {
     var showsPanel: Bool
+    let panelAtBottom: Bool
     let screenAspectRatio: CGFloat
     let sidebar: NSView
     let panel: NSView
     let screenLayer: CALayer
 
     var body: some View {
-        DeviceWorkspaceView(showsPanel: showsPanel) {
+        DeviceWorkspaceView(showsPanel: showsPanel, panelAtBottom: panelAtBottom) {
             List { Text("NX732J") }
                 .background(LayoutProbe(view: sidebar))
         } detail: {
