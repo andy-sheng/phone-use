@@ -17,6 +17,7 @@ struct PhoneUseWindow: View {
     @State private var filesDevice: DeviceSummary?
 
     @StateObject private var network = SimulatorNetworkSession()
+    @StateObject private var traffic = DeviceTrafficSession()
 
     enum Tab: String, CaseIterable {
         case uiTree, web, network, calls, settings, deviceInfo
@@ -64,7 +65,7 @@ struct PhoneUseWindow: View {
                 }
             case .network:
                 if let device = model.selectedDevice, device.platform == .ios, !device.isSimulator, device.isReady {
-                    PhysicalNetworkConditionPanel(device: device).id(device.id)
+                    PhysicalNetworkPanel(traffic: traffic, device: device).id(device.id)
                 } else {
                     SimulatorNetworkPanel(monitor: network, device: model.selectedDevice)
                 }
@@ -100,10 +101,14 @@ struct PhoneUseWindow: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             credentialRevision += 1
         }
-        .onChange(of: model.selectedDevice?.isReady == true ? model.selectedDevice?.id : nil) {
+        .onChange(of: model.selectedDevice?.isReady == true ? model.selectedDevice?.id : nil) { _, selected in
             network.endSelection()
+            traffic.endSelection(except: selected)
         }
-        .onDisappear { network.endSelection() }
+        .onDisappear {
+            network.endSelection()
+            traffic.endSelection()
+        }
         .task(id: credentialRevision) {
             let statuses = try? await DeviceUnlockController.shared.statuses(for: model.devices)
             guard !Task.isCancelled else { return }

@@ -34,6 +34,7 @@ from devicehubd.lifetime import WORKER_EXIT_DEADLINE, exit_after
 from devicehubd.network_condition import NetworkCondition
 from devicehubd.protocol import RpcError
 from devicehubd.sandbox_mounts import SandboxMounts
+from devicehubd.traffic_capture import TrafficCapture
 from devicehubd.transports import Tunnel, make_tunnel
 from devicehubd.web_inspector import DeviceWebInspector
 
@@ -100,6 +101,7 @@ class Worker:
         self._location_task: Optional[asyncio.Task[None]] = None
         self._location_lock = asyncio.Lock()
         self._network_condition: NetworkCondition | None = None
+        self._traffic: TrafficCapture | None = None
         self._audit: Optional[AccessibilityAudit] = None
         self._audit_lock = asyncio.Lock()
         self._sandbox_mounts: SandboxMounts | None = None
@@ -385,6 +387,10 @@ class Worker:
                 if self._network_condition is None:
                     self._network_condition = NetworkCondition(self.rsd)
                 result = await self._network_condition.command(method, params)
+            elif method == "trafficCapture":
+                if self._traffic is None:
+                    self._traffic = TrafficCapture(self.udid)
+                result = await self._traffic.command(params)
             elif method == "simulateLocation":
                 await self.simulate_location(*coordinate(params))
                 result = {}
@@ -405,6 +411,8 @@ class Worker:
             await asyncio.sleep(1)
 
     async def close(self) -> None:
+        if self._traffic:
+            await self._traffic.close()
         if self._network_condition:
             await self._network_condition.close()
         if self._web_inspector:

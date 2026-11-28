@@ -288,6 +288,10 @@ public actor DaemonClient {
         return try await call(method, params, as: DeviceNetworkCondition.self)
     }
 
+    func trafficCapture(udid: String, action: String, after cursor: Int) async throws -> DeviceTrafficSnapshot {
+        try await call("trafficCapture", ["udid": udid, "action": action, "after": cursor], as: DeviceTrafficSnapshot.self)
+    }
+
     /// The device's accessibility audit settings, such as `REDUCE_MOTION` or `DYNAMIC_TYPE`.
     func accessibilitySettings(_ udid: String) async throws -> [String: Any] {
         try Self.settings(in: await rawCall("accessibilitySettings", ["udid": udid]))
