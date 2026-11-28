@@ -39,6 +39,9 @@ struct MCPDeviceAccess: Sendable {
     var installApp: @Sendable (URL, DeviceSummary) async throws -> Void = { file, device in
         try await DeviceHub.shared.installApp(from: file, on: device)
     }
+    var simulatorDeveloper: @Sendable (SimulatorDeveloperAction, DeviceSummary) async throws -> Void = { command, device in
+        try await command.run(on: device)
+    }
     var operations = MCPDeviceOperations()
     var recordings = MCPRecordings()
     var previewWorkflow = MCPWebPreviewWorkflow()
@@ -121,7 +124,9 @@ extension MCPCommand {
                 let row = encoded[index].merging(statuses[index].fields(canUnlock: workspace?.unlock != nil)) { _, new in new }
                 var capabilities = ["screenshot", "describe_ui", "tap", "long_press", "swipe", "touch_path", "gesture", "button", "launch_app", "install_app"]
                 if workspace?.unlock != nil { capabilities.append("unlock_device") }
-                if device.isSimulator { capabilities.append("start_recording") }
+                if device.isSimulator {
+                    capabilities += ["start_recording", "set_simulator_status_bar", "open_simulator_url", "send_simulator_push"]
+                }
                 if !device.isAndroid { capabilities += ["element_targeting", "list_management_actions"] }
                 if device.isSimulator || !device.isAndroid && device.osMajorVersion >= 27 { capabilities.append("type_text") }
                 return row.merging(["capabilities": capabilities, "selected": device.udid == selection,
@@ -178,6 +183,9 @@ extension MCPCommand {
             result["device"] = selected.udid
             return try mcpObject(result)
         case .settings(let command): return try await command.execute(selected)
+        case .simulatorDeveloper(let command):
+            try await access.simulatorDeveloper(command, selected)
+            return try mcpObject(["device": selected.udid, "applied": true])
         case .geometry(let change):
             guard selected.isSimulator else { throw DeviceHubError.capabilityUnavailable("Simulator geometry on this device") }
             let session = try await access.session(selected.udid)

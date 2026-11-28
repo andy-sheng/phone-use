@@ -22,11 +22,20 @@ from devicehubd.android_control import ACTION_DOWN, ACTION_MOVE, ACTION_UP, KEY_
 from devicehubd.android_display import read_display_geometry
 from devicehubd.android_rotation import AndroidRotation
 from devicehubd.android_video import AndroidVideoManager
+from devicehubd.keyboard import preview_keys
 from devicehubd.lifetime import WORKER_EXIT_DEADLINE, exit_after
 from devicehubd.protocol import RpcError
 
 logger = logging.getLogger("devicehubd.android")
 KEYS = {"home": 3, "back": 4, "volume_up": 24, "volume_down": 25, "lock": 26, "app_switch": 187}
+# USB HID usage -> Android KeyEvent.KEYCODE_* on the US keyboard.
+KEYBOARD_CODES = {
+    **{usage: 29 + usage - 4 for usage in range(4, 30)},   # A–Z
+    **{usage: 8 + usage - 30 for usage in range(30, 39)},  # 1–9
+    39: 7, 40: 66, 41: 111, 42: 67, 43: 61, 44: 62,      # 0, Enter, Escape, Backspace, Tab, Space
+    45: 69, 46: 70, 47: 71, 48: 72, 49: 73, 51: 74, 52: 75, 53: 68, 54: 55, 55: 56, 56: 76,
+    74: 122, 75: 92, 76: 112, 77: 123, 78: 93, 79: 22, 80: 21, 81: 20, 82: 19,
+}
 TAP_HOLD = 0.05
 SWIPE_STEP = 0.01
 INPUT_START_WAIT = 20
@@ -267,7 +276,7 @@ class AndroidDevice:
             "unlockIdentity": self._unlock_identity, "prepareUnlock": self._prepare_unlock,
             "submitUnlockPIN": self._submit_unlock_pin,
             "screenshot": self._screenshot, "touch": self._touch, "tap": self._tap,
-            "swipe": self._swipe, "press": self._press, "launch": self._launch,
+            "swipe": self._swipe, "press": self._press, "keyboardInput": self._keyboard_input, "launch": self._launch,
             "rotate": self._rotate, "restoreRotation": self._restore_rotation,
         }.get(action)
         if handler is None:
@@ -421,6 +430,17 @@ class AndroidDevice:
             self._pause(duration / 1000)
         self.driver.key(KEY_UP, key)
         self.held_keys.discard(key)
+
+    def _keyboard_input(self, params, owner):
+        strokes = preview_keys(params.get("keys"))
+        self._check_input()
+        for usage, shift in strokes:
+            code = KEYBOARD_CODES[usage]
+            meta = 0x41 if shift else 0  # META_SHIFT_ON | META_SHIFT_LEFT_ON
+            self.held_keys.add(code)
+            self.driver.key(KEY_DOWN, code, meta)
+            self.driver.key(KEY_UP, code, meta)
+            self.held_keys.discard(code)
 
     def _launch(self, params: dict[str, str], owner: str) -> None:
         bundle = params.get("bundleID", "")

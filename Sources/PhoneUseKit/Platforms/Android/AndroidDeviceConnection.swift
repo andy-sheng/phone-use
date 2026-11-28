@@ -117,6 +117,12 @@ actor AndroidDeviceConnection: DeviceConnection {
         _ = try await request("press", params)
     }
 
+    func sendKeystrokes(_ keys: [DeviceKeystroke]) async throws {
+        try requireOpen()
+        let payload = String(decoding: try JSONEncoder().encode(keys), as: UTF8.self)
+        _ = try await request("keyboardInput", ["keys": payload, "owner": owner])
+    }
+
     func uiTree() async throws -> UITree {
         try requireOpen()
         let data = try await request("describeUI", [:])

@@ -48,6 +48,8 @@ Android 设备需要启用 USB 调试并授权电脑；输入控制还可能需�
 
 在 PhoneUse 或 Automation 的设备预览中，支持方向控制的 iPhone、iPad、iOS 模拟器和 Android 设备会显示旋转按钮。点按可旋转 90°，右键可选择向左或向右旋转。精简窗口中从「设备操作」菜单切换。iOS 真机需要支持该设备方向控制的 Xcode。Android 通过 ADB 临时指定显示方向，退出预览后恢复原有的自动旋转或方向锁定设置。
 
+点击 PhoneUse 或 Automation 原生预览中的文本框后，可以用 Mac 键盘输入英文字母、数字和美式键盘标点。支持回车、Tab、退格和方向键，按住 Shift 配合方向键可以选择文本。输入中文时，请在设备端切换到拼音输入法。⌘ 快捷键仍由 Mac 处理。支持 Android、iOS 模拟器，以及 iOS / iPadOS 27 及以上真机。
+
 ### 本地 Web 视频预览
 
 应用或守护进程运行后，可用 CLI 启动本地 HTTP 视频预览与控制：
@@ -135,13 +137,20 @@ python3.13 scripts/prepare-android-tools.py --archive /path/to/platform-tools_r3
 预览直接显示模拟器的帧缓冲，触控、Home、锁屏和音量键通过 Simulator 的 HID 通道发送，启动应用使用 `simctl launch`。
 截图在预览或自动化会话收到画面刷新后直接读取帧缓冲，否则通过 `xcrun simctl io` 截取。返回、多任务键仅适用于 Android。
 
+在 PhoneUse 的「设备设置 → 模拟器工具」中，可以将状态栏设为 9:41、满格信号和 100% 电量，截完图后点「恢复默认」清除该模拟器的所有状态栏覆盖。也可以打开应用深链，或输入已安装应用的 Bundle ID 和 APNs JSON 来模拟推送。推送载荷需要包含 `aps` 对象，UTF-8 大小最多 4096 字节。
+
 ```sh
 phone-use list-simulator-options
 phone-use create-simulator <runtime-id> <device-type-id> [name]
 phone-use delete-simulator simulator:<UDID>
 
 xcrun simctl boot "iPhone 17 Pro"
-.build/debug/phone-use --device simulator:<UDID> screenshot .build/simulator.png
+target="iPhone 17 Pro"  # 同名时使用 phone-use list 返回的完整 simulator: 标识
+phone-use --device "$target" simulator-status-bar screenshot
+phone-use --device "$target" screenshot .build/simulator.png
+phone-use --device "$target" simulator-status-bar clear
+phone-use --device "$target" simulator-open-url 'myapp://orders/42'
+phone-use --device "$target" simulator-push com.example.shop notification.apns
 ```
 
 ## 构建应用
@@ -163,7 +172,13 @@ scripts/build-app.sh automation  # dist/Automation.app
 
 ### 连接 AI 助手（MCP）
 
-MCP 使用标准输入输出传输，启动命令为应用包中 MCP 服务的绝对路径，无需先启动应用。最简单的方式是在应用中打开「设置 › AI 助手」（⌘, 或 phone-use 菜单 ›「连接 AI 助手…」）：页面列出本机 MCP 服务的实际路径，检测到 `claude` / `codex` 命令时可一键添加或更新，也可以复制终端命令或 JSON 配置。手动配置时，以安装在 `/Applications` 为例：
+MCP 使用标准输入输出传输，启动命令为应用包中 MCP 服务的绝对路径，无需先启动应用。打开「设置 › AI 助手」（⌘, 或 PhoneUse 菜单 ›「连接 AI 助手…」），页面会按本机安装情况显示导入选项。
+
+- **WorkBuddy、CodeBuddy IDE**：点击对应的添加按钮，将 `phone-use` 合并到用户配置 `~/.workbuddy/mcp.json` 或 `~/.codebuddy/mcp.json`。
+- **Cursor**：点击「添加到 Cursor」，然后在 Cursor 中确认安装。
+- **Claude Code、Codex、CodeBuddy Code**：检测到对应的 `claude`、`codex` 或 `codebuddy` 命令后，可一键添加或更新。
+
+页面也提供 MCP 服务的实际路径和手动配置 JSON。手动配置时，以安装在 `/Applications` 为例：
 
 ```sh
 # Claude Code（对所有项目生效）
@@ -183,7 +198,7 @@ Claude Desktop、Cursor 等使用 JSON 配置的客户端，在 MCP 配置中加
 }
 ```
 
-已有配置如引用 `DeviceHub.app` 或 `devicehub-mcp`，需要更新为上述路径；设置页会将其显示为「指向其他位置」，点击「更新」即可。设备未就绪时，工具错误会提示助手请用户在 PhoneUse 中完成配对等准备。
+已有配置如引用 `DeviceHub.app` 或 `devicehub-mcp`，需要更新为上述路径。对于 Claude Code 和 Codex，设置页会将旧路径显示为「指向其他位置」，点击「更新」即可。设备未就绪时，工具错误会提示助手请用户在 PhoneUse 中完成配对等准备。
 
 默认目录提供 5 个常用设备工具和 `search_tools`、`run_tool`。需要调试网页、操作应用或管理模拟器时，先检索操作，再按返回的参数调用。已有客户端需要完整目录时可传入 `--all-tools`。
 
@@ -194,6 +209,22 @@ Claude Desktop、Cursor 等使用 JSON 配置的客户端，在 MCP 配置中加
 MCP 也可通过 `list_devices` → `select_device` → `connect_device` 完成界面的选中与连接流程；选择与界面同步，连接成功后请求预览。省略 `device` 时使用当前选择，并发 agent 应显式指定设备。
 
 工具定义、模拟器 UI 树与文本输入、手势、坐标单位及旧调用兼容见 [MCP 操作约定](Documentation/MCP.md)。
+
+## iPhone 和 iPad 整机弱网
+
+在 PhoneUse 中选择已就绪的真机，打开工具栏的「网络请求」，选择网络档位，点击「启用整机弱网」。无需填写 Bundle ID 或修改 App。档位、上下行带宽、延迟和丢包率来自所选设备的开发服务，实际可用项因系统而异。
+
+点击「恢复正常网络」即可结束。切换面板后条件仍由该设备会话保持，回到面板可查看或结束。设备的调试连接关闭时，iOS 会释放该连接启用的条件。若 Xcode 已在模拟其他条件，PhoneUse 会显示占用状态。真机页面提供整机弱网，原生请求列表目前在模拟器页面提供。
+
+## 模拟器网络请求与限速
+
+1. 在 PhoneUse 选择已启动的 iOS 17 或更高版本模拟器，打开「网络请求」并点击「导出接入文件」。把导出的 Swift 文件加入自己的应用 target。
+2. 在应用的网络层用 `PhoneUseNetworkDebug.session()` 创建需要调试的前台会话。已有缓存、Cookie 或超时配置可通过 `session(configuration:)` 传入。用 Debug 配置重新构建并安装应用。
+3. 在 PhoneUse 填写应用的 Bundle ID，选择「不限速」或 32、128、512、2048 KiB/s，点击「重启应用并开始」。状态变为「已连接」后操作应用。上下行分别共享所选带宽，同方向的多个连接共享额度。
+4. 列表显示最近 300 个完成的任务，包括方法、主机和路径、最终 HTTP 状态、耗时、上传与下载的正文字节数。查询参数、URL 中的用户名和密码、请求头和正文不会进入列表。HTTPS 使用应用原有的证书校验。
+5. 点击「结束并重启应用」恢复普通会话。切换设备或关闭窗口也会结束调试。若模拟器在调试期间被关机，下次直接从模拟器启动应用即可。
+
+作用范围是本次启动的目标应用中通过接入文件创建的前台 URLSession。后台会话、已有的 `URLSession.shared`、WKWebView 和自建 socket 不在覆盖范围内。Release 构建以及从 Xcode 或模拟器直接启动时使用普通 URLSession。
 
 ## 安装应用
 

@@ -15,6 +15,7 @@ protocol DeviceConnection: Sendable {
     func uiTree() async throws -> UITree
     func activate(_ selector: UISelector) async throws
     func typeText(_ text: String, target: UISelector?) async throws
+    func sendKeystrokes(_ keys: [DeviceKeystroke]) async throws
     func close() async
 }
 

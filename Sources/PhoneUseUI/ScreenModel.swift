@@ -28,7 +28,8 @@ public final class ScreenModel: ObservableObject {
     @Published private(set) var isChangingGeometry = false
     @Published private(set) var posture: SimulatorPosture?
 
-    var frameOrientation: DeviceOrientation? { session?.frameOrientation }
+    @Published private(set) var frameOrientation: DeviceOrientation?
+    @Published private(set) var rotationTurns = 0
 
     private var session: DeviceSession?
     private var settings: DeviceSettings?
@@ -101,6 +102,7 @@ public final class ScreenModel: ObservableObject {
         guard !Task.isCancelled else { return }
         let generation = UUID()
         runGeneration = generation
+        discardPendingKeystrokes()
         releaseManualTouch()
         finishRecording()
         settings = nil
@@ -112,6 +114,8 @@ public final class ScreenModel: ObservableObject {
         canFold = false
         canRotate = false
         previewOrientation = .portrait
+        frameOrientation = nil
+        rotationTurns = 0
         posture = nil
         isChangingGeometry = false
         framesPerSecond = nil
@@ -207,7 +211,7 @@ public final class ScreenModel: ObservableObject {
         while isCurrentRequest(device.id, generation: generation), let stream = self.stream {
             try? await Task.sleep(for: .seconds(stream.kind == .screenshots ? 5 : 1))
             guard isCurrentRequest(device.id, generation: generation) else { break }
-            updateDisplay(session)
+            if !isChangingGeometry { updateDisplay(session) }
             if let recording, !recording.isRunning { finishRecording() }
             guard stream.recoveryPolicy == .retryVideo, isCurrentRequest(device.id, generation: generation),
                   let video = await makeVideoScreenStream(for: session) else { continue }
@@ -244,7 +248,7 @@ public final class ScreenModel: ObservableObject {
             // re-rendered for each frame.
             let shown = fps.rounded()
             if self.framesPerSecond != shown { self.framesPerSecond = shown }
-            if let session = self.session { self.updateDisplay(session) }
+            if !self.isChangingGeometry, let session = self.session { self.updateDisplay(session) }
             if self.streamError != nil { self.streamError = nil }
         }
         stream.onError = { [weak self, weak stream] message in
@@ -276,6 +280,8 @@ public final class ScreenModel: ObservableObject {
     }
 
     private func updateDisplay(_ session: DeviceSession) {
+        let frame = session.frameOrientation
+        if frameOrientation != frame { frameOrientation = frame }
         let orientation = session.previewOrientation
         if previewOrientation != orientation { previewOrientation = orientation }
         let next = orientation.display(session.display)
@@ -331,8 +337,27 @@ public final class ScreenModel: ObservableObject {
                 }
                 attach(replacement)
             }
+            if runGeneration == generation, let previous = frameOrientation,
+               let next = session.frameOrientation, next != previous {
+                // Keep a continuous angle across the landscape-left / portrait boundary.
+                rotationTurns += previous.quarterTurns(to: next, preferring: direction)
+            }
         }
         if runGeneration == generation { updateDisplay(session) }
+    }
+
+    func sendKeystroke(_ key: DeviceKeystroke) {
+        guard let session, requestedDeviceID == session.device.id, stream != nil,
+              !isChangingGeometry, !isReconnecting, streamError == nil else { return }
+        guard session.device.isAndroid || session.device.isSimulator || session.device.osMajorVersion >= 27 else {
+            show("真机键盘输入需要 iOS 或 iPadOS 27 及以上版本")
+            return
+        }
+        session.enqueueKeystroke(key)
+    }
+
+    func discardPendingKeystrokes() {
+        session?.discardPendingKeystrokes()
     }
 
     func touch(_ phase: TouchPhase, at point: CGPoint) {

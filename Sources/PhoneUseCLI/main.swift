@@ -7,6 +7,9 @@ usage: phone-use [--device <name|udid|android:serial|simulator:udid>] <command>
   list-simulator-options           list runtime ID, device type ID and model
   create-simulator <runtime-id> <device-type-id> [name]
   delete-simulator <simulator:udid>
+  simulator-status-bar <screenshot|clear>
+  simulator-open-url <url>
+  simulator-push <bundle-id> <file.apns>
   pair                             show the Trust prompt on the device
   reveal-developer-mode            make the Developer Mode switch appear in Settings
   mount                            mount the Developer Disk Image
@@ -88,6 +91,32 @@ func run() async throws {
             throw DeviceHubError.deviceNotFound(id)
         }
         try await SimulatorLifecycle.remove(device)
+    case "simulator-status-bar", "simulator-open-url", "simulator-push":
+        let action: SimulatorDeveloperAction
+        switch command {
+        case "simulator-status-bar":
+            guard arguments.count == 2 else { print(usage); exit(2) }
+            switch arguments[1] {
+            case "screenshot": action = .screenshotStatusBar
+            case "clear": action = .clearStatusBar
+            default: print(usage); exit(2)
+            }
+        case "simulator-open-url":
+            guard arguments.count == 2 else { print(usage); exit(2) }
+            action = .openURL(arguments[1])
+        default:
+            guard arguments.count == 3 else { print(usage); exit(2) }
+            let file = try FileHandle(forReadingFrom: URL(fileURLWithPath: arguments[2]))
+            defer { try? file.close() }
+            let data = try file.read(upToCount: 4097) ?? Data()
+            guard let payload = String(data: data, encoding: .utf8) else {
+                throw DeviceHubError.serviceFailed("Use a UTF-8 APNs JSON file of at most 4096 bytes.")
+            }
+            action = .push(bundleID: arguments[1], payload: payload)
+        }
+        try action.validate()
+        let target = try await hub.device(for: deviceQuery, requireUnique: true)
+        try await action.run(on: target)
     case "serve":
         let value = arguments.count > 1 ? arguments[1] : "8765"
         guard let port = UInt16(value), port > 0, arguments.count <= 2 else {

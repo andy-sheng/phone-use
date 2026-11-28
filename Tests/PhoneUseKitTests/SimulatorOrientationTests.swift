@@ -24,6 +24,17 @@ final class SimulatorOrientationTests: XCTestCase {
         }
     }
 
+    func testRotationAnimationUsesSignedShortestTurnAcrossPortrait() {
+        for pose in DeviceOrientation.allCases {
+            XCTAssertEqual(pose.quarterTurns(to: pose.rotated(.left), preferring: .left), -1)
+            XCTAssertEqual(pose.quarterTurns(to: pose.rotated(.right), preferring: .right), 1)
+            XCTAssertEqual(pose.quarterTurns(to: pose, preferring: .right), 0)
+            let opposite = pose.rotated(.right).rotated(.right)
+            XCTAssertEqual(pose.quarterTurns(to: opposite, preferring: .left), -2)
+            XCTAssertEqual(pose.quarterTurns(to: opposite, preferring: .right), 2)
+        }
+    }
+
     func testDisplayedTouchMapsBackToNativeFramebuffer() {
         let point = CGPoint(x: 0.2, y: 0.3)
         let expected: [(DeviceOrientation, CGPoint)] = [

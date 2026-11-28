@@ -156,8 +156,9 @@ class FakeDriver:
         self.calls.append((name,) if name == "up" else (name, x, y))
         self._maybe_fail(name)
 
-    def key(self, action, keycode):
-        self.calls.append(("key_down" if action == 0 else "key_up", keycode))
+    def key(self, action, keycode, meta_state=None):
+        event = ("key_down" if action == 0 else "key_up", keycode)
+        self.calls.append(event if meta_state is None else (*event, meta_state))
         self._maybe_fail("key")
 
     def launch(self, component):
@@ -360,6 +361,17 @@ class DeviceTests(unittest.TestCase):
             self.device.command({"action": "launch", "bundleID": "com.app; reboot"})
         with self.assertRaises(RpcError):
             self.device.command({"action": "launch", "bundleID": "com.app/$HOME"})
+
+    def test_keyboard_strokes_deliver_shift_and_backspace_in_order(self):
+        self.device.command({"action": "keyboardInput", "keys": '[{"code":4,"shift":true},{"code":42,"shift":false}]'})
+        self.assertEqual(self.driver.calls, [
+            ("key_down", 29, 65), ("key_up", 29, 65), ("key_down", 67, 0), ("key_up", 67, 0)])
+        self.assertFalse(self.device.held_keys)
+        self.permission_checker.assert_called_once()
+        self.driver.calls.clear()
+        with self.assertRaises(RpcError):
+            self.device.command({"action": "keyboardInput", "keys": '[{"code":4,"shift":false},{"code":50,"shift":0}]'})
+        self.assertFalse(self.driver.calls)
 
     def test_held_key_is_released_after_its_duration(self):
         self.device.command({"action": "press", "button": "volume_up", "durationMs": "20"})

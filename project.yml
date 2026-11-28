@@ -35,6 +35,12 @@ targets:
       - path: Sources/PhoneUseApp
         excludes:
           - Resources/phoneuse_chrome_mcp.py
+          - Resources/phoneuse_network_debug.py
+          - Resources/PhoneUseNetworkDebug.swift.txt
+      - path: Sources/PhoneUseApp/Resources/phoneuse_network_debug.py
+        buildPhase: resources
+      - path: Sources/PhoneUseApp/Resources/PhoneUseNetworkDebug.swift.txt
+        buildPhase: resources
       - path: Sources/PhoneUseApp/Resources/phoneuse_chrome_mcp.py
         buildPhase: resources
       # Icon Composer document; Xcode compiles it into Assets.car plus an .icns for macOS 15.

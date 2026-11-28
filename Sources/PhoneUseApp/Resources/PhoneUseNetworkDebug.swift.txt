@@ -1,0 +1,69 @@
+import Foundation
+#if DEBUG && targetEnvironment(simulator)
+import Network
+#endif
+
+/// Use this factory for the foreground URLSession you want to inspect in PhoneUse.
+public enum PhoneUseNetworkDebug {
+    public static func session(configuration: URLSessionConfiguration = .default) -> URLSession {
+        #if DEBUG && targetEnvironment(simulator)
+        if #available(iOS 17.0, *), let monitor = RequestMonitor(environment: ProcessInfo.processInfo.environment),
+           let config = configuration.copy() as? URLSessionConfiguration, config.identifier == nil {
+            var proxy = ProxyConfiguration(socksv5Proxy: .hostPort(host: "127.0.0.1", port: monitor.port))
+            proxy.applyCredential(username: "phoneuse", password: monitor.token)
+            proxy.allowFailover = false
+            config.proxyConfigurations = [proxy]
+            monitor.send(["event": "attached"])
+            return URLSession(configuration: config, delegate: monitor, delegateQueue: nil)
+        }
+        #endif
+        return URLSession(configuration: configuration)
+    }
+}
+
+#if DEBUG && targetEnvironment(simulator)
+private final class RequestMonitor: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    let port: NWEndpoint.Port
+    let token: String
+    let queue = DispatchQueue(label: "PhoneUse.request-metrics")
+
+    init?(environment env: [String: String]) {
+        guard let bundle = Bundle.main.bundleIdentifier, env["PHONEUSE_NETWORK_BUNDLE"] == bundle,
+              let udid = env["SIMULATOR_UDID"], udid.lowercased() == env["PHONEUSE_NETWORK_UDID"]?.lowercased(),
+              let raw = env["PHONEUSE_NETWORK_PORT"], let number = UInt16(raw), let port = NWEndpoint.Port(rawValue: number),
+              let token = env["PHONEUSE_NETWORK_TOKEN"], !token.isEmpty else { return nil }
+        self.port = port
+        self.token = token
+        super.init()
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        guard let request = task.originalRequest, let url = request.url,
+              var parts = URLComponents(url: url, resolvingAgainstBaseURL: true) else { return }
+        parts.user = nil
+        parts.password = nil
+        parts.query = nil
+        parts.fragment = nil
+        guard let address = parts.string, address.utf8.count <= 8192 else { return }
+        let transactions = metrics.transactionMetrics
+        let status = (task.response as? HTTPURLResponse)?.statusCode
+            ?? (transactions.last?.response as? HTTPURLResponse)?.statusCode ?? 0
+        send(["event": "request", "method": request.httpMethod ?? "GET", "url": address,
+              "status": status, "millis": Int(metrics.taskInterval.duration * 1000),
+              "sent": transactions.reduce(Int64(0)) { $0 + $1.countOfRequestBodyBytesSent },
+              "received": transactions.reduce(Int64(0)) { $0 + $1.countOfResponseBodyBytesReceived }])
+    }
+
+    func send(_ fields: [String: Any]) {
+        var record = fields
+        record["token"] = token
+        guard var data = try? JSONSerialization.data(withJSONObject: record) else { return }
+        data.append(10)
+        let connection = NWConnection(host: "127.0.0.1", port: port, using: .tcp)
+        connection.start(queue: queue)
+        connection.send(content: data, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in
+            connection.cancel()
+        })
+    }
+}
+#endif

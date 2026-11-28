@@ -117,14 +117,14 @@ public enum SimulatorLifecycle {
         try await SimulatorTools.simctl(["install", id, app.path], developerDirectory: developer)
     }
 
-    private static func target(_ device: DeviceSummary) throws -> (String, String) {
+    static func target(_ device: DeviceSummary) throws -> (String, String) {
         guard device.isSimulator, UUID(uuidString: device.deviceIdentifier) != nil else {
             throw DeviceHubError.capabilityUnavailable("Managing this device as an iOS simulator")
         }
         return (device.deviceIdentifier, try developerDirectory())
     }
 
-    private static func developerDirectory() throws -> String {
+    public static func developerDirectory() throws -> String {
         guard let developer = SimulatorTools.developerDirectory() else {
             throw DeviceHubError.serviceFailed("Xcode is required to manage a simulator")
         }

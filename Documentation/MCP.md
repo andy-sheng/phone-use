@@ -158,6 +158,18 @@ PhoneUse 在读取钥匙串后，从一次系统界面快照确认空密码框�
 
 旋转和折叠使用当前设备会话；返回的 `width`、`height` 单位为 points。改变屏幕形态前会结束目标设备上的录屏；有 MCP 录屏时，结果的 `saved_recording.local_path` 提供文件路径。下一次触摸前应重新截图。
 
+### 模拟器开发工具
+
+以下工具作用于已启动并就绪的 iOS 模拟器，可以在设备预览关闭时使用。多台设备并行测试时，通过 `device` 指定目标。
+
+| 工具 | 调用示例 | 效果 |
+| --- | --- | --- |
+| `set_simulator_status_bar` | `{"preset":"screenshot"}` | 将状态栏固定为 9:41，便于截图。用 `{"preset":"clear"}` 清除该模拟器的所有状态栏覆盖 |
+| `open_simulator_url` | `{"url":"myapp://orders/42"}` | 在模拟器中打开深链。也支持 HTTPS 链接，由系统选择处理应用 |
+| `send_simulator_push` | `{"bundle_id":"com.example.shop","payload":{"aps":{"alert":"订单已发货"},"order_id":"42"}}` | 向指定的已安装应用模拟一条 APNs 通知，保留 `aps` 之外的自定义字段 |
+
+首次打开自定义 URL 时，iOS 可能询问是否在目标应用中打开。确认后可调用 `describe_ui` 或 `screenshot` 验证落地页面。推送是否显示横幅取决于应用的通知权限与前台处理方式。
+
 ### 应用沙箱文件
 
 对就绪的 Android 真机或模拟器，先调用 `list_apps`，选择 `containerAccessible: true` 的包名作为 `bundle_id`。随后可用 `list_sandbox_files` 浏览根目录或子目录、用 `read_sandbox_file` 读取最多 64 KiB 的 UTF-8 文本、用 `download_sandbox_file` 将单个文件保存到 Mac 上尚不存在的绝对路径。Android 使用当前用户授权的 ADB 和 `run-as`，iOS 使用 CoreDevice。两者都可以在设备预览关闭时读取。

@@ -265,6 +265,11 @@ public actor DaemonClient {
         try await call("describeUI", ["udid": udid], as: UITree.self)
     }
 
+    func iosKeystrokes(_ udid: String, keys: [DeviceKeystroke]) async throws {
+        let payload = String(decoding: try JSONEncoder().encode(keys), as: UTF8.self)
+        try await callIgnoringResult("keyboardInput", ["udid": udid, "keys": payload])
+    }
+
     /// One RPC holds the tree and its live element handle on the same DTX connection.
     func iosUIAction(_ udid: String, selector: UISelector?, text: String? = nil) async throws {
         var params = ["udid": udid]
@@ -275,6 +280,12 @@ public actor DaemonClient {
         }
         if let text { params["text"] = text }
         try await callIgnoringResult(text == nil ? "activateUI" : "typeText", params)
+    }
+
+    func networkCondition(_ method: String, udid: String, profile: String?) async throws -> DeviceNetworkCondition {
+        var params = ["udid": udid]
+        params["profile"] = profile
+        return try await call(method, params, as: DeviceNetworkCondition.self)
     }
 
     /// The device's accessibility audit settings, such as `REDUCE_MOTION` or `DYNAMIC_TYPE`.

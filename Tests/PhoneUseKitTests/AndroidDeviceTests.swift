@@ -49,7 +49,7 @@ final class AndroidDeviceTests: XCTestCase {
             queue.enqueue(phase, x: x, y: x)
         }
         var events: [QueuedTouch] = []
-        while let event = queue.next() { events.append(event) }
+        while case .touch(let event) = queue.next() { events.append(event) }
         XCTAssertEqual(events.map(\.phase), [.began, .moved, .ended, .began, .moved, .ended])
         XCTAssertEqual(events[1].x, 0.4)
         queue.finish()
@@ -57,12 +57,33 @@ final class AndroidDeviceTests: XCTestCase {
         XCTAssertNil(queue.next())
     }
 
+    func testQueuedKeystrokesRespectTouchOrderAndCanBeDiscardedOnBlur() {
+        let queue = TouchEventQueue(coalesceMoves: true)
+        queue.enqueue(.ended, x: 0, y: 0)
+        queue.enqueue(.init(.tab))
+        queue.enqueue(.init(.left, shift: true))
+        queue.enqueue(.began, x: 1, y: 1)
+        queue.enqueue(.init(.enter))
+        guard case .touch(let first) = queue.next(), case .keyboard(let keys) = queue.next() else {
+            return XCTFail("The focus click must reach the device before the first keystroke")
+        }
+        XCTAssertEqual(first.phase, .ended)
+        XCTAssertEqual(keys, [.init(.tab), .init(.left, shift: true)])
+        queue.discardKeystrokes()
+        guard case .touch(let touch) = queue.next() else { return XCTFail("Missing subsequent click") }
+        XCTAssertEqual(touch.phase, .began)
+        XCTAssertNil(queue.next())
+    }
+
     func testIOSQueueDoesNotCoalesceMoves() {
         let queue = TouchEventQueue(coalesceMoves: false)
         queue.enqueue(.moved, x: 0.2, y: 0.2)
         queue.enqueue(.moved, x: 0.4, y: 0.4)
-        XCTAssertEqual(queue.next()?.x, 0.2)
-        XCTAssertEqual(queue.next()?.x, 0.4)
+        guard case .touch(let first) = queue.next(), case .touch(let second) = queue.next() else {
+            return XCTFail("Missing touch events")
+        }
+        XCTAssertEqual(first.x, 0.2)
+        XCTAssertEqual(second.x, 0.4)
     }
 
     func testTouchErrorCallbackCanBeReboundDuringDelivery() {
@@ -98,7 +119,7 @@ final class AndroidDeviceTests: XCTestCase {
         } reportError: { message in
             errors.append(message)
         }
-        while let event = queue.next() { await delivery.deliver(event) }
+        while case .touch(let event) = queue.next() { await delivery.deliver(event) }
         let sent = await sender.phases
         XCTAssertEqual(sent, [.began, .ended, .began, .moved, .ended])
         XCTAssertEqual(errors.values, ["Enable USB debugging security settings"])

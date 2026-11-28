@@ -23,6 +23,16 @@ public enum DeviceOrientation: String, CaseIterable, Sendable {
     public var isLandscape: Bool { quarterTurns % 2 == 1 }
     public var radians: CGFloat { CGFloat(quarterTurns) * .pi / 2 }
 
+    /// Shortest signed turn between two reported poses. A half-turn can go either way.
+    public func quarterTurns(to next: Self, preferring direction: DeviceRotationDirection) -> Int {
+        switch (next.quarterTurns - quarterTurns + 4) % 4 {
+        case 3: -1
+        case 2: direction == .left ? -2 : 2
+        case 1: 1
+        default: 0
+        }
+    }
+
     func rotated(_ direction: DeviceRotationDirection) -> Self {
         Self.allCases[(quarterTurns + (direction == .right ? 1 : 3)) % 4]
     }

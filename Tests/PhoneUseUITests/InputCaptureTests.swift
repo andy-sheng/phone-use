@@ -91,6 +91,48 @@ final class InputCaptureTests: XCTestCase {
         XCTAssertEqual(points[2], points[1])
     }
 
+    func testKeyboardFollowsPreviewFocusAndInputGate() throws {
+        let surface = ScreenSurface.SurfaceNSView()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 200),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = surface
+        var sent: [DeviceKeystroke] = []
+        surface.onKey = { sent.append($0) }
+        var blurCount = 0
+        surface.onKeyboardBlur = { blurCount += 1 }
+        let letter = try key(0, "A", modifiers: .shift)
+        let click = try mouse(.leftMouseDown, at: CGPoint(x: 50, y: 50))
+        surface.mouseDown(with: click)
+        XCTAssertTrue(window.firstResponder === surface)
+        surface.keyDown(with: letter)
+        surface.keyDown(with: try key(51, "\u{7f}"))
+        surface.keyDown(with: try key(123, "\u{f702}", modifiers: [.shift, .function]))
+        surface.keyDown(with: try key(36, "\r"))
+        XCTAssertEqual(sent, [try XCTUnwrap(DeviceKeystroke(character: "A")), .init(.backspace),
+                              .init(.left, shift: true), .init(.enter)])
+        XCTAssertTrue(window.makeFirstResponder(nil))
+        XCTAssertEqual(blurCount, 1)
+        surface.mouseDown(with: click)
+        surface.acceptsInput = false
+        XCTAssertEqual(blurCount, 2)
+        surface.keyDown(with: letter)
+        XCTAssertEqual(sent.count, 4)
+    }
+
+    func testHostShortcutsAndUnsupportedKeysAreNotForwarded() throws {
+        for modifier in [NSEvent.ModifierFlags.command, .control, .option] {
+            XCTAssertNil(ScreenSurface.SurfaceNSView.keystroke(for: try key(0, "a", modifiers: modifier)))
+        }
+        XCTAssertNil(ScreenSurface.SurfaceNSView.keystroke(for: try key(122, "\u{f704}")))
+        XCTAssertNil(ScreenSurface.SurfaceNSView.keystroke(for: try key(0, "你")))
+    }
+
+    private func key(_ code: UInt16, _ characters: String, modifiers: NSEvent.ModifierFlags = []) throws -> NSEvent {
+        try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
+                                      windowNumber: 0, context: nil, characters: characters,
+                                      charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
+    }
+
     private func sendHorizontalWheelGesture(to surface: ScreenSurface.SurfaceNSView) throws {
         for phase in [CGScrollPhase.began, .changed, .ended] {
             let event = try wheel(unit: .pixel, delta: 0, horizontal: -12, phase: phase)

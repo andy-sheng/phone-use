@@ -23,6 +23,8 @@ final class MCPClientSetupTests: XCTestCase {
         XCTAssertEqual(setup.addArguments(.codex), ["mcp", "add", "phone-use", "--", serverPath])
         XCTAssertEqual(setup.removeArguments(.codex), ["mcp", "remove", "phone-use"])
         XCTAssertEqual(setup.getArguments(.codex), ["mcp", "get", "phone-use"])
+        XCTAssertEqual(setup.addArguments(.codeBuddyCode), ["mcp", "add", "--scope", "user", "phone-use", "--", serverPath])
+        XCTAssertEqual(setup.removeArguments(.codeBuddyCode), ["mcp", "remove", "phone-use", "--scope", "user"])
         XCTAssertEqual(setup.shellCommand(.codex),
                        "codex mcp add phone-use -- '/Applications/phone use.app/Contents/Helpers/phone-use-mcp'")
     }
@@ -40,6 +42,20 @@ final class MCPClientSetupTests: XCTestCase {
         let server = (object?["mcpServers"] as? [String: Any])?["phone-use"] as? [String: Any]
         XCTAssertEqual(server?["command"] as? String, serverPath)
         XCTAssertFalse(json.contains(#"\/"#), "paths stay readable")
+    }
+
+    func testCursorInstallLinkCarriesTheServerCommand() throws {
+        let path = "/Applications/测试 ~~~??? & #1.app/Contents/Helpers/phone-use-mcp"
+        let url = try XCTUnwrap(MCPClientSetup(serverPath: path).cursorInstallURL)
+        let link = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        XCTAssertEqual(link.scheme, "cursor")
+        XCTAssertEqual(link.host, "anysphere.cursor-deeplink")
+        XCTAssertEqual(link.path, "/mcp/install")
+        XCTAssertEqual(link.queryItems?.first { $0.name == "name" }?.value, "phone-use")
+        XCTAssertFalse(url.absoluteString.contains("+"), "Form-style query decoders treat a literal plus as a space")
+        let config = try XCTUnwrap(link.queryItems?.first { $0.name == "config" }?.value)
+        let data = try XCTUnwrap(Data(base64Encoded: config))
+        XCTAssertEqual(try JSONDecoder().decode([String: String].self, from: data), ["command": path])
     }
 
     func testServerIsFoundInTheBundleOrNextToASwiftPMBuild() throws {
@@ -83,6 +99,58 @@ final class MCPClientSetupTests: XCTestCase {
         await installer.refresh()
         XCTAssertEqual(installer.state(.claudeCode).status, .toolMissing)
         XCTAssertEqual(installer.state(.codex).status, .toolMissing)
+        XCTAssertTrue(installer.installedCLIs.isEmpty)
+    }
+
+    func testOnlyInstalledClientsAppearAndRemovalIsDetected() async throws {
+        let tool = directory.appendingPathComponent("codebuddy")
+        try makeExecutable(tool, "#!/bin/sh\nexit 1\n")
+        // An executable directory is not a CLI.
+        try FileManager.default.createDirectory(at: directory.appendingPathComponent("codex"), withIntermediateDirectories: false)
+        var apps: Set<MCPClientSetup.DesktopClient> = [.workBuddy, .codeBuddy]
+        let installer = MCPClientInstaller(setup: MCPClientSetup(serverPath: serverPath),
+                                          searchPath: { [directory] in [directory!.path] },
+                                          appInstalled: { apps.contains($0) })
+        await installer.refresh()
+        XCTAssertEqual(installer.installedCLIs, [.codeBuddyCode])
+        XCTAssertEqual(Set(installer.installedApps), apps)
+
+        try FileManager.default.removeItem(at: tool)
+        apps = [.cursor]
+        await installer.refresh()
+        XCTAssertTrue(installer.installedCLIs.isEmpty)
+        XCTAssertEqual(installer.installedApps, [.cursor])
+    }
+
+    func testBuddyImportCreatesAndUpdatesOnlyThePhoneUseEntry() throws {
+        XCTAssertEqual(MCPClientSetup.DesktopClient.codeBuddy.configPath, ".codebuddy/mcp.json")
+        XCTAssertEqual(MCPClientSetup.DesktopClient.workBuddy.configPath, ".workbuddy/mcp.json")
+        let setup = MCPClientSetup(serverPath: serverPath)
+        for client in [MCPClientSetup.DesktopClient.codeBuddy, .workBuddy] {
+            let url = directory.appendingPathComponent(try XCTUnwrap(client.configPath))
+            try setup.install(in: url)
+            let original = try Data(contentsOf: url)
+            try setup.install(in: url)
+            XCTAssertEqual(try Data(contentsOf: url), original)
+            try #"{"flag":true,"mcpServers":{"other":{"url":"https://example.com"},"phone-use":{"command":"old","disabled":true}}}"#
+                .write(to: url, atomically: true, encoding: .utf8)
+            try setup.install(in: url)
+            let config = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+            let servers = try XCTUnwrap(config["mcpServers"] as? [String: [String: Any]])
+            XCTAssertEqual(config["flag"] as? Bool, true)
+            XCTAssertEqual(servers["other"]?["url"] as? String, "https://example.com")
+            XCTAssertEqual(servers["phone-use"]?["command"] as? String, serverPath)
+            XCTAssertEqual(servers["phone-use"]?["disabled"] as? Bool, true)
+        }
+    }
+
+    func testBuddyImportLeavesUnreadableConfigurationsIntact() throws {
+        let url = directory.appendingPathComponent("mcp.json")
+        for content in ["invalid", "[]", #"{"mcpServers":[]}"#] {
+            try content.write(to: url, atomically: true, encoding: .utf8)
+            XCTAssertThrowsError(try MCPClientSetup(serverPath: serverPath).install(in: url))
+            XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), content)
+        }
     }
 
     func testAddReplacesAnOldEntryAndReportsItAdded() async throws {

@@ -36,6 +36,7 @@ struct MCPCommand {
         case listSimulatorOptions, createSimulator(name: String?, deviceType: String, runtime: String)
         case management(MCPManagement, name: String?, directory: URL?)
         case settings(MCPSettingsCommand)
+        case simulatorDeveloper(SimulatorDeveloperAction)
         case geometry(SimulatorGeometryChange)
         case touchPath([CGPoint], Duration)
         case startRecording, stopRecording(UUID)
@@ -135,6 +136,26 @@ struct MCPCommand {
                                       runtime: try Self.string(arguments, "runtime")!)
         case "get_device_settings", "set_appearance", "set_audio", "set_location":
             action = .settings(try MCPSettingsCommand(name, arguments))
+        case "set_simulator_status_bar":
+            switch try Self.string(arguments, "preset") {
+            case "screenshot": action = .simulatorDeveloper(.screenshotStatusBar)
+            case "clear": action = .simulatorDeveloper(.clearStatusBar)
+            default: throw ToolFailure(message: "'preset' must be screenshot or clear.")
+            }
+        case "open_simulator_url":
+            let command = SimulatorDeveloperAction.openURL(try Self.string(arguments, "url")!)
+            try command.validate()
+            action = .simulatorDeveloper(command)
+        case "send_simulator_push":
+            let bundle = try Self.string(arguments, "bundle_id")!
+            guard let payload = arguments["payload"] as? [String: Any],
+                  JSONSerialization.isValidJSONObject(payload) else {
+                throw ToolFailure(message: "'payload' must be an APNs JSON object.")
+            }
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            let command = SimulatorDeveloperAction.push(bundleID: bundle, payload: String(decoding: data, as: UTF8.self))
+            try command.validate()
+            action = .simulatorDeveloper(command)
         case "rotate_simulator":
             guard let direction = DeviceRotationDirection(rawValue: try Self.string(arguments, "direction")!) else {
                 throw ToolFailure(message: "direction must be left or right.")

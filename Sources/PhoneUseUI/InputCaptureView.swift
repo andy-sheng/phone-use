@@ -1,13 +1,16 @@
 import AppKit
+import Carbon.HIToolbox
 import PhoneUseKit
 import SwiftUI
 
-/// Hosts the device screen layer and turns mouse and trackpad input over it into normalized touches.
+/// Hosts the device screen layer and forwards focused keyboard input and normalized pointer touches.
 struct ScreenSurface: NSViewRepresentable {
     let screenLayer: CALayer
     var orientation = DeviceOrientation.portrait
     var acceptsInput = true
     let onTouch: (TouchPhase, CGPoint) -> Void
+    var onKey: ((DeviceKeystroke) -> Void)?
+    var onKeyboardBlur: (() -> Void)?
 
     func makeNSView(context: Context) -> SurfaceNSView {
         let view = SurfaceNSView()
@@ -21,6 +24,9 @@ struct ScreenSurface: NSViewRepresentable {
 
     static func dismantleNSView(_ view: SurfaceNSView, coordinator: ()) {
         view.releaseHeldTouch()
+        view.blurKeyboard()
+        view.onKey = nil
+        view.onKeyboardBlur = nil
         view.onTouch = nil
         view.hostedLayer = nil
     }
@@ -30,15 +36,62 @@ struct ScreenSurface: NSViewRepresentable {
         view.hostedLayer = screenLayer
         view.acceptsInput = acceptsInput
         view.onTouch = onTouch
+        view.onKey = onKey
+        view.onKeyboardBlur = onKeyboardBlur
     }
 
     final class SurfaceNSView: NSView {
         var acceptsInput = true {
             didSet {
-                if !acceptsInput { releaseHeldTouch() }
+                if !acceptsInput {
+                    releaseHeldTouch()
+                    blurKeyboard()
+                }
             }
         }
         var onTouch: ((TouchPhase, CGPoint) -> Void)?
+        var onKey: ((DeviceKeystroke) -> Void)?
+        var onKeyboardBlur: (() -> Void)?
+        private var keyboardFocused = false
+
+        func blurKeyboard() {
+            guard keyboardFocused else { return }
+            keyboardFocused = false
+            onKeyboardBlur?()
+        }
+
+        override func resignFirstResponder() -> Bool {
+            guard super.resignFirstResponder() else { return false }
+            blurKeyboard()
+            return true
+        }
+
+        override func keyDown(with event: NSEvent) {
+            guard acceptsInput, keyboardFocused, let key = Self.keystroke(for: event) else {
+                super.keyDown(with: event)
+                return
+            }
+            onKey?(key)
+        }
+
+        static func keystroke(for event: NSEvent) -> DeviceKeystroke? {
+            guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return nil }
+            if let key = editingKeys[Int(event.keyCode)] {
+                return DeviceKeystroke(key, shift: event.modifierFlags.contains(.shift))
+            }
+            guard let characters = event.characters, characters.count == 1, let character = characters.first else {
+                return nil
+            }
+            return DeviceKeystroke(character: character)
+        }
+
+        private static let editingKeys: [Int: DeviceKeystroke.EditingKey] = [
+            kVK_Return: .enter, kVK_ANSI_KeypadEnter: .enter, kVK_Tab: .tab, kVK_Escape: .escape,
+            kVK_Delete: .backspace, kVK_ForwardDelete: .forwardDelete, kVK_Home: .home, kVK_End: .end,
+            kVK_PageUp: .pageUp, kVK_PageDown: .pageDown, kVK_LeftArrow: .left, kVK_RightArrow: .right,
+            kVK_UpArrow: .up, kVK_DownArrow: .down,
+        ]
+
         var orientation = DeviceOrientation.portrait {
             didSet {
                 guard orientation != oldValue else { return }
@@ -50,6 +103,7 @@ struct ScreenSurface: NSViewRepresentable {
         var hostedLayer: CALayer? {
             didSet {
                 guard hostedLayer !== oldValue else { return }
+                blurKeyboard()
                 releaseHeldTouch()
                 // Switching layouts (such as to the compact window) can hand the layer to a new
                 // surface before this one is dismantled; never take it back from that surface.
@@ -102,6 +156,7 @@ struct ScreenSurface: NSViewRepresentable {
 
         override func mouseDown(with event: NSEvent) {
             guard acceptsInput else { return }
+            keyboardFocused = onKey != nil && window?.makeFirstResponder(self) == true
             releaseHeldTouch()
             let point = normalizedLocation(of: event)
             heldPoint = point

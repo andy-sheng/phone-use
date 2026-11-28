@@ -253,6 +253,10 @@ actor SimulatorDeviceConnection: DeviceConnection {
             _ = try await bridge.accessibility(identifier, target: target, focus: true)
             try await Task.sleep(for: .milliseconds(150))
         }
+        try await sendKeystrokes(keys)
+    }
+
+    func sendKeystrokes(_ keys: [DeviceKeystroke]) async throws {
         func key(_ code: UInt32, down: Bool) async throws {
             if let modernInput { try await modernInput.key(code, down: down); return }
             guard let message = bridge.keyboardMessage?(code, down ? 1 : 2) else { throw DeviceHubError.serviceFailed("SimulatorKit could not create a keyboard event") }

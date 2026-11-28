@@ -28,8 +28,10 @@ from devicehubd import protocol
 from devicehubd.app_icons import AppIcons
 from devicehubd.app_install import install_ipa, package_file
 from devicehubd.ios_ui import IOSUI, selector_from
+from devicehubd.keyboard import preview_keys
 from devicehubd.ios_keyboard import text_keys, type_keys
 from devicehubd.lifetime import WORKER_EXIT_DEADLINE, exit_after
+from devicehubd.network_condition import NetworkCondition
 from devicehubd.protocol import RpcError
 from devicehubd.sandbox_mounts import SandboxMounts
 from devicehubd.transports import Tunnel, make_tunnel
@@ -93,9 +95,11 @@ class Worker:
         self._forwards: dict[str, asyncio.AbstractServer] = {}
         self._mirror_task: Optional[asyncio.Task[None]] = None
         self._mirror_port: Optional[int] = None
+        self._mirror_started = 0.0
         self._mirror_lock = asyncio.Lock()
         self._location_task: Optional[asyncio.Task[None]] = None
         self._location_lock = asyncio.Lock()
+        self._network_condition: NetworkCondition | None = None
         self._audit: Optional[AccessibilityAudit] = None
         self._audit_lock = asyncio.Lock()
         self._sandbox_mounts: SandboxMounts | None = None
@@ -195,6 +199,7 @@ class Worker:
                 with contextlib.suppress(OSError):
                     _, writer = await asyncio.open_connection("127.0.0.1", port)
                     writer.close()
+                    self._mirror_started = loop.time()
                     self._mirror_port = port
                     return port
                 await asyncio.sleep(0.3)
@@ -250,8 +255,10 @@ class Worker:
         # Validate before opening inspector, focusing a target, or authenticating HID.
         selector = selector_from(params.get("selector")) if method == "activateUI" or "selector" in params else None
         keys = text_keys(params.get("text")) if method == "typeText" else None
+        if method == "keyboardInput":
+            keys = preview_keys(params.get("keys"))
         if keys is not None and Version(self.rsd.product_version) < MIRROR_MIN_VERSION:
-            raise RpcError("unsupported", "Physical iOS type_text requires iOS 27 media-authenticated HID; use the on-screen keyboard")
+            raise RpcError("unsupported", "Physical iOS keyboard input requires iOS 27 media-authenticated HID; use the on-screen keyboard")
         audit = None
         inspector = None
         # Includes lock wait: an expired queued command must never execute later.
@@ -259,7 +266,7 @@ class Worker:
             async with asyncio.timeout(30):
                 async with self._audit_lock:
                     try:
-                        if method != "typeText" or selector is not None:
+                        if keys is None or selector is not None:
                             # Separate from the persistent settings channel, which must stay open.
                             audit = AccessibilityAudit(self.rsd)
                             await audit.__aenter__()
@@ -273,7 +280,9 @@ class Worker:
                         if keys is not None:
                             # Reuse existing preview authentication; do not stop another consumer's stream.
                             await self.start_mirror()
-                            await asyncio.sleep(0.5)
+                            remaining = self._mirror_started + 0.5 - asyncio.get_running_loop().time()
+                            if remaining > 0:
+                                await asyncio.sleep(remaining)
                             await type_keys(self.rsd, keys)
                         return {}
                     finally:
@@ -365,13 +374,17 @@ class Worker:
             elif method == "stopMirror":
                 await self.stop_mirror()
                 result = {}
-            elif method in {"describeUI", "activateUI", "typeText"}:
+            elif method in {"describeUI", "activateUI", "typeText", "keyboardInput"}:
                 result = await self.ui_command(method, params)
             elif method == "accessibilitySettings":
                 result = {"settings": await self.accessibility_settings()}
             elif method == "setAccessibilitySetting":
                 name, value = accessibility_value(params.get("name"), params.get("value"))
                 result = {"settings": await self.set_accessibility_setting(name, value)}
+            elif method in {"networkCondition", "enableNetworkCondition", "disableNetworkCondition"}:
+                if self._network_condition is None:
+                    self._network_condition = NetworkCondition(self.rsd)
+                result = await self._network_condition.command(method, params)
             elif method == "simulateLocation":
                 await self.simulate_location(*coordinate(params))
                 result = {}
@@ -392,6 +405,8 @@ class Worker:
             await asyncio.sleep(1)
 
     async def close(self) -> None:
+        if self._network_condition:
+            await self._network_condition.close()
         if self._web_inspector:
             await self._web_inspector.close()
         if self._sandbox_mounts:

@@ -67,11 +67,16 @@ final class TouchErrorHandlerBox: @unchecked Sendable {
 /// Keeps touch boundaries while replacing only adjacent, still-pending move events.
 /// A separate wake stream may coalesce notifications without dropping actual events.
 final class TouchEventQueue: @unchecked Sendable {
+    enum Event {
+        case touch(QueuedTouch)
+        case keyboard([DeviceKeystroke])
+    }
+
     let notifications: AsyncStream<Void>
     private let continuation: AsyncStream<Void>.Continuation
     private let lock = NSLock()
     private let coalesceMoves: Bool
-    private var events: [QueuedTouch] = []
+    private var events: [Event] = []
     private var finished = false
 
     init(coalesceMoves: Bool) {
@@ -85,16 +90,39 @@ final class TouchEventQueue: @unchecked Sendable {
         lock.lock()
         guard !finished else { lock.unlock(); return }
         let event = QueuedTouch(phase: phase, x: x, y: y)
-        if coalesceMoves, phase == .moved, events.last?.phase == .moved {
-            events[events.count - 1] = event
+        if coalesceMoves, phase == .moved, case .touch(let last) = events.last, last.phase == .moved {
+            events[events.count - 1] = .touch(event)
         } else {
-            events.append(event)
+            events.append(.touch(event))
         }
         lock.unlock()
         continuation.yield(())
     }
 
-    func next() -> QueuedTouch? {
+    func enqueue(_ key: DeviceKeystroke) {
+        lock.lock()
+        guard !finished else { lock.unlock(); return }
+        // Batch adjacent keystrokes while the device is busy, without crossing a touch.
+        if case .keyboard(var keys) = events.last, keys.count < 32 {
+            keys.append(key)
+            events[events.count - 1] = .keyboard(keys)
+        } else {
+            events.append(.keyboard([key]))
+        }
+        lock.unlock()
+        continuation.yield(())
+    }
+
+    func discardKeystrokes() {
+        lock.lock()
+        defer { lock.unlock() }
+        events.removeAll { event in
+            if case .keyboard = event { return true }
+            return false
+        }
+    }
+
+    func next() -> Event? {
         lock.lock()
         defer { lock.unlock() }
         return events.isEmpty ? nil : events.removeFirst()

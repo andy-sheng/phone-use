@@ -135,6 +135,8 @@ public final class DaemonLauncher {
         }
     }
 
+    public static var pythonExecutable: URL? { locateRuntime()?.python }
+
     static func locateRuntime() -> Runtime? {
         let fileManager = FileManager.default
         let environment = ProcessInfo.processInfo.environment

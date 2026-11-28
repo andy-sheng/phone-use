@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// How MCP clients are told about `phone-use-mcp`: the commands and configuration the MCP
 /// settings page shows, and the one-click setup that runs a client's own `mcp add`.
@@ -8,6 +8,7 @@ struct MCPClientSetup {
     enum Client: String, CaseIterable, Identifiable {
         case claudeCode
         case codex
+        case codeBuddyCode
 
         var id: String { rawValue }
 
@@ -15,6 +16,7 @@ struct MCPClientSetup {
             switch self {
             case .claudeCode: "Claude Code"
             case .codex: "Codex"
+            case .codeBuddyCode: "CodeBuddy Code（CLI）"
             }
         }
 
@@ -23,6 +25,36 @@ struct MCPClientSetup {
             switch self {
             case .claudeCode: "claude"
             case .codex: "codex"
+            case .codeBuddyCode: "codebuddy"
+            }
+        }
+    }
+
+    enum DesktopClient: String, CaseIterable, Identifiable {
+        case cursor = "Cursor"
+        case workBuddy = "WorkBuddy"
+        case codeBuddy = "CodeBuddy IDE"
+
+        var id: Self { self }
+
+        var isInstalled: Bool {
+            let identifiers: [String]
+            switch self {
+            case .cursor: identifiers = ["com.todesktop.230313mzl4w4u92"]
+            case .workBuddy: identifiers = ["com.tencent.workbuddy.mac"]
+            case .codeBuddy: identifiers = ["com.tencent.codebuddycn", "com.tencent.codebuddy"]
+            }
+            return identifiers.contains { id in
+                guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else { return false }
+                return FileManager.default.fileExists(atPath: url.path)
+            }
+        }
+
+        var configPath: String? {
+            switch self {
+            case .cursor: nil // Cursor imports via its install link.
+            case .workBuddy: ".workbuddy/mcp.json"
+            case .codeBuddy: ".codebuddy/mcp.json"
             }
         }
     }
@@ -35,6 +67,7 @@ struct MCPClientSetup {
         switch client {
         case .claudeCode: ["mcp", "add", "-s", "user", Self.serverName, "--", serverPath]
         case .codex: ["mcp", "add", Self.serverName, "--", serverPath]
+        case .codeBuddyCode: ["mcp", "add", "--scope", "user", Self.serverName, "--", serverPath]
         }
     }
 
@@ -42,6 +75,7 @@ struct MCPClientSetup {
         switch client {
         case .claudeCode: ["mcp", "remove", "-s", "user", Self.serverName]
         case .codex: ["mcp", "remove", Self.serverName]
+        case .codeBuddyCode: ["mcp", "remove", Self.serverName, "--scope", "user"]
         }
     }
 
@@ -54,9 +88,53 @@ struct MCPClientSetup {
         ([client.executableName] + addArguments(client)).map(Self.shellQuoted).joined(separator: " ")
     }
 
+    private var serverConfiguration: [String: String] { ["command": serverPath] }
+
+    func install(in configurationURL: URL) throws {
+        let url = configurationURL.resolvingSymlinksInPath()
+        var config: [String: Any] = [:]
+        do {
+            let data = try Data(contentsOf: url)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw CocoaError(.propertyListReadCorrupt)
+            }
+            config = object
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        }
+        var servers: [String: Any] = [:]
+        if let existing = config["mcpServers"] {
+            guard let entries = existing as? [String: Any] else { throw CocoaError(.propertyListReadCorrupt) }
+            servers = entries
+        }
+        let existing = servers[Self.serverName] as? [String: Any]
+        var entry = existing?["url"] == nil ? existing ?? [:] : [:]
+        entry["type"] = "stdio"
+        entry["command"] = serverPath
+        entry["args"] = [String]()
+        if let existing, NSDictionary(dictionary: existing).isEqual(to: entry) { return }
+        servers[Self.serverName] = entry
+        config["mcpServers"] = servers
+        let data = try JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        try data.write(to: url, options: .atomic)
+    }
+
+    var cursorInstallURL: URL? {
+        guard let data = try? JSONEncoder().encode(serverConfiguration),
+              let config = data.base64EncodedString().addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+        else { return nil }
+        var link = URLComponents()
+        link.scheme = "cursor"
+        link.host = "anysphere.cursor-deeplink"
+        link.path = "/mcp/install"
+        link.percentEncodedQueryItems = [URLQueryItem(name: "name", value: Self.serverName),
+                                         URLQueryItem(name: "config", value: config)]
+        return link.url
+    }
+
     /// The `mcpServers` entry JSON-configured clients (Claude Desktop, Cursor, …) take.
     var jsonConfiguration: String {
-        let configuration = ["mcpServers": [Self.serverName: ["command": serverPath]]]
+        let configuration = ["mcpServers": [Self.serverName: serverConfiguration]]
         let data = try? JSONSerialization.data(withJSONObject: configuration,
                                                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         return data.map { String(decoding: $0, as: UTF8.self) } ?? ""
@@ -111,7 +189,11 @@ enum CommandLineTools {
     static func locate(_ name: String, in directories: [String]) -> URL? {
         directories.lazy
             .map { URL(fileURLWithPath: $0).appendingPathComponent(name) }
-            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+            .first {
+                var isDirectory: ObjCBool = false
+                return FileManager.default.fileExists(atPath: $0.path, isDirectory: &isDirectory)
+                    && !isDirectory.boolValue && FileManager.default.isExecutableFile(atPath: $0.path)
+            }
     }
 
     /// Runs `executable` from the home directory with `PATH` set to `path`.

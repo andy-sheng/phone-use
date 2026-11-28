@@ -3,6 +3,7 @@ import SwiftUI
 
 /// The live device screen in a device frame. Device controls live in the window toolbar.
 struct DeviceScreenView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var screen: ScreenModel
     let stream: any ScreenStream
     var allowsInput = true
@@ -21,13 +22,15 @@ struct DeviceScreenView: View {
     var body: some View {
         GeometryReader { area in
             let fitScale = fittedScale(in: area.size)
-            let size = frameSize(in: area.size, fitScale: fitScale)
+            let size = frameSize(in: area.size)
             // One scroll view for both fitting and zooming, so changing the zoom animates the
             // frame's size instead of swapping views. Like the window's toolbar, it runs under
             // the title bar and the floating controls.
             ScrollView([.horizontal, .vertical]) {
                 frame
+                    .modifier(PreviewRotation(turns: screen.rotationTurns, size: size))
                     .frame(width: size.width, height: size.height)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.32), value: screen.rotationTurns)
                     .padding(insets)
                     .frame(minWidth: area.size.width, minHeight: area.size.height)
             }
@@ -80,13 +83,14 @@ struct DeviceScreenView: View {
                 screenLayer: stream.layer,
                 orientation: screen.previewOrientation,
                 acceptsInput: allowsInput && screen.streamError == nil && !screen.isReconnecting && !screen.isChangingGeometry,
-                onTouch: { phase, point in screen.touch(phase, at: point) }
+                onTouch: { phase, point in screen.touch(phase, at: point) },
+                onKey: screen.sendKeystroke, onKeyboardBlur: screen.discardPendingKeystrokes
             )
         }
     }
 
     /// The device frame's size: the zoomed screen width, or the largest frame that fits.
-    private func frameSize(in area: CGSize, fitScale: CGFloat) -> CGSize {
+    private func frameSize(in area: CGSize) -> CGSize {
         let ratio = screen.aspectRatio
         if !isCompact, let zoom, let points = screen.display?.pointWidth, points > 0 {
             return DeviceFrame<EmptyView>.outerSize(screenWidth: points * zoom, screenAspectRatio: ratio)
@@ -103,6 +107,36 @@ struct DeviceScreenView: View {
         let width = max(min(size.width - insets.leading - insets.trailing,
                             (size.height - insets.top - insets.bottom) * outer), 1)
         return width / DeviceFrame<EmptyView>.outerSize(screenWidth: points, screenAspectRatio: screen.aspectRatio).width
+    }
+}
+
+/// The stream and bezel already have their destination orientation. Turn them together
+/// through the remaining angle while interpolating the fitted size without stretching.
+private struct PreviewRotation: ViewModifier, Animatable {
+    let targetTurns: Double
+    let aspectRatio: CGFloat
+    var turns: Double
+    var shortSide: CGFloat
+
+    init(turns: Int, size: CGSize) {
+        targetTurns = Double(turns)
+        self.turns = targetTurns
+        aspectRatio = size.width / size.height
+        shortSide = min(size.width, size.height)
+    }
+
+    var animatableData: AnimatablePair<Double, CGFloat> {
+        get { AnimatablePair(turns, shortSide) }
+        set { (turns, shortSide) = (newValue.first, newValue.second) }
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .frame(width: shortSide * max(aspectRatio, 1), height: shortSide / min(aspectRatio, 1))
+            .rotationEffect(.degrees((turns - targetTurns) * 90))
+            .allowsHitTesting(turns == targetTurns)
+            // The interpolated pose above drives the transition, including the bezel buttons.
+            .transaction(value: targetTurns) { $0.animation = nil }
     }
 }
 

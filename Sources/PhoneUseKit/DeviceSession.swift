@@ -166,7 +166,16 @@ public final class DeviceSession: @unchecked Sendable {
             }
             for await _ in touches.notifications {
                 while !Task.isCancelled, let event = touches.next() {
-                    await delivery.deliver(event)
+                    switch event {
+                    case .touch(let touch):
+                        await delivery.deliver(touch)
+                    case .keyboard(let keys):
+                        do { try await connection.sendKeystrokes(keys) }
+                        catch {
+                            touches.discardKeystrokes()
+                            touchErrors.report(String(describing: error))
+                        }
+                    }
                 }
             }
         }
@@ -182,6 +191,15 @@ public final class DeviceSession: @unchecked Sendable {
     /// Queues one touch event. Events are delivered in order.
     public func touch(_ phase: TouchPhase, x: Double, y: Double) {
         touches.enqueue(phase, x: x, y: y)
+    }
+
+    /// Keyboard and touch share a queue so a click that focuses a field precedes typing.
+    public func enqueueKeystroke(_ key: DeviceKeystroke) {
+        touches.enqueue(key)
+    }
+
+    public func discardPendingKeystrokes() {
+        touches.discardKeystrokes()
     }
 
     /// Sends a touch and waits for delivery. Automation callers need failures to propagate,
@@ -258,6 +276,7 @@ public final class DeviceSession: @unchecked Sendable {
 
     public func close() async {
         Diagnostics.record("device.close", ["device": Diagnostics.deviceID(device.udid)])
+        touches.discardKeystrokes()
         if connection.touchPolicy.dropsPendingOnClose {
             touches.finish()
             touchTask.cancel()

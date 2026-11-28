@@ -16,13 +16,16 @@ struct PhoneUseWindow: View {
     @State private var passcodeDevice: DeviceSummary?
     @State private var filesDevice: DeviceSummary?
 
+    @StateObject private var network = SimulatorNetworkSession()
+
     enum Tab: String, CaseIterable {
-        case uiTree, web, calls, settings, deviceInfo
+        case uiTree, web, network, calls, settings, deviceInfo
 
         func workspaceTab(webDetached: Bool) -> WorkspaceTab {
             switch self {
             case .uiTree: WorkspaceTab(id: rawValue, title: "界面结构", systemImage: "list.bullet.indent")
             case .web: WorkspaceTab(id: rawValue, title: "网页调试", systemImage: "safari", placement: webDetached ? .window : .bottom)
+            case .network: WorkspaceTab(id: rawValue, title: "网络请求", systemImage: "network")
             case .calls: WorkspaceTab(id: rawValue, title: "调用记录", systemImage: "terminal")
             case .settings: WorkspaceTab(id: rawValue, title: "设备设置", systemImage: "slider.horizontal.3")
             case .deviceInfo: WorkspaceTab(id: rawValue, title: "设备信息", systemImage: "info.circle")
@@ -59,6 +62,12 @@ struct PhoneUseWindow: View {
                     showsWebPanel = true
                     openWindow(id: PhoneUseMacApp.mainWindowID)
                 }
+            case .network:
+                if let device = model.selectedDevice, device.platform == .ios, !device.isSimulator, device.isReady {
+                    PhysicalNetworkConditionPanel(device: device).id(device.id)
+                } else {
+                    SimulatorNetworkPanel(monitor: network, device: model.selectedDevice)
+                }
             case .calls:
                 MCPActivityPanel(activity: activity)
             case .settings:
@@ -91,6 +100,10 @@ struct PhoneUseWindow: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             credentialRevision += 1
         }
+        .onChange(of: model.selectedDevice?.isReady == true ? model.selectedDevice?.id : nil) {
+            network.endSelection()
+        }
+        .onDisappear { network.endSelection() }
         .task(id: credentialRevision) {
             let statuses = try? await DeviceUnlockController.shared.statuses(for: model.devices)
             guard !Task.isCancelled else { return }

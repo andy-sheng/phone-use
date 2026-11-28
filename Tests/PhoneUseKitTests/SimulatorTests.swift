@@ -64,6 +64,32 @@ final class SimulatorTests: XCTestCase {
         XCTAssertEqual(physical.deviceIdentifier, "00008150-0014544036F2401C")
     }
 
+    func testDeveloperActionsRequireAReadySimulatorWithAnExactIdentifier() async throws {
+        for target in [try decodeDevice(["connection": "usb"]), try decodeDevice(["udid": "simulator:booted"])] {
+            do {
+                try await SimulatorDeveloperAction.clearStatusBar.run(on: target)
+                XCTFail("Expected a simulator target error")
+            } catch DeviceHubError.capabilityUnavailable { }
+        }
+        let shutdown = try decodeDevice(["state": "disconnected", "simulatorState": "Shutdown"])
+        do {
+            try await SimulatorDeveloperAction.screenshotStatusBar.run(on: shutdown)
+            XCTFail("Expected a readiness error")
+        } catch DeviceHubError.deviceNotReady { }
+    }
+
+    func testPushPayloadLimitCountsUTF8BytesAndIncludesCustomData() throws {
+        let prefix = #"{"aps":{"alert":"通知"},"custom":""#
+        let suffix = #""}"#
+        let padding = String(repeating: "a", count: 4096 - prefix.utf8.count - suffix.utf8.count)
+        func push(_ payload: String) -> SimulatorDeveloperAction { .push(bundleID: "com.example.app", payload: payload) }
+        try push(prefix + padding + suffix).validate()
+        XCTAssertThrowsError(try push(prefix + padding + "a" + suffix).validate())
+        for invalid in ["[]", "{}", #"{"aps":null}"#, #"{"aps":[]}"#, "{"] {
+            XCTAssertThrowsError(try push(invalid).validate())
+        }
+    }
+
     func testTouchPhasesUseSimulatorKitMouseEvents() {
         XCTAssertEqual(SimulatorInput.eventType(for: .began), 1)
         XCTAssertEqual(SimulatorInput.eventType(for: .moved), 6)

@@ -130,6 +130,10 @@ final class IOSDeviceConnection: DeviceConnection, Sendable {
         try await channels.uiAction(selector: target, text: text)
     }
 
+    func sendKeystrokes(_ keys: [DeviceKeystroke]) async throws {
+        try await channels.sendKeystrokes(keys)
+    }
+
     func close() async {
         await channels.closeAll()
     }
@@ -185,6 +189,10 @@ actor ServiceChannels {
 
     func uiAction(selector: UISelector?, text: String? = nil) async throws {
         try await daemon.iosUIAction(udid, selector: selector, text: text)
+    }
+
+    func sendKeystrokes(_ keys: [DeviceKeystroke]) async throws {
+        try await daemon.iosKeystrokes(udid, keys: keys)
     }
 
     func closeAll() async {

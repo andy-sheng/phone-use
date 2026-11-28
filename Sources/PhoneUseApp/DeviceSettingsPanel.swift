@@ -125,16 +125,6 @@ struct DeviceSettingsPanel: View {
                 ContentUnavailableView("设备尚未就绪", systemImage: device.deviceIcon)
             } else if device == nil {
                 ContentUnavailableView("未选择设备", systemImage: "iphone")
-            } else if model.isLoading && model.appearance == nil {
-                ProgressView().controlSize(.small)
-            } else if let failure = model.loadError {
-                ContentUnavailableView {
-                    Label("无法读取设备设置", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text(failure)
-                } actions: {
-                    Button("重试") { reload() }.glassButton()
-                }
             } else {
                 form
             }
@@ -167,6 +157,19 @@ struct DeviceSettingsPanel: View {
 
     private var form: some View {
         Form {
+            if let device, device.isSimulator {
+                SimulatorActionsSection(device: device)
+                    .id(device.id)
+            }
+            if model.isLoading && model.appearance == nil {
+                ProgressView("正在读取设备设置…").controlSize(.small)
+            } else if let failure = model.loadError {
+                Section("无法读取设备设置") {
+                    Label(failure, systemImage: "exclamationmark.triangle")
+                        .font(.callout).foregroundStyle(.orange)
+                    Button("重试") { reload() }.glassButton()
+                }
+            }
             if let appearance = model.appearance {
                 Section { appearanceRows(appearance) }
             } else if let voiceOver = model.voiceOver {

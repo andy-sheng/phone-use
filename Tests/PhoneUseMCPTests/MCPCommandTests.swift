@@ -108,6 +108,42 @@ final class MCPCommandTests: XCTestCase {
         }
     }
 
+    func testSimulatorPushPreservesCustomPayloadAndUsesSpecifiedDeviceWithoutPreview() async throws {
+        let first = try testDevice("simulator:first")
+        let second = try testDevice("simulator:second")
+        var access = MCPDeviceAccess(devices: { [first, second] }, session: { _ in
+            XCTFail("A simulator push opened a preview session")
+            throw DeviceHubError.connectionClosed
+        })
+        let payload: [String: Any] = ["aps": ["alert": "订单已发货"], "order": ["items": [2, 7]]]
+        let expected = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        access.simulatorDeveloper = { command, target in
+            XCTAssertEqual(target.udid, second.udid)
+            guard case .push(let bundleID, let text) = command else { return XCTFail("Expected a simulator push") }
+            XCTAssertEqual(bundleID, "com.example.shop")
+            let parsed = try JSONSerialization.jsonObject(with: Data(text.utf8))
+            XCTAssertEqual(try JSONSerialization.data(withJSONObject: parsed, options: [.sortedKeys]), expected)
+        }
+        let command = try MCPCommand(name: "send_simulator_push", arguments: [
+            "device": second.udid, "bundle_id": "com.example.shop", "payload": payload,
+        ])
+        let reply = try await command.execute(access: access)
+        let output = try XCTUnwrap(reply["structuredContent"] as? [String: Any])
+        XCTAssertEqual(output["device"] as? String, second.udid)
+        XCTAssertEqual(output["applied"] as? Bool, true)
+    }
+
+    func testSimulatorStatusBarPresetsAndURLDispatch() throws {
+        let set = try MCPCommand(name: "set_simulator_status_bar", arguments: ["preset": "screenshot"])
+        guard case .simulatorDeveloper(.screenshotStatusBar) = set.action else { return XCTFail("Expected screenshot preset") }
+        let clear = try MCPCommand(name: "set_simulator_status_bar", arguments: ["preset": "clear"])
+        guard case .simulatorDeveloper(.clearStatusBar) = clear.action else { return XCTFail("Expected clear") }
+        let url = "myapp://orders/42?source=widget"
+        let open = try MCPCommand(name: "open_simulator_url", arguments: ["url": url])
+        guard case .simulatorDeveloper(.openURL(let received)) = open.action else { return XCTFail("Expected open URL") }
+        XCTAssertEqual(received, url)
+    }
+
     func testUnlockResolvesSelectedDeviceAndHasNoCredentialArguments() async throws {
         let device = try testDevice()
         let access = MCPDeviceAccess(devices: { [device] }, session: { _ in
@@ -172,7 +208,7 @@ final class MCPCommandTests: XCTestCase {
         let reply = MCPServer.localReply(to: ["id": 1, "method": "tools/list"])!
         let tools = (reply["result"] as! [String: Any])["tools"] as! [[String: Any]]
         let names = Set(tools.compactMap { $0["name"] as? String })
-        XCTAssertEqual(names, Set(MCPManagement.allCases.map(\.rawValue)).union(["list_simulator_options", "create_simulator", "rotate_simulator", "set_simulator_posture", "touch_path", "get_device_settings", "set_appearance", "set_location", "set_audio", "select_device", "connect_device", "get_web_preview", "describe_web_protocol", "send_web_command", "read_web_events", "read_web_data", "get_web_dom", "get_web_css_styles", "start_web_network", "get_web_response_body", "reload_web_page", "list_web_pages", "attach_web_page", "read_web_console", "evaluate_web_javascript", "detach_web_page", "list_devices", "unlock_device", "start_recording", "stop_recording", "screenshot", "describe_ui", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "install_app", "type_text", "list_apps", "list_sandbox_files", "read_sandbox_file", "download_sandbox_file"]))
+        XCTAssertEqual(names, Set(MCPManagement.allCases.map(\.rawValue)).union(["list_simulator_options", "create_simulator", "rotate_simulator", "set_simulator_posture", "set_simulator_status_bar", "open_simulator_url", "send_simulator_push", "touch_path", "get_device_settings", "set_appearance", "set_location", "set_audio", "select_device", "connect_device", "get_web_preview", "describe_web_protocol", "send_web_command", "read_web_events", "read_web_data", "get_web_dom", "get_web_css_styles", "start_web_network", "get_web_response_body", "reload_web_page", "list_web_pages", "attach_web_page", "read_web_console", "evaluate_web_javascript", "detach_web_page", "list_devices", "unlock_device", "start_recording", "stop_recording", "screenshot", "describe_ui", "tap", "long_press", "swipe", "gesture", "button", "launch_app", "install_app", "type_text", "list_apps", "list_sandbox_files", "read_sandbox_file", "download_sandbox_file"]))
         XCTAssertNotNil(MCPServer.encode(reply), "every schema must remain JSON serializable")
         let handoffTools = tools.filter { ($0["description"] as? String)?.contains("handoff") == true }
         XCTAssertEqual(handoffTools.compactMap { $0["name"] as? String }, ["connect_device"])
@@ -196,6 +232,11 @@ final class MCPCommandTests: XCTestCase {
             ("set_location", ["preset": "Apple", "longitude": 10]), ("set_location", ["clear": false]),
             ("set_appearance", ["reduce_motion": 1]), ("set_appearance", ["style": "dark", "voice_over": false]),
             ("set_appearance", ["color_filter": "invalid"]), ("rotate_simulator", ["direction": "up"]),
+            ("set_simulator_status_bar", [:]), ("set_simulator_status_bar", ["preset": "default"]),
+            ("open_simulator_url", ["url": "relative/path"]),
+            ("send_simulator_push", ["bundle_id": "com.example.app", "payload": "{}"]),
+            ("send_simulator_push", ["bundle_id": "com.example.app", "payload": ["aps": "invalid"]]),
+            ("send_simulator_push", ["payload": ["aps": [:]]]),
             ("set_simulator_posture", ["posture": "left"]), ("collect_sysdiagnose", ["directory": "relative"]),
             ("touch_path", ["points": [["x": 0, "y": 0], ["x": true, "y": 1]]]),
             ("touch_path", ["points": [["x": 0, "y": 1]]]),

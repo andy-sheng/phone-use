@@ -71,22 +71,58 @@ public struct UITree: Codable, Sendable {
     }
 }
 
-/// US keyboard HID usages, matching sim-use `type`. Validate the entire string before focusing.
-enum SimulatorKeyboard {
-    struct Key: Equatable { let code: UInt32; let shift: Bool }
+/// A complete press and release on the device's US keyboard, expressed as a USB HID usage.
+public struct DeviceKeystroke: Encodable, Equatable, Sendable {
+    let code: UInt32
+    let shift: Bool
 
-    static func keys(for text: String) throws -> [Key] {
+    public enum EditingKey: UInt32, Sendable {
+        case enter = 40, escape, backspace, tab
+        case home = 74, pageUp, forwardDelete, end, pageDown, right, left, down, up
+    }
+
+    init(code: UInt32, shift: Bool) {
+        self.code = code
+        self.shift = shift
+    }
+
+    public init(_ key: EditingKey, shift: Bool = false) {
+        self.init(code: key.rawValue, shift: shift)
+    }
+
+    private static let plain = Array("1234567890-=[]\\;'`,./")
+    private static let shifted = Array("!@#$%^&*()_+{}|:\"~<>?")
+    private static let codes: [UInt32] = [30,31,32,33,34,35,36,37,38,39,45,46,47,48,49,51,52,53,54,55,56]
+
+    public init?(character: Character) {
+        if let scalar = character.asciiValue, (97...122).contains(scalar) {
+            self.init(code: UInt32(scalar - 97 + 4), shift: false)
+        } else if let scalar = character.asciiValue, (65...90).contains(scalar) {
+            self.init(code: UInt32(scalar - 65 + 4), shift: true)
+        } else if let index = Self.plain.firstIndex(of: character) {
+            self.init(code: Self.codes[index], shift: false)
+        } else if let index = Self.shifted.firstIndex(of: character) {
+            self.init(code: Self.codes[index], shift: true)
+        } else {
+            switch character {
+            case " ": self.init(code: 44, shift: false)
+            case "\n": self.init(.enter)
+            case "\t": self.init(.tab)
+            default: return nil
+            }
+        }
+    }
+}
+
+/// Validate the entire string before focusing the target field.
+enum SimulatorKeyboard {
+    static func keys(for text: String) throws -> [DeviceKeystroke] {
         guard text.count <= 10000 else { throw DeviceHubError.serviceFailed("Text is limited to 10000 characters per call") }
-        let plain = Array("1234567890-=[]\\;'`,./")
-        let shifted = Array("!@#$%^&*()_+{}|:\"~<>?")
-        let codes: [UInt32] = [30,31,32,33,34,35,36,37,38,39,45,46,47,48,49,51,52,53,54,55,56]
-        return try text.map { char in
-            if let scalar = char.asciiValue, (97...122).contains(scalar) { return Key(code: UInt32(scalar - 97 + 4), shift: false) }
-            if let scalar = char.asciiValue, (65...90).contains(scalar) { return Key(code: UInt32(scalar - 65 + 4), shift: true) }
-            if let index = plain.firstIndex(of: char) { return Key(code: codes[index], shift: false) }
-            if let index = shifted.firstIndex(of: char) { return Key(code: codes[index], shift: true) }
-            if let code: UInt32 = [" ": 44, "\n": 40, "\t": 43][String(char)] { return Key(code: code, shift: false) }
-            throw DeviceHubError.capabilityUnavailable("Text contains characters unsupported by HID typing. Use US keyboard characters, or enter Unicode using the on-screen input method. No text was sent")
+        return try text.map { character in
+            guard let key = DeviceKeystroke(character: character) else {
+                throw DeviceHubError.capabilityUnavailable("Text contains characters unsupported by HID typing. Use US keyboard characters, or enter Unicode using the on-screen input method. No text was sent")
+            }
+            return key
         }
     }
 }

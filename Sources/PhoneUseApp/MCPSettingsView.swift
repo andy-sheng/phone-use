@@ -24,13 +24,18 @@ final class MCPClientInstaller: ObservableObject {
 
     let setup: MCPClientSetup?
     @Published private(set) var states: [Client: State] = [:]
+    @Published private(set) var installedCLIs: [Client] = []
+    @Published private(set) var installedApps: [MCPClientSetup.DesktopClient] = []
+    private let appInstalled: (MCPClientSetup.DesktopClient) -> Bool
     private let searchPath: () async -> [String]
     private var path: [String] = []
 
     init(setup: MCPClientSetup? = MCPClientSetup.serverURL().map { MCPClientSetup(serverPath: $0.path) },
-         searchPath: @escaping () async -> [String] = { await CommandLineTools.searchPath() }) {
+         searchPath: @escaping () async -> [String] = { await CommandLineTools.searchPath() },
+         appInstalled: @escaping (MCPClientSetup.DesktopClient) -> Bool = { $0.isInstalled }) {
         self.setup = setup
         self.searchPath = searchPath
+        self.appInstalled = appInstalled
     }
 
     func state(_ client: Client) -> State {
@@ -39,7 +44,9 @@ final class MCPClientInstaller: ObservableObject {
 
     func refresh() async {
         guard setup != nil else { return }
+        installedApps = MCPClientSetup.DesktopClient.allCases.filter(appInstalled)
         path = await searchPath()
+        installedCLIs = Client.allCases.filter { tool($0) != nil }
         await withTaskGroup(of: Void.self) { group in
             for client in Client.allCases {
                 group.addTask { await self.refresh(client) }
@@ -82,7 +89,10 @@ final class MCPClientInstaller: ObservableObject {
 
 /// Settings › AI 助手: how to connect MCP clients, following Xcode's Intelligence settings.
 struct MCPSettingsView: View {
+    @Environment(\.openURL) private var openURL
     @StateObject private var installer: MCPClientInstaller
+    @State private var cursorOpenFailed = false
+    @State private var importMessages: [MCPClientSetup.DesktopClient: String] = [:]
 
     init() {
         _installer = StateObject(wrappedValue: MCPClientInstaller())
@@ -95,7 +105,7 @@ struct MCPSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Text("让 Claude Code、Codex 等 AI 编程助手通过 MCP 查看和操作已连接的设备。助手第一次调用工具时，PhoneUse 会在后台自动启动；新设备需要先在主窗口完成配对等准备。")
+                Text("让本机的 AI 助手通过 MCP 查看和操作已连接的设备。助手第一次调用工具时，PhoneUse 会在后台自动启动；新设备需要先在主窗口完成配对等准备。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -112,7 +122,7 @@ struct MCPSettingsView: View {
             }
 
             if let setup = installer.setup {
-                ForEach(MCPClientSetup.Client.allCases) { client in
+                ForEach(installer.installedCLIs) { client in
                     Section(client.title) {
                         ClientRow(client: client, state: installer.state(client)) {
                             Task { await installer.add(client) }
@@ -123,8 +133,39 @@ struct MCPSettingsView: View {
                         }
                     }
                 }
-                Section("其他客户端") {
-                    Text("Claude Desktop、Cursor 等使用 JSON 配置的客户端，在其 MCP 配置中加入：")
+                ForEach(installer.installedApps) { client in
+                    Section(client.rawValue) {
+                        if let path = client.configPath {
+                            LabeledContent("~/\(path)") {
+                                Button("添加到 \(client.rawValue)") {
+                                    do {
+                                        let home = FileManager.default.homeDirectoryForCurrentUser
+                                        try setup.install(in: home.appendingPathComponent(path))
+                                        importMessages[client] = "已写入配置，请在 \(client.rawValue) 中确认启用 phone-use。"
+                                    } catch {
+                                        importMessages[client] = "写入失败：\(error.localizedDescription) 可使用下方 JSON 手动配置。"
+                                    }
+                                }
+                            }
+                            if let message = importMessages[client] {
+                                Text(message).font(.caption).textSelection(.enabled)
+                            }
+                        } else if let url = setup.cursorInstallURL {
+                            LabeledContent("在 Cursor 中确认安装 phone-use") {
+                                Button("添加到 Cursor") {
+                                    openURL(url) { accepted in cursorOpenFailed = !accepted }
+                                }
+                            }
+                            if cursorOpenFailed {
+                                Text("无法打开 Cursor。可将下方 JSON 配置合并到 ~/.cursor/mcp.json。")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                    }
+                }
+                Section("手动配置") {
+                    Text("此配置同时提供设备操作和 iPhone 网页调试工具。可将以下内容合并到客户端的 MCP 配置中。")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     CopyableText(setup.jsonConfiguration)

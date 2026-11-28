@@ -55,9 +55,9 @@ def touch_message(action: int, x: int, y: int, width: int, height: int) -> bytes
                        x, y, width & 0xFFFF, height & 0xFFFF, pressure, 0, 0)
 
 
-def key_message(action: int, keycode: int) -> bytes:
+def key_message(action: int, keycode: int, meta_state: int = 0) -> bytes:
     """INJECT_KEYCODE: type, action, keycode, repeat, meta state."""
-    return struct.pack(">BBiii", TYPE_INJECT_KEYCODE, action, keycode, 0, 0)
+    return struct.pack(">BBiii", TYPE_INJECT_KEYCODE, action, keycode, 0, meta_state)
 
 
 def decode_screencap(data: bytes):
@@ -306,8 +306,8 @@ class AdbDriver:
     def touch(self, action: int, x: int, y: int, width: int, height: int) -> None:
         self._send(touch_message(action, x, y, width, height))
 
-    def key(self, action: int, keycode: int) -> None:
-        self._send(key_message(action, keycode))
+    def key(self, action: int, keycode: int, meta_state: int = 0) -> None:
+        self._send(key_message(action, keycode, meta_state))
 
     def close(self) -> None:
         with self._lock:

@@ -171,6 +171,20 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             factory.assert_not_called()
             worker.start_mirror.assert_not_awaited()
 
+    async def test_preview_keyboard_bypasses_inspector_and_validates_entire_batch(self):
+        worker = self.worker()
+        worker._mirror_started = 0
+        with patch("devicehubd.worker.AccessibilityAudit") as audit, patch("devicehubd.worker.type_keys") as send:
+            await worker.ui_command("keyboardInput", {"keys": '[{"code":4,"shift":true},{"code":42,"shift":false}]'})
+            send.assert_awaited_once_with(worker.rsd, [(4, True), (42, False)])
+            worker.start_mirror.reset_mock()
+            for invalid in ['[{"code":4,"shift":false},{"code":224,"shift":false}]', '[]', '{}', 'bad']:
+                with self.assertRaises(RpcError):
+                    await worker.ui_command("keyboardInput", {"keys": invalid})
+            worker.start_mirror.assert_not_awaited()
+            audit.assert_not_called()
+            self.assertEqual(send.await_count, 1)
+
     async def test_supervisor_routes_only_ios_and_preserves_selector(self):
         supervisor = Supervisor.__new__(Supervisor)
         worker = MagicMock()

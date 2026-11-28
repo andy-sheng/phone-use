@@ -79,8 +79,9 @@ WORKER_STOP_GRACE = 5.0
 WORKER_TERMINATE_GRACE = 1.0
 WORKER_KILL_GRACE = 2.0
 # Device settings the worker serves over its tunnel, used when Xcode's devicectl is not available.
-WORKER_UI_METHODS = {"describeUI", "activateUI", "typeText"}
-WORKER_SETTINGS_METHODS = {"accessibilitySettings", "setAccessibilitySetting", "simulateLocation", "clearLocation"}
+WORKER_UI_METHODS = {"describeUI", "activateUI", "typeText", "keyboardInput"}
+WORKER_SETTINGS_METHODS = {"accessibilitySettings", "setAccessibilitySetting", "simulateLocation", "clearLocation",
+                           "networkCondition", "enableNetworkCondition", "disableNetworkCondition"}
 # Native-resolution PNG responses can be several MB; asyncio's default is 64 KB.
 WORKER_READ_LIMIT = 64 * 1024 * 1024
 TUNNEL_MOUNTS_VERSION = Version("27.0")
